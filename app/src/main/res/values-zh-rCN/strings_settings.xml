@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="open_a11y_settings">打开无障碍设置</string>
+    <string name="cannot_open_settings">无法打开无障碍设置</string>
+    <string name="set_sensitivity">灵敏度 ×10</string>
+    <string name="set_pad_height">触控板高度（dp）</string>
+    <string name="set_cursor_size">光标大小（dp）</string>
+    <string name="set_long_press">长按判定（毫秒）</string>
+    <string name="set_dwell">停留点击（毫秒，0=关闭）</string>
+    <string name="set_haptics">震动反馈</string>
+    <string name="toggle_panel">显示 / 隐藏触控板</string>
+    <string name="reset_defaults">恢复默认设置</string>
+    <string name="status_on">服务已开启 —— 屏幕上应该能看到触控板。</string>
+    <string name="status_off">服务未开启 —— 请到无障碍设置里打开「OpenTouchpad 触控板」。</string>
+    <string name="enable_service_first">请先开启无障碍服务</string>
+    <string name="done">已完成</string>
+    <string name="privacy_note">本应用没有联网权限：无广告、无统计、无账号。设置只保存在本机。</string>
+</resources>

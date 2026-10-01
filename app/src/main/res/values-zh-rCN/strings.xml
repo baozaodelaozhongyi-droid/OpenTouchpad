@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OpenTouchpad</string>
+    <string name="app_description">为无法够到整块屏幕的人提供光标、触控板和大按钮。</string>
+    <string name="service_label">OpenTouchpad 触控板</string>
+    <string name="service_description">在屏幕一角显示触控板、光标和大按钮，用小范围动作操作整块屏幕。不联网、无广告、无统计。</string>
+</resources>

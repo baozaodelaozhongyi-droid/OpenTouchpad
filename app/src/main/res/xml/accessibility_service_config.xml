@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OpenTouchpad 的无障碍服务声明。
+
+  关键的一行是 android:isAccessibilityTool="true"：
+  Android 16 引入了 accessibilityDataSensitive（并与旧的 setFilterTouchesWhenObscured 打通），
+  凡是"没有声明自己是合法无障碍工具"的服务，都会被拒绝访问这些敏感视图 ——
+  表现为权限弹窗、开发者选项、Google Play 账号页等界面上注入的手势全部无效（手指点却正常）。
+
+  声明 isAccessibilityTool="true" 是 Google 为真正的无障碍工具留的合法通道。
+  本 App 只服务运动障碍用户，完全离线、无广告、无内购，符合该声明的定义。
+
+  参考：https://developer.android.com/blog/posts/enhancing-android-security-stop-malware-from-snooping-on-your-app-data
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/service_description"
+    android:isAccessibilityTool="true"
+    android:notificationTimeout="100"
+    android:settingsActivity="io.github.opentouchpad.MainActivity" />

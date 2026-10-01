@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OpenTouchpad</string>
+    <string name="app_description">Cursor, touchpad and big buttons for people who cannot reach the whole screen.</string>
+    <string name="service_label">OpenTouchpad touchpad</string>
+    <string name="service_description">Shows a touchpad, a cursor and large action buttons so the whole screen can be operated from a small area. No internet, no ads, no analytics.</string>
+</resources>
