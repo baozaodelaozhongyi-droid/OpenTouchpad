@@ -66,15 +66,15 @@ class MainActivity : Activity() {
         }
         col.addView(statusView)
 
-        col.addView(bigButton(getString(R.string.open_a11y_settings)) { openAccessibilitySettings() })
-        col.addView(bigButton(getString(R.string.btn_setup)) { showDialog(getString(R.string.steps_title), getString(R.string.steps_body)) })
-        col.addView(bigButton(getString(R.string.btn_tutorial)) { showDialog(getString(R.string.tutorial_title), getString(R.string.tutorial_body)) })
+        col.addView(bigButton(getString(R.string.open_a11y_settings), onClick = { openAccessibilitySettings() }))
+        col.addView(bigButton(getString(R.string.btn_setup), onClick = { showDialog(getString(R.string.steps_title), getString(R.string.steps_body)) }))
+        col.addView(bigButton(getString(R.string.btn_tutorial), onClick = { showDialog(getString(R.string.tutorial_title), getString(R.string.tutorial_body)) }))
 
         // ── 触控板 ──
         col.addView(section(getString(R.string.sec_pad)))
-        col.addView(slider(getString(R.string.set_pad_height), 80, 560, prefs.padHeightDp)) { prefs.padHeightDp = it; reload() }
-        col.addView(slider(getString(R.string.set_pad_width), 40, 100, prefs.padWidthPercent)) { prefs.padWidthPercent = it; reload() }
-        col.addView(slider(getString(R.string.set_opacity), 20, 100, prefs.opacityPercent)) { prefs.opacityPercent = it; reload() }
+        col.addView(slider(getString(R.string.set_pad_height), 80, 560, prefs.padHeightDp, onChange = { prefs.padHeightDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_pad_width), 40, 100, prefs.padWidthPercent, onChange = { prefs.padWidthPercent = it; reload() }))
+        col.addView(slider(getString(R.string.set_opacity), 20, 100, prefs.opacityPercent, onChange = { prefs.opacityPercent = it; reload() }))
         col.addView(bigButton(getString(R.string.btn_toggle_panel)) {
             TouchpadService.instance?.toggleMinimize() ?: toast(getString(R.string.status_off))
         })
@@ -86,28 +86,28 @@ class MainActivity : Activity() {
 
         // ── 光标 ──
         col.addView(section(getString(R.string.sec_cursor)))
-        col.addView(slider(getString(R.string.set_cursor_size), 16, 96, prefs.cursorSizeDp)) { prefs.cursorSizeDp = it; reload() }
+        col.addView(slider(getString(R.string.set_cursor_size), 16, 96, prefs.cursorSizeDp, onChange = { prefs.cursorSizeDp = it; reload() }))
         col.addView(label(getString(R.string.set_cursor_color)))
         col.addView(colorRow())
 
         // ── 手感 ──
         col.addView(section(getString(R.string.sec_feel)))
         col.addView(slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt()) { prefs.sensitivity = it / 10f })
-        col.addView(slider(getString(R.string.set_long_press), 200, 1500, prefs.longPressMs)) { prefs.longPressMs = it }
-        col.addView(slider(getString(R.string.set_dwell), 0, 2000, prefs.dwellMs, getString(R.string.dwell_off))) { prefs.dwellMs = it }
-        col.addView(slider(getString(R.string.set_scroll_distance), 60, 500, prefs.scrollDistanceDp)) { prefs.scrollDistanceDp = it }
-        col.addView(slider(getString(R.string.set_swipe_distance), 150, 900, prefs.swipeDistanceDp)) { prefs.swipeDistanceDp = it }
-        col.addView(switchRow(getString(R.string.switch_haptics), prefs.haptics) { prefs.haptics = it })
-        col.addView(switchRow(getString(R.string.switch_autohide_landscape), prefs.autoHideLandscape) { prefs.autoHideLandscape = it; reload() })
-        col.addView(switchRow(getString(R.string.switch_minimize_keyboard), prefs.minimizeOnKeyboard) { prefs.minimizeOnKeyboard = it })
+        col.addView(slider(getString(R.string.set_long_press), 200, 1500, prefs.longPressMs, onChange = { prefs.longPressMs = it }))
+        col.addView(slider(getString(R.string.set_dwell), 0, 2000, prefs.dwellMs, getString(R.string.dwell_off), onChange = { prefs.dwellMs = it }))
+        col.addView(slider(getString(R.string.set_scroll_distance), 60, 500, prefs.scrollDistanceDp, onChange = { prefs.scrollDistanceDp = it }))
+        col.addView(slider(getString(R.string.set_swipe_distance), 150, 900, prefs.swipeDistanceDp, onChange = { prefs.swipeDistanceDp = it }))
+        col.addView(switchRow(getString(R.string.switch_haptics), prefs.haptics, onChange = { prefs.haptics = it }))
+        col.addView(switchRow(getString(R.string.switch_autohide_landscape), prefs.autoHideLandscape, onChange = { prefs.autoHideLandscape = it; reload() }))
+        col.addView(switchRow(getString(R.string.switch_minimize_keyboard), prefs.minimizeOnKeyboard, onChange = { prefs.minimizeOnKeyboard = it }))
 
         // ── 按钮 ──
         col.addView(section(getString(R.string.sec_buttons)))
         col.addView(label(getString(R.string.btn_edit_buttons)))
         col.addView(buttonSlotList())
-        col.addView(slider(getString(R.string.set_button_radius), 0, 40, prefs.buttonRadiusDp)) { prefs.buttonRadiusDp = it; reload() }
-        col.addView(slider(getString(R.string.set_button_spacing), 0, 24, prefs.buttonSpacingDp)) { prefs.buttonSpacingDp = it; reload() }
-        col.addView(slider(getString(R.string.set_button_text_size), 10, 34, prefs.buttonTextSizeSp)) { prefs.buttonTextSizeSp = it; reload() }
+        col.addView(slider(getString(R.string.set_button_radius), 0, 40, prefs.buttonRadiusDp, onChange = { prefs.buttonRadiusDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_button_spacing), 0, 24, prefs.buttonSpacingDp, onChange = { prefs.buttonSpacingDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_button_text_size), 10, 34, prefs.buttonTextSizeSp, onChange = { prefs.buttonTextSizeSp = it; reload() }))
 
         // ── 关于 ──
         col.addView(section(getString(R.string.sec_about)))
