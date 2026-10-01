@@ -17,8 +17,10 @@
 
     <!-- 面板把手 -->
     <string name="handle_move">⣿ 移动</string>
-    <string name="handle_resize">⤡ 大小</string>
-    <string name="handle_minimize">✕ 收起</string>
+    <string name="handle_resize">⤡ 调整大小</string>
+    <string name="handle_minimize">⌄ 收起</string>
+    <string name="cursor_content_description">箭头光标</string>
+    <string name="floating_ball_content_description">展开 OpenTouchpad</string>
     <string name="pick_action">选择动作</string>
 
     <!-- 动作名 -->
@@ -48,14 +50,17 @@
 
     <!-- 设置项 -->
     <string name="sec_pad">触控板</string>
+    <string name="sec_ball">悬浮球</string>
     <string name="sec_cursor">光标</string>
     <string name="sec_feel">手感</string>
     <string name="sec_buttons">按钮</string>
     <string name="sec_about">关于</string>
 
     <string name="set_pad_height">触控板高度</string>
-    <string name="set_pad_width">触控板宽度</string>
-    <string name="set_opacity">透明度</string>
+    <string name="set_pad_width">触控板整体宽度</string>
+    <string name="set_opacity">触控板透明度</string>
+    <string name="set_ball_size">悬浮球大小</string>
+    <string name="set_ball_opacity">悬浮球透明度</string>
     <string name="set_cursor_size">光标大小</string>
     <string name="set_cursor_color">光标颜色</string>
     <string name="set_sensitivity">光标速度</string>

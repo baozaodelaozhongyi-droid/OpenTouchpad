@@ -46,25 +46,39 @@ class MainActivity : Activity() {
     private fun buildUi(): View {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(32))
+            setPadding(dp(20), dp(20), dp(20), dp(36))
+            setBackgroundColor(0xFFF6F7FB.toInt())
         }
         content = col
 
-        col.addView(TextView(this).apply {
+        val hero = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(22), dp(20), dp(22))
+            background = roundedSurface(0xFF172554.toInt(), 24)
+            elevation = dp(4).toFloat()
+        }
+        hero.addView(TextView(this).apply {
             text = getString(R.string.app_name)
-            textSize = 26f
+            textSize = 28f
+            setTextColor(0xFFF8FAFC.toInt())
         })
-        col.addView(TextView(this).apply {
+        hero.addView(TextView(this).apply {
             text = getString(R.string.app_description)
             textSize = 14f
-            setPadding(0, dp(8), 0, dp(16))
+            setTextColor(0xFFDCE7FF.toInt())
+            setPadding(0, dp(8), 0, 0)
         })
+        col.addView(hero)
 
         statusView = TextView(this).apply {
-            textSize = 16f
-            setPadding(0, 0, 0, dp(12))
+            textSize = 15f
+            setTextColor(0xFF3730A3.toInt())
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = roundedSurface(0xFFE0E7FF.toInt(), 16)
         }
-        col.addView(statusView)
+        col.addView(statusView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, dp(14), 0, dp(4))
+        })
 
         col.addView(bigButton(getString(R.string.open_a11y_settings), onClick = { openAccessibilitySettings() }))
         col.addView(bigButton(getString(R.string.btn_setup), onClick = { showDialog(getString(R.string.steps_title), getString(R.string.steps_body)) }))
@@ -72,8 +86,8 @@ class MainActivity : Activity() {
 
         // ── 触控板 ──
         col.addView(section(getString(R.string.sec_pad)))
-        col.addView(slider(getString(R.string.set_pad_height), 80, 560, prefs.padHeightDp, onChange = { prefs.padHeightDp = it; reload() }))
-        col.addView(slider(getString(R.string.set_pad_width), 40, 100, prefs.padWidthPercent, onChange = { prefs.padWidthPercent = it; reload() }))
+        col.addView(slider(getString(R.string.set_pad_height), 80, 900, prefs.padHeightDp, onChange = { prefs.padHeightDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_pad_width), 280, 1200, prefs.panelWidthDp.takeIf { it > 0 } ?: 720, onChange = { prefs.panelWidthDp = it; reload() }))
         col.addView(slider(getString(R.string.set_opacity), 20, 100, prefs.opacityPercent, onChange = { prefs.opacityPercent = it; reload() }))
         col.addView(bigButton(getString(R.string.btn_toggle_panel)) {
             TouchpadService.instance?.toggleMinimize() ?: toast(getString(R.string.status_off))
@@ -81,12 +95,19 @@ class MainActivity : Activity() {
         col.addView(bigButton(getString(R.string.btn_reset_position)) {
             prefs.padX = -1
             prefs.padY = -1
+            prefs.ballX = -1
+            prefs.ballY = -1
             reload()
         })
 
+        // ── 悬浮球 ──
+        col.addView(section(getString(R.string.sec_ball)))
+        col.addView(slider(getString(R.string.set_ball_size), 40, 140, prefs.floatingBallSizeDp, onChange = { prefs.floatingBallSizeDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_ball_opacity), 20, 100, prefs.floatingBallOpacityPercent, onChange = { prefs.floatingBallOpacityPercent = it; reload() }))
+
         // ── 光标 ──
         col.addView(section(getString(R.string.sec_cursor)))
-        col.addView(slider(getString(R.string.set_cursor_size), 16, 96, prefs.cursorSizeDp, onChange = { prefs.cursorSizeDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_cursor_size), 16, 160, prefs.cursorSizeDp, onChange = { prefs.cursorSizeDp = it; reload() }))
         col.addView(label(getString(R.string.set_cursor_color)))
         col.addView(colorRow())
 
@@ -121,30 +142,46 @@ class MainActivity : Activity() {
             recreate()
         })
 
-        return ScrollView(this).apply { addView(col) }
+        return ScrollView(this).apply {
+            setBackgroundColor(0xFFF6F7FB.toInt())
+            isFillViewport = true
+            addView(col)
+        }
     }
 
     // ───────────────────────── 小控件 ─────────────────────────
 
     private fun section(title: String): View = TextView(this).apply {
         text = title
-        textSize = 13f
-        setTextColor(0xFF5F6368.toInt())
-        setPadding(0, dp(22), 0, dp(6))
+        textSize = 18f
+        setTextColor(0xFF111827.toInt())
+        setPadding(dp(2), dp(28), 0, dp(10))
     }
 
     private fun label(text: String): View = TextView(this).apply {
         this.text = text
         textSize = 15f
-        setPadding(0, dp(10), 0, dp(2))
+        setTextColor(0xFF334155.toInt())
+        setPadding(dp(2), dp(10), 0, dp(2))
     }
 
     private fun bigButton(text: String, onClick: () -> Unit): View = Button(this).apply {
         this.text = text
         isAllCaps = false
-        textSize = 16f
-        minHeight = dp(52)
+        textSize = 15f
+        minHeight = dp(54)
+        setTextColor(0xFF1E3A8A.toInt())
+        background = roundedSurface(0xFFE7EEFF.toInt(), 14)
         setOnClickListener { onClick() }
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, dp(6), 0, dp(2))
+        }
+    }
+
+    private fun roundedSurface(color: Int, radiusDp: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(radiusDp).toFloat()
+        setColor(color)
     }
 
     private fun slider(
@@ -158,7 +195,8 @@ class MainActivity : Activity() {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val tv = TextView(this).apply {
             textSize = 15f
-            setPadding(0, dp(12), 0, 0)
+            setTextColor(0xFF334155.toInt())
+            setPadding(dp(2), dp(12), 0, 0)
         }
         fun render(v: Int) {
             tv.text = if (v <= 0 && offLabel != null) "$title: $offLabel" else "$title: $v"
@@ -168,6 +206,8 @@ class MainActivity : Activity() {
         val sb = SeekBar(this).apply {
             this.max = max - min
             progress = (value - min).coerceIn(0, max - min)
+            progressTintList = android.content.res.ColorStateList.valueOf(0xFF2563EB.toInt())
+            thumbTintList = android.content.res.ColorStateList.valueOf(0xFF2563EB.toInt())
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val v = progress + min

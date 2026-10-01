@@ -29,9 +29,22 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("padWidthPercent", 96)
         set(v) = sp.edit().putInt("padWidthPercent", v).apply()
 
+    /** Absolute panel width in dp. 0 keeps the legacy percentage-based width. */
+    var panelWidthDp: Int
+        get() = sp.getInt("panelWidthDp", 0)
+        set(v) = sp.edit().putInt("panelWidthDp", v).apply()
+
     var opacityPercent: Int
         get() = sp.getInt("opacity", 75)
         set(v) = sp.edit().putInt("opacity", v).apply()
+
+    var floatingBallSizeDp: Int
+        get() = sp.getInt("floatingBallSize", 64)
+        set(v) = sp.edit().putInt("floatingBallSize", v).apply()
+
+    var floatingBallOpacityPercent: Int
+        get() = sp.getInt("floatingBallOpacity", 90)
+        set(v) = sp.edit().putInt("floatingBallOpacity", v).apply()
 
     /** 面板左上角坐标；-1 表示"自动贴在底部居中"。 */
     var padX: Int
@@ -41,6 +54,15 @@ class Prefs(ctx: Context) {
     var padY: Int
         get() = sp.getInt("padY", -1)
         set(v) = sp.edit().putInt("padY", v).apply()
+
+    /** Floating ball top-left coordinates; -1 means the default right-center position. */
+    var ballX: Int
+        get() = sp.getInt("ballX", -1)
+        set(v) = sp.edit().putInt("ballX", v).apply()
+
+    var ballY: Int
+        get() = sp.getInt("ballY", -1)
+        set(v) = sp.edit().putInt("ballY", v).apply()
 
     var minimized: Boolean
         get() = sp.getBoolean("minimized", false)

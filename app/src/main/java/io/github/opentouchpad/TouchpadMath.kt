@@ -2,7 +2,16 @@ package io.github.opentouchpad
 
 import kotlin.math.roundToInt
 
+internal const val CURSOR_HOTSPOT_X = 0.08f
+internal const val CURSOR_HOTSPOT_Y = 0.05f
+
 internal data class PanelPosition(val x: Int, val y: Int)
+
+internal fun cursorViewOrigin(cursorX: Float, cursorY: Float, sizePx: Int): PanelPosition =
+    PanelPosition(
+        (cursorX - sizePx * CURSOR_HOTSPOT_X).roundToInt(),
+        (cursorY - sizePx * CURSOR_HOTSPOT_Y).roundToInt(),
+    )
 
 internal fun clampPanelPosition(
     x: Int,
@@ -25,3 +34,18 @@ internal fun shouldScheduleLongPress(dwellMs: Int, dragging: Boolean): Boolean =
 
 internal fun resizePanelHeight(startPx: Int, deltaY: Int, minPx: Int, maxPx: Int): Int =
     (startPx - deltaY).coerceIn(minPx, maxPx)
+
+internal fun resizePanelWidth(startPx: Int, deltaX: Int, minPx: Int, maxPx: Int): Int =
+    (startPx + deltaX).coerceIn(minPx, maxPx)
+
+internal fun clampFloatingBallPosition(
+    x: Int,
+    y: Int,
+    ballSize: Int,
+    screenWidth: Int,
+    screenHeight: Int,
+): PanelPosition {
+    val maxX = (screenWidth - ballSize.coerceAtLeast(0)).coerceAtLeast(0)
+    val maxY = (screenHeight - ballSize.coerceAtLeast(0)).coerceAtLeast(0)
+    return PanelPosition(x.coerceIn(0, maxX), y.coerceIn(0, maxY))
+}

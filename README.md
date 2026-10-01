@@ -33,10 +33,12 @@ This app declares `android:isAccessibilityTool="true"` in
 genuine, ad-free, offline assistive tool — so it keeps working exactly where it is needed.
 Reference: [Android Developers blog](https://developer.android.com/blog/posts/enhancing-android-security-stop-malware-from-snooping-on-your-app-data)
 
-### Features (v0.2)
+### Features (v0.3)
 
-- Floating touchpad panel — drag the **move** handle to place it anywhere, drag **size** to resize, minimise it to a small dot
-- Large cursor that follows your finger; size, colour and speed adjustable
+- Desktop-style arrow cursor with adjustable size and selectable colour
+- Floating touchpad panel — drag the **move** handle to place it anywhere, drag **resize** to change the overall width and height, and minimise it to a draggable floating ball
+- Floating ball size and opacity are adjustable; tap the ball to restore the touchpad
+- Modernised settings UI with clearer sections, larger controls and accessible contrast
 - Single tap / double tap / **long press** / **drag & drop with a lock button** (real "hold", not a fake long press)
 - **Dwell click** (auto click after the finger rests for N ms) — for very limited dexterity
 - Scroll in 4 directions + long swipes in 4 directions
@@ -99,10 +101,12 @@ Android 16 引入的 `accessibilityDataSensitive` 与旧的 `setFilterTouchesWhe
 里声明了 `android:isAccessibilityTool="true"`（它确实是离线、无广告的无障碍工具），所以在最需要的界面上依然可用。
 参考：[Android 开发者博客](https://developer.android.com/blog/posts/enhancing-android-security-stop-malware-from-snooping-on-your-app-data)
 
-### 功能（v0.2）
+### 功能（v0.3）
 
-- 悬浮触控板 —— 拖「移动」把手放到屏幕任何位置，拖「大小」把手缩放，可最小化成一个小圆点
-- 大光标跟随手指，大小／颜色／速度都可调
+- 电脑风格箭头光标，可调大小并可选择颜色
+- 悬浮触控板 —— 拖「移动」把手可放到屏幕任何位置，拖「调整大小」可同时改变整体宽高，收起后变成可拖动悬浮球
+- 悬浮球大小与透明度可调，点击悬浮球即可恢复触控板
+- 设置界面采用现代化靛蓝视觉、清晰分区、更大的操作控件和更高对比度
 - 单击 / 双击 / **长按** / **拖拽（带锁定按钮，真正的"按住不放"）**
 - **停留点击**（手指静止 N 毫秒自动点击）—— 适合手部动作非常有限的人
 - 四方向滚动 + 四方向长滑动

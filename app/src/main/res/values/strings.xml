@@ -17,8 +17,10 @@
 
     <!-- 面板把手 -->
     <string name="handle_move">⣿ move</string>
-    <string name="handle_resize">⤡ size</string>
-    <string name="handle_minimize">✕ hide</string>
+    <string name="handle_resize">⤡ resize</string>
+    <string name="handle_minimize">⌄ hide</string>
+    <string name="cursor_content_description">Arrow cursor</string>
+    <string name="floating_ball_content_description">Expand OpenTouchpad</string>
     <string name="pick_action">Choose an action</string>
 
     <!-- 动作名 -->
@@ -48,14 +50,17 @@
 
     <!-- 设置项 -->
     <string name="sec_pad">Touchpad</string>
+    <string name="sec_ball">Floating ball</string>
     <string name="sec_cursor">Cursor</string>
     <string name="sec_feel">Feel</string>
     <string name="sec_buttons">Buttons</string>
     <string name="sec_about">About</string>
 
     <string name="set_pad_height">Touchpad height</string>
-    <string name="set_pad_width">Touchpad width</string>
-    <string name="set_opacity">Opacity</string>
+    <string name="set_pad_width">Touchpad overall width</string>
+    <string name="set_opacity">Touchpad opacity</string>
+    <string name="set_ball_size">Floating ball size</string>
+    <string name="set_ball_opacity">Floating ball opacity</string>
     <string name="set_cursor_size">Cursor size</string>
     <string name="set_cursor_color">Cursor colour</string>
     <string name="set_sensitivity">Cursor speed</string>
