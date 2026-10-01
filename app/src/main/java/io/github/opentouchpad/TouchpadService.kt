@@ -101,6 +101,17 @@ class TouchpadService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+
+        // 用 Java 常量程序化补齐一次配置，不依赖 XML 枚举值的映射：
+        // - FLAG_RETRIEVE_INTERACTIVE_WINDOWS 才能用 getWindows() 判断输入法是否弹出
+        // - TYPE_WINDOWS_CHANGED 才会在窗口/键盘变化时回调
+        runCatching {
+            val info = serviceInfo
+            info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            info.eventTypes = info.eventTypes or AccessibilityEvent.TYPE_WINDOWS_CHANGED
+            serviceInfo = info
+        }
+
         prefs = Prefs(this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         refreshScreenMetrics()
