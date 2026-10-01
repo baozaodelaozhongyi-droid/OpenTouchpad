@@ -21,12 +21,32 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build debug APK
+      # 用仓库 secret 里的固定密钥签名 —— 这样每个版本都能直接覆盖安装，
+      # 不会因为签名不同而必须先卸载（debug 密钥每次 CI 都是新的）。
+      - name: Decode signing keystore
+        if: ${{ secrets.KEYSTORE_B64 != '' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ks"
+          printf '%s' "${{ secrets.KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/ks/release.jks"
+          echo "keystore: $(stat -c%s "$RUNNER_TEMP/ks/release.jks") bytes"
+
+      - name: Build signed release APK
+        if: ${{ secrets.KEYSTORE_B64 != '' }}
+        env:
+          RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/ks/release.jks
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle --no-daemon assembleRelease
+
+      - name: Build debug APK (fallback for pull requests without secrets)
+        if: ${{ secrets.KEYSTORE_B64 == '' }}
         run: gradle --no-daemon assembleDebug
 
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: OpenTouchpad-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: OpenTouchpad-apk
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
