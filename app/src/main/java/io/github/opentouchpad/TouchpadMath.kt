@@ -22,3 +22,6 @@ internal fun pixelsToDp(pixels: Int, density: Float): Int =
 
 internal fun shouldScheduleLongPress(dwellMs: Int, dragging: Boolean): Boolean =
     !dragging && dwellMs <= 0
+
+internal fun resizePanelHeight(startPx: Int, deltaY: Int, minPx: Int, maxPx: Int): Int =
+    (startPx - deltaY).coerceIn(minPx, maxPx)

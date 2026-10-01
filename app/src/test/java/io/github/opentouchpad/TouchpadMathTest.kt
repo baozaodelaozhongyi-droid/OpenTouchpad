@@ -25,4 +25,10 @@ class TouchpadMathTest {
         assertTrue(shouldScheduleLongPress(dwellMs = 0, dragging = false))
         assertFalse(shouldScheduleLongPress(dwellMs = 0, dragging = true))
     }
+
+    @Test
+    fun resizeDeltaIsClampedWithoutRebuildingThePanel() {
+        assertEquals(300, resizePanelHeight(startPx = 240, deltaY = -60, minPx = 80, maxPx = 960))
+        assertEquals(80, resizePanelHeight(startPx = 240, deltaY = 500, minPx = 80, maxPx = 960))
+    }
 }

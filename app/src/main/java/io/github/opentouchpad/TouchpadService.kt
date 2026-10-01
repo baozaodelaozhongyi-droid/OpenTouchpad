@@ -123,13 +123,21 @@ class TouchpadService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        main.removeCallbacksAndMessages(null)
+        cancelDwell()
         instance = null
         removePanel()
         cursorView?.let { runCatching { wm.removeView(it) } }
+        cursorView = null
+        cursorParams = null
         super.onDestroy()
     }
 
-    override fun onInterrupt() = Unit
+    override fun onInterrupt() {
+        main.removeCallbacksAndMessages(null)
+        cancelDwell()
+        if (dragging) endDrag()
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
@@ -211,6 +219,7 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun removePanel() {
+        if (dragging) endDrag()
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
         panelParams = null
@@ -503,27 +512,18 @@ class TouchpadService : AccessibilityService() {
         }
         if (e.actionMasked == MotionEvent.ACTION_MOVE) {
             val delta = (e.rawY - movingFromY).roundToInt()
-            val h = (movingPanelY - delta).coerceIn(dp(80), screenH / 2)
+            val h = resizePanelHeight(movingPanelY, delta, dp(80), screenH / 2)
             prefs.padHeightDp = pixelsToDp(h, resources.displayMetrics.density)
-            addFullPanelWithKeepPosition()
+            padArea?.let { area ->
+                area.layoutParams = area.layoutParams.apply { height = h }
+                area.requestLayout()
+            }
+            panel?.requestLayout()
+        }
+        if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
+            panel?.post { keepPanelInBounds() }
         }
         return true
-    }
-
-    private fun addFullPanelWithKeepPosition() {
-        val x = panelParams?.x ?: -1
-        val y = panelParams?.y ?: -1
-        removePanel()
-        addFullPanel()
-        if (x >= 0 && y >= 0) {
-            prefs.padX = x
-            prefs.padY = y
-            panelParams?.let { lp ->
-                lp.x = x; lp.y = y
-                panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
-            }
-        }
-        keepPanelInBounds()
     }
 
     private fun keepPanelInBounds() {
