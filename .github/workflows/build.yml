@@ -2,8 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [ main ]
-    tags: [ 'v*' ]
+    branches: [ main, master ]
   pull_request:
   workflow_dispatch:
 
@@ -22,19 +21,8 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      # 正式签名（可选）：在仓库 Secrets 里配置
-      #   RELEASE_KEYSTORE_B64 / RELEASE_KEYSTORE_PASSWORD / RELEASE_KEY_ALIAS / RELEASE_KEY_PASSWORD
-      - name: Decode release keystore (optional)
-        if: ${{ secrets.RELEASE_KEYSTORE_B64 != '' }}
-        run: |
-          echo "${{ secrets.RELEASE_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/release.keystore"
-          echo "RELEASE_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
-          echo "RELEASE_KEYSTORE_PASSWORD=${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_ALIAS=${{ secrets.RELEASE_KEY_ALIAS }}" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_PASSWORD=${{ secrets.RELEASE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
-
-      - name: Build
-        run: gradle --no-daemon assembleDebug assembleRelease
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -42,10 +30,3 @@ jobs:
           name: OpenTouchpad-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-
-      - name: Upload release APK (if signed)
-        if: ${{ hashFiles('app/build/outputs/apk/release/*.apk') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: OpenTouchpad-release
-          path: app/build/outputs/apk/release/*.apk
