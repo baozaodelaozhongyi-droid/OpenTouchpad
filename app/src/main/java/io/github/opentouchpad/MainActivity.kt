@@ -280,7 +280,10 @@ class MainActivity : Activity() {
             contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
         ) ?: return false
-        return flat.split(':').any { it.startsWith(packageName) }
+        return flat.split(':').any {
+            it == "$packageName/.TouchpadService" ||
+                it == "$packageName/$packageName.TouchpadService"
+        }
     }
 
     private fun reload() {
