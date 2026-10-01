@@ -7,6 +7,14 @@ class Prefs(ctx: Context) {
 
     private val sp = ctx.getSharedPreferences("opentouchpad", Context.MODE_PRIVATE)
 
+    var themeMode: ThemeMode
+        get() = if (sp.contains("themeMode")) {
+            ThemeMode.fromId(sp.getString("themeMode", null))
+        } else {
+            ThemeMode.LIGHT
+        }
+        set(v) = sp.edit().putString("themeMode", v.id).apply()
+
     // ── 光标 ──
     var sensitivity: Float
         get() = sp.getFloat("sensitivity", 1.4f)

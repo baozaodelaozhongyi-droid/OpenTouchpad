@@ -7,9 +7,9 @@ import org.junit.Test
 
 class TouchpadMathTest {
     @Test
-    fun arrowCursorUsesItsTipAsThePointerHotspot() {
-        assertEquals(96, cursorViewOrigin(100f, 100f, 50).x)
-        assertEquals(98, cursorViewOrigin(100f, 100f, 50).y)
+    fun arrowCursorUsesTopLeftAsThePointerHotspot() {
+        assertEquals(100, cursorViewOrigin(100f, 100f).x)
+        assertEquals(100, cursorViewOrigin(100f, 100f).y)
     }
 
     @Test
@@ -39,10 +39,22 @@ class TouchpadMathTest {
     }
 
     @Test
-    fun panelWidthResizeGrowsWithRightwardDragAndClampsToBounds() {
-        assertEquals(520, resizePanelWidth(startPx = 420, deltaX = 100, minPx = 280, maxPx = 720))
-        assertEquals(280, resizePanelWidth(startPx = 420, deltaX = -300, minPx = 280, maxPx = 720))
-        assertEquals(720, resizePanelWidth(startPx = 420, deltaX = 500, minPx = 280, maxPx = 720))
+    fun panelWidthCanShrinkToCompactAccessibilityLayout() {
+        assertEquals(180, PANEL_MIN_WIDTH_DP)
+        assertEquals(180, resizePanelWidth(startPx = 420, deltaX = -300, minPx = PANEL_MIN_WIDTH_DP, maxPx = 720))
+        assertEquals(720, resizePanelWidth(startPx = 420, deltaX = 500, minPx = PANEL_MIN_WIDTH_DP, maxPx = 720))
+    }
+
+    @Test
+    fun themeModeIdsRoundTripAndUnknownValuesFollowSystem() {
+        assertEquals(ThemeMode.LIGHT, ThemeMode.fromId("light"))
+        assertEquals(ThemeMode.DARK, ThemeMode.fromId("dark"))
+        assertEquals(ThemeMode.SYSTEM, ThemeMode.fromId("system"))
+        assertEquals(ThemeMode.SYSTEM, ThemeMode.fromId("removed"))
+        assertFalse(ThemeMode.LIGHT.resolvesToDark(systemIsDark = true))
+        assertTrue(ThemeMode.DARK.resolvesToDark(systemIsDark = false))
+        assertTrue(ThemeMode.SYSTEM.resolvesToDark(systemIsDark = true))
+        assertFalse(ThemeMode.SYSTEM.resolvesToDark(systemIsDark = false))
     }
 
     @Test

@@ -3,7 +3,7 @@ package io.github.opentouchpad
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.graphics.Color
+import android.content.res.Configuration
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -13,6 +13,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
@@ -29,10 +31,26 @@ class MainActivity : Activity() {
     private lateinit var prefs: Prefs
     private lateinit var statusView: TextView
     private lateinit var content: LinearLayout
+    private var darkUi = false
+
+    private val pageColor get() = if (darkUi) 0xFF101114.toInt() else 0xFFFFFFFF.toInt()
+    private val surfaceColor get() = if (darkUi) 0xFF1C1D21.toInt() else 0xFFF4F5F7.toInt()
+    private val elevatedColor get() = if (darkUi) 0xFF25262B.toInt() else 0xFFFFFFFF.toInt()
+    private val textColor get() = if (darkUi) 0xFFF4F4F5.toInt() else 0xFF171717.toInt()
+    private val secondaryTextColor get() = if (darkUi) 0xFFB6B7BC.toInt() else 0xFF5F6368.toInt()
+    private val borderColor get() = if (darkUi) 0xFF3A3B42.toInt() else 0xFFE1E3E8.toInt()
+    private val accentColor get() = if (darkUi) 0xFF8AB4F8.toInt() else 0xFF2563EB.toInt()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
         prefs = Prefs(this)
+        darkUi = prefs.themeMode.resolvesToDark(systemIsDark())
+        setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
+        super.onCreate(savedInstanceState)
+        window.statusBarColor = pageColor
+        window.navigationBarColor = pageColor
+        window.decorView.systemUiVisibility = if (darkUi) 0 else {
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
         setContentView(buildUi())
     }
 
@@ -47,34 +65,34 @@ class MainActivity : Activity() {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(20), dp(20), dp(36))
-            setBackgroundColor(0xFFF6F7FB.toInt())
+            setBackgroundColor(pageColor)
         }
         content = col
 
         val hero = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(22), dp(20), dp(22))
-            background = roundedSurface(0xFF172554.toInt(), 24)
-            elevation = dp(4).toFloat()
+            background = borderedSurface(elevatedColor, borderColor, 18)
+            elevation = dp(2).toFloat()
         }
         hero.addView(TextView(this).apply {
             text = getString(R.string.app_name)
             textSize = 28f
-            setTextColor(0xFFF8FAFC.toInt())
+            setTextColor(textColor)
         })
         hero.addView(TextView(this).apply {
             text = getString(R.string.app_description)
             textSize = 14f
-            setTextColor(0xFFDCE7FF.toInt())
+            setTextColor(secondaryTextColor)
             setPadding(0, dp(8), 0, 0)
         })
         col.addView(hero)
 
         statusView = TextView(this).apply {
             textSize = 15f
-            setTextColor(0xFF3730A3.toInt())
+            setTextColor(textColor)
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedSurface(0xFFE0E7FF.toInt(), 16)
+            background = borderedSurface(surfaceColor, borderColor, 14)
         }
         col.addView(statusView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(0, dp(14), 0, dp(4))
@@ -84,10 +102,18 @@ class MainActivity : Activity() {
         col.addView(bigButton(getString(R.string.btn_setup), onClick = { showDialog(getString(R.string.steps_title), getString(R.string.steps_body)) }))
         col.addView(bigButton(getString(R.string.btn_tutorial), onClick = { showDialog(getString(R.string.tutorial_title), getString(R.string.tutorial_body)) }))
 
+        // ── 外观 ──
+        col.addView(section(getString(R.string.sec_appearance)))
+        col.addView(themeModeRow())
+
         // ── 触控板 ──
         col.addView(section(getString(R.string.sec_pad)))
+        val maxPanelWidth = pixelsToDp(resources.displayMetrics.widthPixels, resources.displayMetrics.density)
+            .coerceAtLeast(PANEL_MIN_WIDTH_DP)
+        val currentPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
+            ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
         col.addView(slider(getString(R.string.set_pad_height), 80, 900, prefs.padHeightDp, onChange = { prefs.padHeightDp = it; reload() }))
-        col.addView(slider(getString(R.string.set_pad_width), 280, 1200, prefs.panelWidthDp.takeIf { it > 0 } ?: 720, onChange = { prefs.panelWidthDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_pad_width), PANEL_MIN_WIDTH_DP, maxPanelWidth, currentPanelWidth, onChange = { prefs.panelWidthDp = it; reload() }))
         col.addView(slider(getString(R.string.set_opacity), 20, 100, prefs.opacityPercent, onChange = { prefs.opacityPercent = it; reload() }))
         col.addView(bigButton(getString(R.string.btn_toggle_panel)) {
             TouchpadService.instance?.toggleMinimize() ?: toast(getString(R.string.status_off))
@@ -143,7 +169,7 @@ class MainActivity : Activity() {
         })
 
         return ScrollView(this).apply {
-            setBackgroundColor(0xFFF6F7FB.toInt())
+            setBackgroundColor(pageColor)
             isFillViewport = true
             addView(col)
         }
@@ -154,14 +180,14 @@ class MainActivity : Activity() {
     private fun section(title: String): View = TextView(this).apply {
         text = title
         textSize = 18f
-        setTextColor(0xFF111827.toInt())
+        setTextColor(textColor)
         setPadding(dp(2), dp(28), 0, dp(10))
     }
 
     private fun label(text: String): View = TextView(this).apply {
         this.text = text
         textSize = 15f
-        setTextColor(0xFF334155.toInt())
+        setTextColor(secondaryTextColor)
         setPadding(dp(2), dp(10), 0, dp(2))
     }
 
@@ -170,8 +196,8 @@ class MainActivity : Activity() {
         isAllCaps = false
         textSize = 15f
         minHeight = dp(54)
-        setTextColor(0xFF1E3A8A.toInt())
-        background = roundedSurface(0xFFE7EEFF.toInt(), 14)
+        setTextColor(textColor)
+        background = borderedSurface(surfaceColor, borderColor, 14)
         setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(0, dp(6), 0, dp(2))
@@ -182,6 +208,40 @@ class MainActivity : Activity() {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(radiusDp).toFloat()
         setColor(color)
+    }
+
+    private fun borderedSurface(color: Int, strokeColor: Int, radiusDp: Int): GradientDrawable =
+        roundedSurface(color, radiusDp).apply { setStroke(dp(1), strokeColor) }
+
+    private fun themeModeRow(): View {
+        val group = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            setPadding(dp(4), 0, dp(4), dp(4))
+        }
+        listOf(
+            ThemeMode.SYSTEM to R.string.theme_system,
+            ThemeMode.LIGHT to R.string.theme_light,
+            ThemeMode.DARK to R.string.theme_dark,
+        ).forEach { (mode, labelRes) ->
+            val button = RadioButton(this).apply {
+                id = View.generateViewId()
+                text = getString(labelRes)
+                textSize = 15f
+                setTextColor(textColor)
+                minHeight = dp(48)
+                isChecked = prefs.themeMode == mode
+                buttonTintList = android.content.res.ColorStateList.valueOf(accentColor)
+                setOnClickListener {
+                    if (prefs.themeMode != mode) {
+                        prefs.themeMode = mode
+                        reload()
+                        recreate()
+                    }
+                }
+            }
+            group.addView(button, RadioGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        return group
     }
 
     private fun slider(
@@ -195,7 +255,7 @@ class MainActivity : Activity() {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val tv = TextView(this).apply {
             textSize = 15f
-            setTextColor(0xFF334155.toInt())
+            setTextColor(secondaryTextColor)
             setPadding(dp(2), dp(12), 0, 0)
         }
         fun render(v: Int) {
@@ -206,8 +266,8 @@ class MainActivity : Activity() {
         val sb = SeekBar(this).apply {
             this.max = max - min
             progress = (value - min).coerceIn(0, max - min)
-            progressTintList = android.content.res.ColorStateList.valueOf(0xFF2563EB.toInt())
-            thumbTintList = android.content.res.ColorStateList.valueOf(0xFF2563EB.toInt())
+            progressTintList = android.content.res.ColorStateList.valueOf(accentColor)
+            thumbTintList = android.content.res.ColorStateList.valueOf(accentColor)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val v = progress + min
@@ -227,9 +287,11 @@ class MainActivity : Activity() {
         Switch(this).apply {
             text = title
             textSize = 15f
+            setTextColor(textColor)
             isChecked = checked
             minHeight = dp(52)
             setPadding(0, dp(8), 0, dp(8))
+            thumbTintList = android.content.res.ColorStateList.valueOf(accentColor)
             setOnCheckedChangeListener { _, value -> onChange(value) }
         }
 
@@ -271,6 +333,7 @@ class MainActivity : Activity() {
             val row = TextView(this).apply {
                 text = "${index + 1}.  ${action.icon}  ${getString(action.labelRes)}"
                 textSize = 16f
+                setTextColor(textColor)
                 setPadding(dp(4), dp(14), dp(4), dp(14))
                 setOnClickListener { pickAction(index, action) }
             }
@@ -281,7 +344,12 @@ class MainActivity : Activity() {
 
     private fun pickAction(index: Int, current: PadAction) {
         val labels = PadAction.ALL.map { "${it.icon}  ${getString(it.labelRes)}" }.toTypedArray()
-        AlertDialog.Builder(this)
+        val dialogTheme = if (darkUi) {
+            android.R.style.Theme_Material_Dialog_Alert
+        } else {
+            android.R.style.Theme_Material_Light_Dialog_Alert
+        }
+        AlertDialog.Builder(this, dialogTheme)
             .setTitle(R.string.pick_action)
             .setSingleChoiceItems(labels, PadAction.ALL.indexOf(current)) { dialog, which ->
                 val list = prefs.buttons.toMutableList()
@@ -297,7 +365,12 @@ class MainActivity : Activity() {
     }
 
     private fun showDialog(title: String, body: String) {
-        AlertDialog.Builder(this)
+        val dialogTheme = if (darkUi) {
+            android.R.style.Theme_Material_Dialog_Alert
+        } else {
+            android.R.style.Theme_Material_Light_Dialog_Alert
+        }
+        AlertDialog.Builder(this, dialogTheme)
             .setTitle(title)
             .setMessage(body)
             .setPositiveButton(android.R.string.ok, null)
@@ -305,6 +378,9 @@ class MainActivity : Activity() {
     }
 
     // ───────────────────────── 杂项 ─────────────────────────
+
+    private fun systemIsDark(): Boolean =
+        resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
 
     private fun openAccessibilitySettings() {
         runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
@@ -335,4 +411,7 @@ class MainActivity : Activity() {
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).roundToInt()
+
+    private fun pixelsToDp(v: Int, density: Float): Int =
+        if (density > 0f) (v / density).roundToInt() else v
 }

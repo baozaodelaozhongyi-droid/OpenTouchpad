@@ -49,12 +49,17 @@
     <string name="act_none">Empty slot</string>
 
     <!-- 设置项 -->
+    <string name="sec_appearance">Appearance</string>
     <string name="sec_pad">Touchpad</string>
     <string name="sec_ball">Floating ball</string>
     <string name="sec_cursor">Cursor</string>
     <string name="sec_feel">Feel</string>
     <string name="sec_buttons">Buttons</string>
     <string name="sec_about">About</string>
+
+    <string name="theme_system">Follow system</string>
+    <string name="theme_light">White mode</string>
+    <string name="theme_dark">Black mode</string>
 
     <string name="set_pad_height">Touchpad height</string>
     <string name="set_pad_width">Touchpad overall width</string>

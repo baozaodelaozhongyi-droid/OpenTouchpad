@@ -2,16 +2,13 @@ package io.github.opentouchpad
 
 import kotlin.math.roundToInt
 
-internal const val CURSOR_HOTSPOT_X = 0.08f
-internal const val CURSOR_HOTSPOT_Y = 0.05f
+internal const val PANEL_MIN_WIDTH_DP = 180
 
 internal data class PanelPosition(val x: Int, val y: Int)
 
-internal fun cursorViewOrigin(cursorX: Float, cursorY: Float, sizePx: Int): PanelPosition =
-    PanelPosition(
-        (cursorX - sizePx * CURSOR_HOTSPOT_X).roundToInt(),
-        (cursorY - sizePx * CURSOR_HOTSPOT_Y).roundToInt(),
-    )
+/** Cursor coordinates are the actual arrow tip and injected gesture position. */
+internal fun cursorViewOrigin(cursorX: Float, cursorY: Float): PanelPosition =
+    PanelPosition(cursorX.roundToInt(), cursorY.roundToInt())
 
 internal fun clampPanelPosition(
     x: Int,

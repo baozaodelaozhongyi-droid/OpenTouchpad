@@ -49,12 +49,17 @@
     <string name="act_none">空槽位</string>
 
     <!-- 设置项 -->
+    <string name="sec_appearance">外观</string>
     <string name="sec_pad">触控板</string>
     <string name="sec_ball">悬浮球</string>
     <string name="sec_cursor">光标</string>
     <string name="sec_feel">手感</string>
     <string name="sec_buttons">按钮</string>
     <string name="sec_about">关于</string>
+
+    <string name="theme_system">跟随系统</string>
+    <string name="theme_light">白色模式</string>
+    <string name="theme_dark">黑色模式</string>
 
     <string name="set_pad_height">触控板高度</string>
     <string name="set_pad_width">触控板整体宽度</string>

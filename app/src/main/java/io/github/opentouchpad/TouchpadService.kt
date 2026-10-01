@@ -93,6 +93,7 @@ class TouchpadService : AccessibilityService() {
     // 收起后的悬浮球拖动，抬手未移动才展开
     private var movingBall = false
     private var ballMoved = false
+    private var compactButtons = false
     private var ballFromX = 0f
     private var ballFromY = 0f
     private var ballX = 0
@@ -173,6 +174,9 @@ class TouchpadService : AccessibilityService() {
         refreshScreenMetrics()
         cursorX = cursorX.coerceIn(0f, screenW.toFloat())
         cursorY = cursorY.coerceIn(0f, screenH.toFloat())
+        if (this::prefs.isInitialized && prefs.themeMode == ThemeMode.SYSTEM) {
+            buildCursor()
+        }
         buildPanel()
         updateCursor()
     }
@@ -202,6 +206,10 @@ class TouchpadService : AccessibilityService() {
     private fun isLandscape(): Boolean =
         resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
+    private fun isDarkTheme(): Boolean = prefs.themeMode.resolvesToDark(
+        resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES,
+    )
+
     private fun buildCursor() {
         cursorView?.let { runCatching { wm.removeView(it) } }
         val size = dp(prefs.cursorSizeDp.coerceIn(16, 160))
@@ -214,6 +222,7 @@ class TouchpadService : AccessibilityService() {
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT,
         ).apply { gravity = Gravity.TOP or Gravity.START }
@@ -294,24 +303,27 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun addFullPanel() {
+        val dark = isDarkTheme()
+        val panelColor = if (dark) 0xFF151619.toInt() else 0xFFF8F9FA.toInt()
+        val padColor = if (dark) 0xFF27282D.toInt() else 0xFFE8EAED.toInt()
         val padH = dp(prefs.padHeightDp.coerceIn(80, 900))
         val widthPx = if (prefs.panelWidthDp > 0) {
             dp(prefs.panelWidthDp)
         } else {
             (screenW * prefs.padWidthPercent / 100)
-        }.coerceIn(dp(280).coerceAtMost(screenW), screenW)
+        }.coerceIn(dp(PANEL_MIN_WIDTH_DP).coerceAtMost(screenW), screenW)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedBox(0xFF111827.toInt(), 22)
+            background = roundedBox(panelColor, 22)
             setPadding(dp(8), dp(6), dp(8), dp(8))
         }
 
         // 把手行：移动 / 缩放 / 最小化
         val handleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val moveHandle = makeHandle(getString(R.string.handle_move)) { v, e -> handleMoveTouch(v, e) }
-        val resizeHandle = makeHandle(getString(R.string.handle_resize)) { v, e -> handleResizeTouch(v, e) }
-        val miniHandle = makeHandle(getString(R.string.handle_minimize)) { _, e ->
+        val moveHandle = makeHandle(getString(R.string.handle_move), dark) { v, e -> handleMoveTouch(v, e) }
+        val resizeHandle = makeHandle(getString(R.string.handle_resize), dark) { v, e -> handleResizeTouch(v, e) }
+        val miniHandle = makeHandle(getString(R.string.handle_minimize), dark) { _, e ->
             if (e.actionMasked == MotionEvent.ACTION_UP) toggleMinimize()
             true
         }
@@ -321,7 +333,7 @@ class TouchpadService : AccessibilityService() {
 
         // 触控区
         val pad = View(this).apply {
-            background = roundedBox(0xFF1F2937.toInt(), 16)
+            background = roundedBox(padColor, 16)
             setOnTouchListener { _, e -> handlePadTouch(e); true }
         }
         padArea = pad
@@ -329,7 +341,8 @@ class TouchpadService : AccessibilityService() {
         // 按钮区
         val host = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         buttonHost = host
-        renderButtons()
+        compactButtons = widthPx < dp(260)
+        renderButtons(dark, compactButtons)
 
         val spacing = dp(prefs.buttonSpacingDp)
         root.addView(handleRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
@@ -366,8 +379,8 @@ class TouchpadService : AccessibilityService() {
             alpha = prefs.floatingBallOpacityPercent.coerceIn(20, 100) / 100f
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(0xFF2563EB.toInt())
-                setStroke(dp(2), 0x80FFFFFF.toInt())
+                setColor(if (isDarkTheme()) 0xFF6EA8FE.toInt() else 0xFF2563EB.toInt())
+                setStroke(dp(2), if (isDarkTheme()) 0x66FFFFFF else 0x33000000)
             }
             setOnTouchListener { v, e -> handleBallTouch(v, e) }
             contentDescription = getString(R.string.floating_ball_content_description)
@@ -382,28 +395,28 @@ class TouchpadService : AccessibilityService() {
         keepBallInBounds()
     }
 
-    private fun makeHandle(label: String, onTouch: (View, MotionEvent) -> Boolean): View =
+    private fun makeHandle(label: String, dark: Boolean, onTouch: (View, MotionEvent) -> Boolean): View =
         TextView(this).apply {
             text = label
             gravity = Gravity.CENTER
             textSize = 12f
-            setTextColor(0xFFB0B6BC.toInt())
+            setTextColor(if (dark) 0xFFD1D5DB.toInt() else 0xFF4B5563.toInt())
             setPadding(0, dp(6), 0, dp(6))
             isClickable = true
             setOnTouchListener { v, e -> onTouch(v, e) }
         }
 
-    private fun renderButtons() {
+    private fun renderButtons(dark: Boolean = isDarkTheme(), compact: Boolean = compactButtons) {
         val host = buttonHost ?: return
         host.removeAllViews()
         val list = prefs.buttons.filter { it != PadAction.NONE }
         if (list.isEmpty()) return
-        val perRow = 6
+        val perRow = if (compact) 3 else 6
         val spacing = dp(prefs.buttonSpacingDp)
         list.chunked(perRow).forEach { chunk ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             chunk.forEach { action ->
-                row.addView(makeActionButton(action), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                row.addView(makeActionButton(action, dark), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                     setMargins(spacing / 2, spacing / 2, spacing / 2, spacing / 2)
                 })
             }
@@ -414,13 +427,13 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
-    private fun makeActionButton(action: PadAction): View = TextView(this).apply {
+    private fun makeActionButton(action: PadAction, dark: Boolean): View = TextView(this).apply {
         text = action.icon
         gravity = Gravity.CENTER
         textSize = prefs.buttonTextSizeSp.toFloat()
-        setTextColor(0xFFF1F3F4.toInt())
+        setTextColor(if (dark) 0xFFF4F4F5.toInt() else 0xFF1F2937.toInt())
         setPadding(0, dp(12), 0, dp(12))
-        background = roundedBox(0xFF3A3F44.toInt(), prefs.buttonRadiusDp)
+        background = roundedBox(if (dark) 0xFF303137.toInt() else 0xFFFFFFFF.toInt(), prefs.buttonRadiusDp)
         isClickable = true
         setOnClickListener { performAction(action) }
         setOnLongClickListener { showActionPicker(action); true }
@@ -430,7 +443,7 @@ class TouchpadService : AccessibilityService() {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(radiusDp).toFloat()
         setColor(withAlpha(color, prefs.opacityPercent))
-        setStroke(dp(1), 0x33FFFFFF)
+        setStroke(dp(1), if (isDarkTheme()) 0x33FFFFFF else 0x22000000)
     }
 
     private fun withAlpha(color: Int, percent: Int): Int {
@@ -443,7 +456,12 @@ class TouchpadService : AccessibilityService() {
     private fun showActionPicker(current: PadAction) {
         val labels = PadAction.ALL.map { "${it.icon}  ${getString(it.labelRes)}" }.toTypedArray()
         val checked = PadAction.ALL.indexOf(current)
-        val builder = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+        val dialogTheme = if (isDarkTheme()) {
+            android.R.style.Theme_DeviceDefault_Dialog_Alert
+        } else {
+            android.R.style.Theme_DeviceDefault_Light_Dialog_Alert
+        }
+        val builder = android.app.AlertDialog.Builder(this, dialogTheme)
             .setTitle(R.string.pick_action)
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 val picked = PadAction.ALL[which]
@@ -577,14 +595,14 @@ class TouchpadService : AccessibilityService() {
                 resizingPanel = true
                 resizingFromX = e.rawX
                 resizingFromY = e.rawY
-                resizingPanelWidth = panel?.width ?: dp(prefs.panelWidthDp.coerceAtLeast(280))
+                resizingPanelWidth = panel?.width ?: dp(prefs.panelWidthDp.coerceAtLeast(PANEL_MIN_WIDTH_DP))
                 resizingPanelHeight = dp(prefs.padHeightDp)
             }
             MotionEvent.ACTION_MOVE -> if (resizingPanel) {
                 val width = resizePanelWidth(
                     resizingPanelWidth,
                     (e.rawX - resizingFromX).roundToInt(),
-                    dp(280).coerceAtMost(screenW),
+                    dp(PANEL_MIN_WIDTH_DP).coerceAtMost(screenW),
                     screenW,
                 )
                 val height = resizePanelHeight(
@@ -594,8 +612,13 @@ class TouchpadService : AccessibilityService() {
                     screenH / 2,
                 )
                 prefs.panelWidthDp = pixelsToDp(width, resources.displayMetrics.density)
-                prefs.padWidthPercent = (width * 100 / screenW).coerceIn(40, 100)
+                prefs.padWidthPercent = (width * 100 / screenW).coerceIn(20, 100)
                 prefs.padHeightDp = pixelsToDp(height, resources.displayMetrics.density)
+                val nextCompact = width < dp(260)
+                if (nextCompact != compactButtons) {
+                    compactButtons = nextCompact
+                    renderButtons(compact = compactButtons)
+                }
                 panel?.let { root ->
                     val window = panelParams ?: return@let
                     window.width = width
@@ -855,8 +878,7 @@ class TouchpadService : AccessibilityService() {
 
     private fun updateCursor() {
         val p = cursorParams ?: return
-        val sizePx = dp(prefs.cursorSizeDp.coerceIn(16, 160))
-        val origin = cursorViewOrigin(cursorX, cursorY, sizePx)
+        val origin = cursorViewOrigin(cursorX, cursorY)
         p.x = origin.x
         p.y = origin.y
         cursorView?.let { runCatching { wm.updateViewLayout(it, p) } }

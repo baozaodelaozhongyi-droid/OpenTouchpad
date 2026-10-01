@@ -38,13 +38,13 @@ class CursorArrowView(context: Context) : View(context) {
         if (size <= 0f) return
 
         pointer.reset()
-        pointer.moveTo(size * 0.08f, size * 0.05f)
-        pointer.lineTo(size * 0.08f, size * 0.88f)
-        pointer.lineTo(size * 0.31f, size * 0.69f)
-        pointer.lineTo(size * 0.51f, size * 0.98f)
-        pointer.lineTo(size * 0.68f, size * 0.88f)
-        pointer.lineTo(size * 0.48f, size * 0.58f)
-        pointer.lineTo(size * 0.78f, size * 0.58f)
+        pointer.moveTo(0f, 0f)
+        pointer.lineTo(0f, size * 0.83f)
+        pointer.lineTo(size * 0.23f, size * 0.64f)
+        pointer.lineTo(size * 0.43f, size * 0.93f)
+        pointer.lineTo(size * 0.60f, size * 0.83f)
+        pointer.lineTo(size * 0.40f, size * 0.53f)
+        pointer.lineTo(size * 0.70f, size * 0.53f)
         pointer.close()
 
         outline.strokeWidth = (size * 0.055f).coerceAtLeast(2f)
