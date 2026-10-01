@@ -69,12 +69,7 @@ class Prefs(ctx: Context) {
 
     /** 按钮槽位，逗号分隔的 PadAction.id；默认 12 个。 */
     var buttons: List<PadAction>
-        get() {
-            val raw = sp.getString("buttons", null)
-                ?: return PadAction.DEFAULT
-            val list = raw.split(',').mapNotNull { PadAction.fromId(it) }
-            return list.ifEmpty { PadAction.DEFAULT }
-        }
+        get() = decodeButtonSlots(sp.getString("buttons", null))
         set(v) = sp.edit().putString("buttons", v.joinToString(",") { it.id }).apply()
 
     // ── 手感 ──

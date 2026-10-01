@@ -70,7 +70,6 @@ class TouchpadService : AccessibilityService() {
     private var moved = false
     private var longPressFired = false
     private var dwellFired = false
-    private var lastTapTime = 0L
 
     // 拖拽锁定
     private var dragging = false
@@ -119,6 +118,7 @@ class TouchpadService : AccessibilityService() {
         cursorX = screenW / 2f
         cursorY = screenH / 2f
         buildCursor()
+        updateCursor()
         buildPanel()
     }
 
@@ -231,8 +231,9 @@ class TouchpadService : AccessibilityService() {
         val storedX = prefs.padX
         val storedY = prefs.padY
         if (storedX >= 0 && storedY >= 0) {
-            lp.x = storedX
-            lp.y = storedY
+            val position = clampPanelPosition(storedX, storedY, w, 0, screenW, screenH)
+            lp.x = position.x
+            lp.y = position.y
         } else {
             lp.x = (screenW - w) / 2
             lp.y = screenH - h - dp(12)
@@ -281,6 +282,7 @@ class TouchpadService : AccessibilityService() {
         runCatching { wm.addView(root, lp) }
         panel = root
         panelParams = lp
+        keepPanelInBounds()
     }
 
     private fun addMiniDot() {
@@ -301,6 +303,7 @@ class TouchpadService : AccessibilityService() {
         runCatching { wm.addView(dot, lp) }
         panel = dot
         panelParams = lp
+        keepPanelInBounds()
     }
 
     private fun makeHandle(label: String, onTouch: (View, MotionEvent) -> Boolean): View =
@@ -391,8 +394,13 @@ class TouchpadService : AccessibilityService() {
                 lastRawX = e.rawX; lastRawY = e.rawY
                 downTime = System.currentTimeMillis()
                 moved = false; longPressFired = false; dwellFired = false
-                if (dragging) moveDragTo(cursorX, cursorY)
-                if (!dragging) main.postDelayed(longPressRunnable, prefs.longPressMs.toLong())
+                if (dragging) {
+                    moveDragTo(cursorX, cursorY)
+                } else if (shouldScheduleLongPress(prefs.dwellMs, dragging = false)) {
+                    main.postDelayed(longPressRunnable, prefs.longPressMs.toLong())
+                } else {
+                    scheduleDwell()
+                }
             }
 
             MotionEvent.ACTION_MOVE -> {
@@ -412,7 +420,7 @@ class TouchpadService : AccessibilityService() {
                 scheduleDwell()
             }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_UP -> {
                 main.removeCallbacks(longPressRunnable)
                 cancelDwell()
                 when {
@@ -420,6 +428,12 @@ class TouchpadService : AccessibilityService() {
                     longPressFired || dwellFired -> Unit
                     !moved -> tapOrDouble()
                 }
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                main.removeCallbacks(longPressRunnable)
+                cancelDwell()
+                if (dragging) endDrag()
             }
         }
     }
@@ -445,15 +459,10 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun tapOrDouble() {
-        val now = System.currentTimeMillis()
-        if (now - lastTapTime < 300) {
-            lastTapTime = 0
-            tapAt(cursorX, cursorY)
-            main.postDelayed({ tapAt(cursorX, cursorY) }, 110)
-        } else {
-            lastTapTime = now
-            tapAt(cursorX, cursorY)
-        }
+        // The first tap has already been dispatched on release. Dispatching two
+        // more gestures for the second release would turn a double tap into
+        // three taps.
+        tapAt(cursorX, cursorY)
         haptic()
     }
 
@@ -467,8 +476,16 @@ class TouchpadService : AccessibilityService() {
             }
             MotionEvent.ACTION_MOVE -> if (movingPanel) {
                 val lp = panelParams ?: return true
-                lp.x = movingPanelX + (e.rawX - movingFromX).roundToInt()
-                lp.y = movingPanelY + (e.rawY - movingFromY).roundToInt()
+                val position = clampPanelPosition(
+                    movingPanelX + (e.rawX - movingFromX).roundToInt(),
+                    movingPanelY + (e.rawY - movingFromY).roundToInt(),
+                    panel?.width ?: 0,
+                    panel?.height ?: 0,
+                    screenW,
+                    screenH,
+                )
+                lp.x = position.x
+                lp.y = position.y
                 panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
                 prefs.padX = lp.x
                 prefs.padY = lp.y
@@ -487,7 +504,7 @@ class TouchpadService : AccessibilityService() {
         if (e.actionMasked == MotionEvent.ACTION_MOVE) {
             val delta = (e.rawY - movingFromY).roundToInt()
             val h = (movingPanelY - delta).coerceIn(dp(80), screenH / 2)
-            prefs.padHeightDp = h / resources.displayMetrics.density.toInt().coerceAtLeast(1)
+            prefs.padHeightDp = pixelsToDp(h, resources.displayMetrics.density)
             addFullPanelWithKeepPosition()
         }
         return true
@@ -506,6 +523,25 @@ class TouchpadService : AccessibilityService() {
                 panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
             }
         }
+        keepPanelInBounds()
+    }
+
+    private fun keepPanelInBounds() {
+        val lp = panelParams ?: return
+        val position = clampPanelPosition(
+            lp.x,
+            lp.y,
+            panel?.width ?: 0,
+            panel?.height ?: 0,
+            screenW,
+            screenH,
+        )
+        if (position.x == lp.x && position.y == lp.y) return
+        lp.x = position.x
+        lp.y = position.y
+        prefs.padX = position.x
+        prefs.padY = position.y
+        panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
     }
 
     // ───────────────────────── 手势注入 ─────────────────────────
@@ -546,8 +582,8 @@ class TouchpadService : AccessibilityService() {
         lastDragX = cursorX
         lastDragY = cursorY
         val path = Path().apply {
+            // A continued stroke must start exactly where the previous one ends.
             moveTo(cursorX, cursorY)
-            lineTo(cursorX + 1, cursorY + 1)
         }
         val stroke = GestureDescription.StrokeDescription(path, 0, 1, true)
         activeStroke = stroke
