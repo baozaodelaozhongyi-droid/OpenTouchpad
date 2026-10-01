@@ -33,15 +33,20 @@ This app declares `android:isAccessibilityTool="true"` in
 genuine, ad-free, offline assistive tool — so it keeps working exactly where it is needed.
 Reference: [Android Developers blog](https://developer.android.com/blog/posts/enhancing-android-security-stop-malware-from-snooping-on-your-app-data)
 
-### Features (v0.1)
+### Features (v0.2)
 
-- Floating, resizable touchpad panel (accessibility overlay — no extra permission needed)
-- Large cursor that follows your finger; sensitivity adjustable
-- Single tap / double tap / **long press** / **drag & drop with a lock button**
-- Scroll up & down, pull down notifications
-- Big navigation buttons: Back, Home, Recents, Hide
-- **Dwell click** (auto click after the finger rests for N ms) — useful for very limited dexterity
-- Haptic feedback, cursor size, panel height — all adjustable
+- Floating touchpad panel — drag the **move** handle to place it anywhere, drag **size** to resize, minimise it to a small dot
+- Large cursor that follows your finger; size, colour and speed adjustable
+- Single tap / double tap / **long press** / **drag & drop with a lock button** (real "hold", not a fake long press)
+- **Dwell click** (auto click after the finger rests for N ms) — for very limited dexterity
+- Scroll in 4 directions + long swipes in 4 directions
+- **12 configurable buttons**, each bound to any action — long-press a button to re-bind it:
+  left click · long press · drag lock · 4 scroll directions · 4 long swipes ·
+  notification panel · power menu · volume ± · screenshot · keyboard (focus input field) ·
+  back · home · recents · settings · hide
+- Auto-hide in landscape, auto-minimise when the keyboard opens
+- Panel opacity, button corner radius, spacing and icon size — all adjustable
+- Haptic feedback
 - Chinese + English UI
 
 ### Install
@@ -94,15 +99,20 @@ Android 16 引入的 `accessibilityDataSensitive` 与旧的 `setFilterTouchesWhe
 里声明了 `android:isAccessibilityTool="true"`（它确实是离线、无广告的无障碍工具），所以在最需要的界面上依然可用。
 参考：[Android 开发者博客](https://developer.android.com/blog/posts/enhancing-android-security-stop-malware-from-snooping-on-your-app-data)
 
-### 功能（v0.1）
+### 功能（v0.2）
 
-- 悬浮可调触控板（用无障碍叠加层，不需要额外权限）
-- 大光标跟随手指，灵敏度可调
-- 单击 / 双击 / **长按** / **拖拽（带锁定按钮，实现"按住不放"）**
-- 上滑下滑、下拉通知栏
-- 大按钮：返回、主屏、最近任务、隐藏面板
+- 悬浮触控板 —— 拖「移动」把手放到屏幕任何位置，拖「大小」把手缩放，可最小化成一个小圆点
+- 大光标跟随手指，大小／颜色／速度都可调
+- 单击 / 双击 / **长按** / **拖拽（带锁定按钮，真正的"按住不放"）**
 - **停留点击**（手指静止 N 毫秒自动点击）—— 适合手部动作非常有限的人
-- 震动反馈、光标大小、面板高度全部可调
+- 四方向滚动 + 四方向长滑动
+- **12 个可自定义按钮**（长按面板上的按钮即可改绑）：
+  左键 · 长按 · 拖拽锁定 · 四方向滚动 · 四方向长滑 ·
+  通知栏 · 电源菜单 · 音量± · 截图 · 键盘（聚焦输入框）·
+  返回 · 主屏 · 最近任务 · 设置 · 收起
+- 横屏自动隐藏，键盘弹出时自动最小化
+- 透明度、按钮圆角、间距、图标大小全部可调
+- 震动反馈
 - 中英双语界面
 
 ### 安装

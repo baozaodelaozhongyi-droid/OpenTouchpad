@@ -2,57 +2,102 @@ package io.github.opentouchpad
 
 import android.content.Context
 
-/** 全部设置都存在本地 SharedPreferences，不联网、不上传。 */
+/** 全部设置都存在本地 SharedPreferences，不联网、不上传、无遥测。 */
 class Prefs(ctx: Context) {
 
     private val sp = ctx.getSharedPreferences("opentouchpad", Context.MODE_PRIVATE)
 
-    /** 触控板灵敏度：手指移动 1px，光标移动 sensitivity px */
+    // ── 光标 ──
     var sensitivity: Float
-        get() = sp.getFloat("sensitivity", 1.6f)
-        set(value) { sp.edit().putFloat("sensitivity", value).apply() }
+        get() = sp.getFloat("sensitivity", 1.4f)
+        set(v) = sp.edit().putFloat("sensitivity", v).apply()
 
-    /** 触控板高度（dp） */
-    var padHeightDp: Int
-        get() = sp.getInt("padHeightDp", 220)
-        set(value) { sp.edit().putInt("padHeightDp", value).apply() }
-
-    /** 光标直径（dp） */
     var cursorSizeDp: Int
-        get() = sp.getInt("cursorSizeDp", 36)
-        set(value) { sp.edit().putInt("cursorSizeDp", value).apply() }
+        get() = sp.getInt("cursorSize", 36)
+        set(v) = sp.edit().putInt("cursorSize", v).apply()
 
-    /** 长按判定时长（ms） */
+    var cursorColor: Int
+        get() = sp.getInt("cursorColor", 0xFFFFFFFF.toInt())
+        set(v) = sp.edit().putInt("cursorColor", v).apply()
+
+    // ── 触控板 ──
+    var padHeightDp: Int
+        get() = sp.getInt("padHeight", 240)
+        set(v) = sp.edit().putInt("padHeight", v).apply()
+
+    var padWidthPercent: Int
+        get() = sp.getInt("padWidthPercent", 96)
+        set(v) = sp.edit().putInt("padWidthPercent", v).apply()
+
+    var opacityPercent: Int
+        get() = sp.getInt("opacity", 75)
+        set(v) = sp.edit().putInt("opacity", v).apply()
+
+    /** 面板左上角坐标；-1 表示"自动贴在底部居中"。 */
+    var padX: Int
+        get() = sp.getInt("padX", -1)
+        set(v) = sp.edit().putInt("padX", v).apply()
+
+    var padY: Int
+        get() = sp.getInt("padY", -1)
+        set(v) = sp.edit().putInt("padY", v).apply()
+
+    var minimized: Boolean
+        get() = sp.getBoolean("minimized", false)
+        set(v) = sp.edit().putBoolean("minimized", v).apply()
+
+    var autoHideLandscape: Boolean
+        get() = sp.getBoolean("autoHideLandscape", true)
+        set(v) = sp.edit().putBoolean("autoHideLandscape", v).apply()
+
+    var minimizeOnKeyboard: Boolean
+        get() = sp.getBoolean("minimizeOnKeyboard", true)
+        set(v) = sp.edit().putBoolean("minimizeOnKeyboard", v).apply()
+
+    // ── 按钮 ──
+    var buttonRadiusDp: Int
+        get() = sp.getInt("buttonRadius", 14)
+        set(v) = sp.edit().putInt("buttonRadius", v).apply()
+
+    var buttonSpacingDp: Int
+        get() = sp.getInt("buttonSpacing", 6)
+        set(v) = sp.edit().putInt("buttonSpacing", v).apply()
+
+    var buttonTextSizeSp: Int
+        get() = sp.getInt("buttonTextSize", 16)
+        set(v) = sp.edit().putInt("buttonTextSize", v).apply()
+
+    /** 按钮槽位，逗号分隔的 PadAction.id；默认 12 个。 */
+    var buttons: List<PadAction>
+        get() {
+            val raw = sp.getString("buttons", null)
+                ?: return PadAction.DEFAULT
+            val list = raw.split(',').mapNotNull { PadAction.fromId(it) }
+            return list.ifEmpty { PadAction.DEFAULT }
+        }
+        set(v) = sp.edit().putString("buttons", v.joinToString(",") { it.id }).apply()
+
+    // ── 手感 ──
     var longPressMs: Int
         get() = sp.getInt("longPressMs", 600)
-        set(value) { sp.edit().putInt("longPressMs", value).apply() }
+        set(v) = sp.edit().putInt("longPressMs", v).apply()
 
-    /** 停留点击（dwell click）：手指静止这么久就自动点击；0 = 关闭 */
+    /** 0 = 关闭停留点击；否则为"手指静止这么久就自动点一下"的毫秒数。 */
     var dwellMs: Int
         get() = sp.getInt("dwellMs", 0)
-        set(value) { sp.edit().putInt("dwellMs", value).apply() }
+        set(v) = sp.edit().putInt("dwellMs", v).apply()
 
-    /** 震动反馈 */
+    var scrollDistanceDp: Int
+        get() = sp.getInt("scrollDistance", 180)
+        set(v) = sp.edit().putInt("scrollDistance", v).apply()
+
+    var swipeDistanceDp: Int
+        get() = sp.getInt("swipeDistance", 420)
+        set(v) = sp.edit().putInt("swipeDistance", v).apply()
+
     var haptics: Boolean
         get() = sp.getBoolean("haptics", true)
-        set(value) { sp.edit().putBoolean("haptics", value).apply() }
+        set(v) = sp.edit().putBoolean("haptics", v).apply()
 
-    /** 面板是否显示 */
-    var panelVisible: Boolean
-        get() = sp.getBoolean("panelVisible", true)
-        set(value) { sp.edit().putBoolean("panelVisible", value).apply() }
-
-    /** 双击间隔（ms） */
-    var doubleTapMs: Int
-        get() = sp.getInt("doubleTapMs", 320)
-        set(value) { sp.edit().putInt("doubleTapMs", value).apply() }
-
-    /** 移动多大距离才算"拖拽/滑动"而不是"点击"（dp） */
-    var slopDp: Int
-        get() = sp.getInt("slopDp", 8)
-        set(value) { sp.edit().putInt("slopDp", value).apply() }
-
-    fun reset() {
-        sp.edit().clear().apply()
-    }
+    fun resetAll() = sp.edit().clear().apply()
 }

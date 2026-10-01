@@ -1,7 +1,87 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OpenTouchpad</string>
-    <string name="app_description">Cursor, touchpad and big buttons for people who cannot reach the whole screen.</string>
+    <string name="app_description">Touchpad, cursor and large buttons for people who cannot reach the whole screen. Offline, no ads, no analytics.</string>
     <string name="service_label">OpenTouchpad touchpad</string>
-    <string name="service_description">Shows a touchpad, a cursor and large action buttons so the whole screen can be operated from a small area. No internet, no ads, no analytics.</string>
+    <string name="service_description">Shows a touchpad, an on-screen cursor and large buttons so you can control the whole screen with small movements. No internet, no ads, no tracking.</string>
+
+    <!-- 状态 / 引导 -->
+    <string name="status_on">✅ Service is running</string>
+    <string name="status_off">⚠️ Service is off — tap the button below to enable it</string>
+    <string name="open_a11y_settings">Open accessibility settings</string>
+    <string name="cannot_open_settings">Could not open accessibility settings</string>
+    <string name="steps_title">Setup</string>
+    <string name="steps_body">1. Enable the service in Settings → Accessibility → OpenTouchpad.\n2. If Android blocks it ("restricted setting"), open App info → ⋮ → Allow restricted settings, then try again.\n3. Come back here and adjust the size, speed and buttons to fit the user.</string>
+    <string name="tutorial_title">Test checklist</string>
+    <string name="tutorial_body">These screens are the ones other touchpad apps fail on (Android 16 blocks injected gestures for apps that are not declared accessibility tools):\n\n1. Permission dialog — e.g. open Telegram and tap the microphone, then use the touchpad to press "Allow".\n2. Developer options — scroll the list and toggle something.\n3. Google Play account page — scroll and tap.\n\nIf all three work, the touchpad is doing what it is meant to do.</string>
+
+    <!-- 面板把手 -->
+    <string name="handle_move">⣿ move</string>
+    <string name="handle_resize">⤡ size</string>
+    <string name="handle_minimize">✕ hide</string>
+    <string name="pick_action">Choose an action</string>
+
+    <!-- 动作名 -->
+    <string name="act_click">Left click</string>
+    <string name="act_long_press">Long press at cursor</string>
+    <string name="act_drag_lock">Drag lock (hold / release)</string>
+    <string name="act_scroll_up">Scroll up</string>
+    <string name="act_scroll_down">Scroll down</string>
+    <string name="act_scroll_left">Scroll left</string>
+    <string name="act_scroll_right">Scroll right</string>
+    <string name="act_swipe_up">Long swipe up</string>
+    <string name="act_swipe_down">Long swipe down</string>
+    <string name="act_swipe_left">Long swipe left</string>
+    <string name="act_swipe_right">Long swipe right</string>
+    <string name="act_notifications">Notification panel</string>
+    <string name="act_power">Power menu</string>
+    <string name="act_volume_up">Volume up</string>
+    <string name="act_volume_down">Volume down</string>
+    <string name="act_screenshot">Screenshot</string>
+    <string name="act_keyboard">Keyboard (focus input field)</string>
+    <string name="act_back">Back</string>
+    <string name="act_home">Home</string>
+    <string name="act_recents">Recent apps</string>
+    <string name="act_settings">OpenTouchpad settings</string>
+    <string name="act_minimize">Hide touchpad</string>
+    <string name="act_none">Empty slot</string>
+
+    <!-- 设置项 -->
+    <string name="sec_pad">Touchpad</string>
+    <string name="sec_cursor">Cursor</string>
+    <string name="sec_feel">Feel</string>
+    <string name="sec_buttons">Buttons</string>
+    <string name="sec_about">About</string>
+
+    <string name="set_pad_height">Touchpad height</string>
+    <string name="set_pad_width">Touchpad width</string>
+    <string name="set_opacity">Opacity</string>
+    <string name="set_cursor_size">Cursor size</string>
+    <string name="set_cursor_color">Cursor colour</string>
+    <string name="set_sensitivity">Cursor speed</string>
+    <string name="set_long_press">Long press duration</string>
+    <string name="set_dwell">Dwell click (hold still to click)</string>
+    <string name="set_scroll_distance">Scroll distance</string>
+    <string name="set_swipe_distance">Long swipe distance</string>
+    <string name="set_button_radius">Button corner radius</string>
+    <string name="set_button_spacing">Space between buttons</string>
+    <string name="set_button_text_size">Button icon size</string>
+
+    <string name="switch_haptics">Vibration feedback</string>
+    <string name="switch_autohide_landscape">Hide touchpad in landscape</string>
+    <string name="switch_minimize_keyboard">Minimize when keyboard opens</string>
+
+    <string name="btn_toggle_panel">Show / hide touchpad</string>
+    <string name="btn_reset_position">Reset touchpad position</string>
+    <string name="btn_reset_all">Reset all settings</string>
+    <string name="btn_tutorial">Test checklist</string>
+    <string name="btn_setup">Setup steps</string>
+    <string name="btn_github">Source code on GitHub</string>
+    <string name="btn_edit_buttons">Tap a button to change its action</string>
+
+    <string name="screenshot_needs_p">Screenshot needs Android 9 or newer</string>
+    <string name="no_input_field">No text field focused yet — tap a text box first</string>
+    <string name="dwell_off">off</string>
+    <string name="reset_done">Settings reset</string>
+    <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
 </resources>

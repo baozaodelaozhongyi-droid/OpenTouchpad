@@ -1,10 +1,16 @@
 package io.github.opentouchpad
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -14,10 +20,15 @@ import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.roundToInt
 
+/**
+ * 设置界面。刻意用系统的普通控件 + 大号点击区域：
+ * 这个 App 的用户可能很难精准点击，所以宁可界面朴素一点，也别做成小按钮的密集布局。
+ */
 class MainActivity : Activity() {
 
     private lateinit var prefs: Prefs
-    private lateinit var status: TextView
+    private lateinit var statusView: TextView
+    private lateinit var content: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,15 +41,18 @@ class MainActivity : Activity() {
         updateStatus()
     }
 
+    // ───────────────────────── 界面骨架 ─────────────────────────
+
     private fun buildUi(): View {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(24), dp(20), dp(32))
         }
+        content = col
 
         col.addView(TextView(this).apply {
             text = getString(R.string.app_name)
-            textSize = 24f
+            textSize = 26f
         })
         col.addView(TextView(this).apply {
             text = getString(R.string.app_description)
@@ -46,95 +60,118 @@ class MainActivity : Activity() {
             setPadding(0, dp(8), 0, dp(16))
         })
 
-        status = TextView(this).apply { textSize = 15f }
-        col.addView(status)
+        statusView = TextView(this).apply {
+            textSize = 16f
+            setPadding(0, 0, 0, dp(12))
+        }
+        col.addView(statusView)
 
-        col.addView(Button(this).apply {
-            text = getString(R.string.open_a11y_settings)
-            setOnClickListener {
-                runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                    .onFailure { toast(getString(R.string.cannot_open_settings)) }
-            }
+        col.addView(bigButton(getString(R.string.open_a11y_settings)) { openAccessibilitySettings() })
+        col.addView(bigButton(getString(R.string.btn_setup)) { showDialog(getString(R.string.steps_title), getString(R.string.steps_body)) })
+        col.addView(bigButton(getString(R.string.btn_tutorial)) { showDialog(getString(R.string.tutorial_title), getString(R.string.tutorial_body)) })
+
+        // ── 触控板 ──
+        col.addView(section(getString(R.string.sec_pad)))
+        col.addView(slider(getString(R.string.set_pad_height), 80, 560, prefs.padHeightDp)) { prefs.padHeightDp = it; reload() }
+        col.addView(slider(getString(R.string.set_pad_width), 40, 100, prefs.padWidthPercent)) { prefs.padWidthPercent = it; reload() }
+        col.addView(slider(getString(R.string.set_opacity), 20, 100, prefs.opacityPercent)) { prefs.opacityPercent = it; reload() }
+        col.addView(bigButton(getString(R.string.btn_toggle_panel)) {
+            TouchpadService.instance?.toggleMinimize() ?: toast(getString(R.string.status_off))
+        })
+        col.addView(bigButton(getString(R.string.btn_reset_position)) {
+            prefs.padX = -1
+            prefs.padY = -1
+            reload()
         })
 
-        slider(col, getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt()) {
-            prefs.sensitivity = it / 10f
-            TouchpadService.instance?.reload()
-        }
-        slider(col, getString(R.string.set_pad_height), 120, 480, prefs.padHeightDp) {
-            prefs.padHeightDp = it
-            TouchpadService.instance?.reload()
-        }
-        slider(col, getString(R.string.set_cursor_size), 12, 96, prefs.cursorSizeDp) {
-            prefs.cursorSizeDp = it
-            TouchpadService.instance?.reload()
-        }
-        slider(col, getString(R.string.set_long_press), 300, 1500, prefs.longPressMs) {
-            prefs.longPressMs = it
-        }
-        slider(col, getString(R.string.set_dwell), 0, 2000, prefs.dwellMs) {
-            prefs.dwellMs = it
-        }
+        // ── 光标 ──
+        col.addView(section(getString(R.string.sec_cursor)))
+        col.addView(slider(getString(R.string.set_cursor_size), 16, 96, prefs.cursorSizeDp)) { prefs.cursorSizeDp = it; reload() }
+        col.addView(label(getString(R.string.set_cursor_color)))
+        col.addView(colorRow())
 
-        col.addView(Switch(this).apply {
-            text = getString(R.string.set_haptics)
-            isChecked = prefs.haptics
-            setPadding(0, dp(16), 0, 0)
-            setOnCheckedChangeListener { _, checked -> prefs.haptics = checked }
+        // ── 手感 ──
+        col.addView(section(getString(R.string.sec_feel)))
+        col.addView(slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt()) { prefs.sensitivity = it / 10f })
+        col.addView(slider(getString(R.string.set_long_press), 200, 1500, prefs.longPressMs)) { prefs.longPressMs = it }
+        col.addView(slider(getString(R.string.set_dwell), 0, 2000, prefs.dwellMs, getString(R.string.dwell_off))) { prefs.dwellMs = it }
+        col.addView(slider(getString(R.string.set_scroll_distance), 60, 500, prefs.scrollDistanceDp)) { prefs.scrollDistanceDp = it }
+        col.addView(slider(getString(R.string.set_swipe_distance), 150, 900, prefs.swipeDistanceDp)) { prefs.swipeDistanceDp = it }
+        col.addView(switchRow(getString(R.string.switch_haptics), prefs.haptics) { prefs.haptics = it })
+        col.addView(switchRow(getString(R.string.switch_autohide_landscape), prefs.autoHideLandscape) { prefs.autoHideLandscape = it; reload() })
+        col.addView(switchRow(getString(R.string.switch_minimize_keyboard), prefs.minimizeOnKeyboard) { prefs.minimizeOnKeyboard = it })
+
+        // ── 按钮 ──
+        col.addView(section(getString(R.string.sec_buttons)))
+        col.addView(label(getString(R.string.btn_edit_buttons)))
+        col.addView(buttonSlotList())
+        col.addView(slider(getString(R.string.set_button_radius), 0, 40, prefs.buttonRadiusDp)) { prefs.buttonRadiusDp = it; reload() }
+        col.addView(slider(getString(R.string.set_button_spacing), 0, 24, prefs.buttonSpacingDp)) { prefs.buttonSpacingDp = it; reload() }
+        col.addView(slider(getString(R.string.set_button_text_size), 10, 34, prefs.buttonTextSizeSp)) { prefs.buttonTextSizeSp = it; reload() }
+
+        // ── 关于 ──
+        col.addView(section(getString(R.string.sec_about)))
+        col.addView(bigButton(getString(R.string.btn_github)) {
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.project_url)))) }
         })
-
-        col.addView(Button(this).apply {
-            text = getString(R.string.toggle_panel)
-            setOnClickListener {
-                val svc = TouchpadService.instance
-                if (svc == null) {
-                    toast(getString(R.string.enable_service_first))
-                } else {
-                    svc.togglePanel()
-                }
-            }
-        })
-
-        col.addView(Button(this).apply {
-            text = getString(R.string.reset_defaults)
-            setOnClickListener {
-                prefs.reset()
-                TouchpadService.instance?.reload()
-                recreate()
-                toast(getString(R.string.done))
-            }
-        })
-
-        col.addView(TextView(this).apply {
-            text = getString(R.string.privacy_note)
-            textSize = 12f
-            setPadding(0, dp(24), 0, 0)
+        col.addView(bigButton(getString(R.string.btn_reset_all)) {
+            prefs.resetAll()
+            toast(getString(R.string.reset_done))
+            reload()
+            recreate()
         })
 
         return ScrollView(this).apply { addView(col) }
     }
 
+    // ───────────────────────── 小控件 ─────────────────────────
+
+    private fun section(title: String): View = TextView(this).apply {
+        text = title
+        textSize = 13f
+        setTextColor(0xFF5F6368.toInt())
+        setPadding(0, dp(22), 0, dp(6))
+    }
+
+    private fun label(text: String): View = TextView(this).apply {
+        this.text = text
+        textSize = 15f
+        setPadding(0, dp(10), 0, dp(2))
+    }
+
+    private fun bigButton(text: String, onClick: () -> Unit): View = Button(this).apply {
+        this.text = text
+        isAllCaps = false
+        textSize = 16f
+        minHeight = dp(52)
+        setOnClickListener { onClick() }
+    }
+
     private fun slider(
-        parent: LinearLayout,
-        label: String,
+        title: String,
         min: Int,
         max: Int,
         value: Int,
-        onChange: (Int) -> Unit
-    ) {
+        offLabel: String? = null,
+        onChange: (Int) -> Unit,
+    ): View {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val tv = TextView(this).apply {
-            text = "$label: $value"
-            textSize = 14f
-            setPadding(0, dp(14), 0, 0)
+            textSize = 15f
+            setPadding(0, dp(12), 0, 0)
         }
-        parent.addView(tv)
+        fun render(v: Int) {
+            tv.text = if (v <= 0 && offLabel != null) "$title: $offLabel" else "$title: $v"
+        }
+        render(value)
+        box.addView(tv)
         val sb = SeekBar(this).apply {
             this.max = max - min
             progress = (value - min).coerceIn(0, max - min)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val v = progress + min
-                    tv.text = "$label: $v"
+                    render(v)
                     onChange(v)
                 }
 
@@ -142,26 +179,117 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
             })
         }
-        parent.addView(sb)
+        box.addView(sb, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        return box
+    }
+
+    private fun switchRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit): View =
+        Switch(this).apply {
+            text = title
+            textSize = 15f
+            isChecked = checked
+            minHeight = dp(52)
+            setPadding(0, dp(8), 0, dp(8))
+            setOnCheckedChangeListener { _, value -> onChange(value) }
+        }
+
+    private fun colorRow(): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val colors = listOf(
+            0xFFFFFFFF.toInt() to "white",
+            0xFF000000.toInt() to "black",
+            0xFFFFEB3B.toInt() to "yellow",
+            0xFF00E5FF.toInt() to "cyan",
+            0xFFFF4081.toInt() to "pink",
+            0xFF76FF03.toInt() to "green",
+        )
+        colors.forEach { (color, _) ->
+            val swatch = View(this).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(color)
+                    setStroke(dp(2), if (prefs.cursorColor == color) 0xFF1A73E8.toInt() else 0x55000000)
+                }
+                setOnClickListener {
+                    prefs.cursorColor = color
+                    reload()
+                    recreate()
+                }
+            }
+            row.addView(swatch, LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+                setMargins(dp(6), dp(6), dp(6), dp(6))
+            })
+        }
+        return row
+    }
+
+    private fun buttonSlotList(): View {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val slots = prefs.buttons.toMutableList()
+        while (slots.size < 12) slots.add(PadAction.NONE)
+        slots.forEachIndexed { index, action ->
+            val row = TextView(this).apply {
+                text = "${index + 1}.  ${action.icon}  ${getString(action.labelRes)}"
+                textSize = 16f
+                setPadding(dp(4), dp(14), dp(4), dp(14))
+                setOnClickListener { pickAction(index, action) }
+            }
+            box.addView(row)
+        }
+        return box
+    }
+
+    private fun pickAction(index: Int, current: PadAction) {
+        val labels = PadAction.ALL.map { "${it.icon}  ${getString(it.labelRes)}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.pick_action)
+            .setSingleChoiceItems(labels, PadAction.ALL.indexOf(current)) { dialog, which ->
+                val list = prefs.buttons.toMutableList()
+                while (list.size <= index) list.add(PadAction.NONE)
+                list[index] = PadAction.ALL[which]
+                prefs.buttons = list
+                reload()
+                dialog.dismiss()
+                recreate()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showDialog(title: String, body: String) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(body)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    // ───────────────────────── 杂项 ─────────────────────────
+
+    private fun openAccessibilitySettings() {
+        runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            .onFailure { toast(getString(R.string.cannot_open_settings)) }
     }
 
     private fun updateStatus() {
-        status.text = if (isServiceEnabled()) {
-            getString(R.string.status_on)
-        } else {
-            getString(R.string.status_off)
-        }
+        statusView.text = if (isServiceEnabled()) getString(R.string.status_on) else getString(R.string.status_off)
     }
 
     private fun isServiceEnabled(): Boolean {
         val flat = Settings.Secure.getString(
             contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
         ) ?: return false
         return flat.split(':').any { it.startsWith(packageName) }
     }
 
-    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    private fun reload() {
+        TouchpadService.instance?.reload()
+    }
+
+    private fun toast(msg: String) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).roundToInt()
 }

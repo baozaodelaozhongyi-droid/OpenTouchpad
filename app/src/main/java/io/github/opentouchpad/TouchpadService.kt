@@ -2,31 +2,38 @@ package io.github.opentouchpad
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
+import android.media.AudioManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.Gravity
-import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.widget.Button
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * 把"屏幕一小块区域"变成整台手机的操作手柄。
+ * OpenTouchpad 的无障碍服务：在屏幕上放一块触控板 + 一枚光标 + 一排可自定义的大按钮，
+ * 用小范围的手指动作去操作整块屏幕。
  *
- * 设计要点：
- *  - 手势一律通过 AccessibilityService.dispatchGesture 注入（所以必须声明 isAccessibilityTool=true，
- *    否则 Android 16 会拒绝在权限弹窗等敏感界面上执行）。
- *  - 拖拽用 StrokeDescription(willContinue=true) + continueStroke() 实现真正的"按住不放"。
- *  - 不需要悬浮窗权限：面板与光标都是 TYPE_ACCESSIBILITY_OVERLAY。
+ * 与"改别人的包"相比的关键差别：这是一个真·无障碍工具，因此可以（也应该）
+ * 在 accessibility_service_config.xml 里声明 isAccessibilityTool="true"，
+ * Android 16 的 accessibilityDataSensitive 才不会拦掉注入的手势。
  */
 class TouchpadService : AccessibilityService() {
 
@@ -40,8 +47,11 @@ class TouchpadService : AccessibilityService() {
     private lateinit var prefs: Prefs
     private val main = Handler(Looper.getMainLooper())
 
-    private var panel: LinearLayout? = null
+    private var panel: View? = null
     private var panelParams: WindowManager.LayoutParams? = null
+    private var padArea: View? = null
+    private var buttonHost: LinearLayout? = null
+
     private var cursorView: View? = null
     private var cursorParams: WindowManager.LayoutParams? = null
 
@@ -50,24 +60,41 @@ class TouchpadService : AccessibilityService() {
     private var cursorX = 0f
     private var cursorY = 0f
 
-    // 触摸状态
+    // 手指状态
     private var downRawX = 0f
     private var downRawY = 0f
     private var lastRawX = 0f
     private var lastRawY = 0f
+    private var downTime = 0L
     private var moved = false
     private var longPressFired = false
     private var dwellFired = false
     private var lastTapTime = 0L
 
-    // 拖拽状态
+    // 拖拽锁定
     private var dragging = false
     private var activeStroke: GestureDescription.StrokeDescription? = null
     private var lastDragX = 0f
     private var lastDragY = 0f
 
-    private val longPressRunnable = Runnable { fireLongPress() }
-    private val dwellRunnable = Runnable { fireDwell() }
+    // 面板拖动 / 缩放
+    private var movingPanel = false
+    private var movingFromX = 0f
+    private var movingFromY = 0f
+    private var movingPanelX = 0
+    private var movingPanelY = 0
+
+    // 键盘弹出时自动最小化（记录是不是"自动"最小化的，好自动还原）
+    private var minimizedByKeyboard = false
+
+    private val longPressRunnable = Runnable {
+        if (!moved && !dwellFired) {
+            longPressFired = true
+            longPressAt(cursorX, cursorY)
+            haptic()
+        }
+    }
+    private var dwellRunnable: Runnable? = null
 
     // ───────────────────────── 生命周期 ─────────────────────────
 
@@ -76,177 +103,284 @@ class TouchpadService : AccessibilityService() {
         instance = this
         prefs = Prefs(this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val dm = resources.displayMetrics
-        screenW = dm.widthPixels
-        screenH = dm.heightPixels
+        refreshScreenMetrics()
         cursorX = screenW / 2f
         cursorY = screenH / 2f
-        buildOverlay()
-    }
-
-    /** 本 App 不需要读取窗口内容，事件回调留空以减少开销。 */
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
-
-    override fun onInterrupt() = Unit
-
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        val dm = resources.displayMetrics
-        screenW = dm.widthPixels
-        screenH = dm.heightPixels
-        cursorX = cursorX.coerceIn(0f, screenW.toFloat())
-        cursorY = cursorY.coerceIn(0f, screenH.toFloat())
-        buildOverlay()
+        buildCursor()
+        buildPanel()
     }
 
     override fun onDestroy() {
-        main.removeCallbacksAndMessages(null)
-        removeOverlay()
         instance = null
+        removePanel()
+        cursorView?.let { runCatching { wm.removeView(it) } }
         super.onDestroy()
     }
 
-    /** MainActivity 改完设置后调用，重建界面。 */
-    fun reload() {
-        if (::prefs.isInitialized) buildOverlay()
+    override fun onInterrupt() = Unit
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
+        if (!prefs.minimizeOnKeyboard) return
+        val ime = isImeVisible()
+        if (ime && !prefs.minimized) {
+            minimizedByKeyboard = true
+            prefs.minimized = true
+            buildPanel()
+        } else if (!ime && minimizedByKeyboard) {
+            minimizedByKeyboard = false
+            prefs.minimized = false
+            buildPanel()
+        }
     }
 
-    fun togglePanel() {
-        prefs.panelVisible = !prefs.panelVisible
-        buildOverlay()
-    }
-
-    // ───────────────────────── 悬浮界面 ─────────────────────────
-
-    private fun buildOverlay() {
-        removeOverlay()
-        buildCursor()
-        if (prefs.panelVisible) buildPanel()
-    }
-
-    private fun buildCursor() {
-        val size = dp(prefs.cursorSizeDp)
-        val v = View(this).apply { background = getDrawable(R.drawable.cursor_dot) }
-        val lp = WindowManager.LayoutParams(
-            size, size,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.START }
-        cursorParams = lp
-        cursorView = v
-        runCatching { wm.addView(v, lp) }
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        refreshScreenMetrics()
+        cursorX = cursorX.coerceIn(0f, screenW.toFloat())
+        cursorY = cursorY.coerceIn(0f, screenH.toFloat())
+        buildPanel()
         updateCursor()
     }
 
-    private fun buildPanel() {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = getDrawable(R.drawable.panel_bg)
-        }
+    /** 设置界面改完之后调用：重建所有视图。 */
+    fun reload() {
+        prefs = Prefs(this)
+        buildCursor()
+        buildPanel()
+        updateCursor()
+    }
 
-        // 触控区
-        val pad = View(this)
-        pad.setOnTouchListener { _, e ->
-            handlePadTouch(e)
+    fun toggleMinimize() {
+        prefs.minimized = !prefs.minimized
+        minimizedByKeyboard = false
+        buildPanel()
+    }
+
+    // ───────────────────────── 视图构建 ─────────────────────────
+
+    private fun refreshScreenMetrics() {
+        val dm = resources.displayMetrics
+        screenW = dm.widthPixels
+        screenH = dm.heightPixels
+    }
+
+    private fun isLandscape(): Boolean =
+        resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    private fun buildCursor() {
+        cursorView?.let { runCatching { wm.removeView(it) } }
+        val size = dp(prefs.cursorSizeDp)
+        val v = View(this).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(prefs.cursorColor)
+                setStroke(dp(2), 0xCC000000.toInt())
+            }
+            alpha = 0.95f
+        }
+        cursorParams = WindowManager.LayoutParams(
+            size, size,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        runCatching { wm.addView(v, cursorParams) }
+        cursorView = v
+    }
+
+    private fun buildPanel() {
+        removePanel()
+        // 横屏时按设置自动隐藏整块触控板（光标保留）
+        if (isLandscape() && prefs.autoHideLandscape) return
+        if (prefs.minimized) addMiniDot() else addFullPanel()
+    }
+
+    private fun removePanel() {
+        panel?.let { runCatching { wm.removeView(it) } }
+        panel = null
+        panelParams = null
+        padArea = null
+        buttonHost = null
+    }
+
+    private fun panelLayoutParams(w: Int, h: Int): WindowManager.LayoutParams {
+        val lp = WindowManager.LayoutParams(
+            w, h,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT,
+        )
+        lp.gravity = Gravity.TOP or Gravity.START
+        val storedX = prefs.padX
+        val storedY = prefs.padY
+        if (storedX >= 0 && storedY >= 0) {
+            lp.x = storedX
+            lp.y = storedY
+        } else {
+            lp.x = (screenW - w) / 2
+            lp.y = screenH - h - dp(12)
+        }
+        return lp
+    }
+
+    private fun addFullPanel() {
+        val padH = dp(prefs.padHeightDp)
+        val widthPx = (screenW * prefs.padWidthPercent / 100)
+
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        // 把手行：移动 / 缩放 / 最小化
+        val handleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val moveHandle = makeHandle(getString(R.string.handle_move)) { v, e -> handleMoveTouch(v, e) }
+        val resizeHandle = makeHandle(getString(R.string.handle_resize)) { v, e -> handleResizeTouch(v, e) }
+        val miniHandle = makeHandle(getString(R.string.handle_minimize)) { _, e ->
+            if (e.actionMasked == MotionEvent.ACTION_UP) toggleMinimize()
             true
         }
-        root.addView(pad, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        handleRow.addView(moveHandle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 3f))
+        handleRow.addView(resizeHandle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f))
+        handleRow.addView(miniHandle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f))
 
-        root.addView(buildActionRow())
-        root.addView(buildNavRow())
-
-        val lp = WindowManager.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            dp(prefs.padHeightDp),
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.START
-            x = dp(8)
-            y = dp(8)
+        // 触控区
+        val pad = View(this).apply {
+            background = roundedBox(0xFF1F2124.toInt(), 16)
+            setOnTouchListener { _, e -> handlePadTouch(e); true }
         }
-        panelParams = lp
-        panel = root
+        padArea = pad
+
+        // 按钮区
+        val host = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        buttonHost = host
+        renderButtons()
+
+        val spacing = dp(prefs.buttonSpacingDp)
+        root.addView(handleRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        root.addView(pad, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, padH).apply {
+            setMargins(spacing, spacing / 2, spacing, spacing / 2)
+        })
+        root.addView(host, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        val lp = panelLayoutParams(widthPx, WindowManager.LayoutParams.WRAP_CONTENT)
         runCatching { wm.addView(root, lp) }
+        panel = root
+        panelParams = lp
     }
 
-    private fun buildActionRow(): View {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        addButton(row, "●") { tapAt(cursorX, cursorY) }
-        addButton(row, "◎") { longPressAt(cursorX, cursorY) }
-        addButton(row, "✥") { if (dragging) endDrag() else startDrag() }
-        addButton(row, "↑") { swipe(cursorX, cursorY + dp(100), 0f, -dp(220).toFloat()) }
-        addButton(row, "↓") { swipe(cursorX, cursorY - dp(100), 0f, dp(220).toFloat()) }
-        addButton(row, "⤢") { performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS) }
-        return row
-    }
-
-    private fun buildNavRow(): View {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        addButton(row, "◀") { performGlobalAction(GLOBAL_ACTION_BACK) }
-        addButton(row, "⌂") { performGlobalAction(GLOBAL_ACTION_HOME) }
-        addButton(row, "▢") { performGlobalAction(GLOBAL_ACTION_RECENTS) }
-        addButton(row, "✕") {
-            prefs.panelVisible = false
-            buildOverlay()
-        }
-        return row
-    }
-
-    private inline fun addButton(row: LinearLayout, label: String, crossinline action: () -> Unit) {
-        val b = Button(this).apply {
-            text = label
-            textSize = 16f
-            minWidth = 0
-            minimumWidth = 0
-            isAllCaps = false
-            setPadding(dp(2), dp(4), dp(2), dp(4))
-            setOnClickListener {
-                haptic()
-                action()
+    private fun addMiniDot() {
+        val size = dp(56)
+        val dot = TextView(this).apply {
+            text = "◎"
+            gravity = Gravity.CENTER
+            textSize = 24f
+            setTextColor(0xFFFFFFFF.toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(withAlpha(0xFF2A2D31.toInt(), prefs.opacityPercent))
+                setStroke(dp(2), 0x66FFFFFF)
             }
+            setOnClickListener { toggleMinimize() }
         }
-        row.addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val lp = panelLayoutParams(size, size)
+        runCatching { wm.addView(dot, lp) }
+        panel = dot
+        panelParams = lp
     }
 
-    private fun removeOverlay() {
-        panel?.let { runCatching { wm.removeView(it) } }
-        cursorView?.let { runCatching { wm.removeView(it) } }
-        panel = null
-        cursorView = null
-        dragging = false
-        activeStroke = null
+    private fun makeHandle(label: String, onTouch: (View, MotionEvent) -> Boolean): View =
+        TextView(this).apply {
+            text = label
+            gravity = Gravity.CENTER
+            textSize = 12f
+            setTextColor(0xFFB0B6BC.toInt())
+            setPadding(0, dp(6), 0, dp(6))
+            isClickable = true
+            setOnTouchListener { v, e -> onTouch(v, e) }
+        }
+
+    private fun renderButtons() {
+        val host = buttonHost ?: return
+        host.removeAllViews()
+        val list = prefs.buttons.filter { it != PadAction.NONE }
+        if (list.isEmpty()) return
+        val perRow = 6
+        val spacing = dp(prefs.buttonSpacingDp)
+        list.chunked(perRow).forEach { chunk ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            chunk.forEach { action ->
+                row.addView(makeActionButton(action), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    setMargins(spacing / 2, spacing / 2, spacing / 2, spacing / 2)
+                })
+            }
+            repeat(perRow - chunk.size) {
+                row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            }
+            host.addView(row)
+        }
     }
 
-    private fun updateCursor() {
-        val v = cursorView ?: return
-        val lp = cursorParams ?: return
-        val size = dp(prefs.cursorSizeDp)
-        lp.x = (cursorX - size / 2f).roundToInt()
-        lp.y = (cursorY - size / 2f).roundToInt()
-        runCatching { wm.updateViewLayout(v, lp) }
+    private fun makeActionButton(action: PadAction): View = TextView(this).apply {
+        text = action.icon
+        gravity = Gravity.CENTER
+        textSize = prefs.buttonTextSizeSp.toFloat()
+        setTextColor(0xFFF1F3F4.toInt())
+        setPadding(0, dp(12), 0, dp(12))
+        background = roundedBox(0xFF3A3F44.toInt(), prefs.buttonRadiusDp)
+        isClickable = true
+        setOnClickListener { performAction(action) }
+        setOnLongClickListener { showActionPicker(action); true }
     }
 
-    // ───────────────────────── 触摸 → 手势 ─────────────────────────
+    private fun roundedBox(color: Int, radiusDp: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(radiusDp).toFloat()
+        setColor(withAlpha(color, prefs.opacityPercent))
+        setStroke(dp(1), 0x33FFFFFF)
+    }
+
+    private fun withAlpha(color: Int, percent: Int): Int {
+        val a = (255 * percent / 100).coerceIn(0, 255)
+        return Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
+    }
+
+    // ───────────────────────── 按钮长按换动作 ─────────────────────────
+
+    private fun showActionPicker(current: PadAction) {
+        val labels = PadAction.ALL.map { "${it.icon}  ${getString(it.labelRes)}" }.toTypedArray()
+        val checked = PadAction.ALL.indexOf(current)
+        val builder = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+            .setTitle(R.string.pick_action)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                val picked = PadAction.ALL[which]
+                val list = prefs.buttons.toMutableList()
+                val idx = list.indexOf(current)
+                if (idx >= 0) list[idx] = picked
+                prefs.buttons = list
+                renderButtons()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+        val dialog = builder.create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+        runCatching { dialog.show() }
+    }
+
+    // ───────────────────────── 触控板手势 ─────────────────────────
 
     private fun handlePadTouch(e: MotionEvent) {
-        val slop = dp(prefs.slopDp).toFloat()
+        val slop = dp(6).toFloat()
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downRawX = e.rawX; downRawY = e.rawY
                 lastRawX = e.rawX; lastRawY = e.rawY
+                downTime = System.currentTimeMillis()
                 moved = false; longPressFired = false; dwellFired = false
                 if (dragging) moveDragTo(cursorX, cursorY)
-                main.removeCallbacks(longPressRunnable)
-                main.postDelayed(longPressRunnable, prefs.longPressMs.toLong())
+                if (!dragging) main.postDelayed(longPressRunnable, prefs.longPressMs.toLong())
             }
 
             MotionEvent.ACTION_MOVE -> {
@@ -257,68 +391,115 @@ class TouchpadService : AccessibilityService() {
                     if (!moved) {
                         moved = true
                         main.removeCallbacks(longPressRunnable)
-                        scheduleDwell()
                     }
                 }
                 cursorX = (cursorX + dx * prefs.sensitivity).coerceIn(0f, screenW.toFloat())
                 cursorY = (cursorY + dy * prefs.sensitivity).coerceIn(0f, screenH.toFloat())
                 updateCursor()
                 if (dragging) moveDragTo(cursorX, cursorY)
+                scheduleDwell()
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(longPressRunnable)
-                main.removeCallbacks(dwellRunnable)
-                if (dragging) {
-                    endDrag()
-                } else if (!moved && !longPressFired && !dwellFired) {
-                    tapOrDouble()
+                cancelDwell()
+                when {
+                    dragging -> endDrag()
+                    longPressFired || dwellFired -> Unit
+                    !moved -> tapOrDouble()
                 }
             }
         }
     }
 
+    /** 停留点击：手指在触控板上停住不动，自动点一下光标位置。 */
     private fun scheduleDwell() {
-        main.removeCallbacks(dwellRunnable)
         val ms = prefs.dwellMs
-        if (ms > 0) main.postDelayed(dwellRunnable, ms.toLong())
+        if (ms <= 0 || dragging) return
+        cancelDwell()
+        val r = Runnable {
+            dwellFired = true
+            main.removeCallbacks(longPressRunnable)
+            tapAt(cursorX, cursorY)
+            haptic()
+        }
+        dwellRunnable = r
+        main.postDelayed(r, ms.toLong())
     }
 
-    private fun fireDwell() {
-        if (dwellFired || longPressFired) return
-        dwellFired = true
-        haptic()
-        tapAt(cursorX, cursorY)
-    }
-
-    private fun fireLongPress() {
-        if (longPressFired || dwellFired) return
-        longPressFired = true
-        haptic()
-        longPressAt(cursorX, cursorY)
+    private fun cancelDwell() {
+        dwellRunnable?.let { main.removeCallbacks(it) }
+        dwellRunnable = null
     }
 
     private fun tapOrDouble() {
         val now = System.currentTimeMillis()
-        if (now - lastTapTime < prefs.doubleTapMs) {
-            lastTapTime = 0L
+        if (now - lastTapTime < 300) {
+            lastTapTime = 0
             tapAt(cursorX, cursorY)
-            main.postDelayed({ tapAt(cursorX, cursorY) }, 120)
+            main.postDelayed({ tapAt(cursorX, cursorY) }, 110)
         } else {
             lastTapTime = now
             tapAt(cursorX, cursorY)
         }
+        haptic()
     }
 
-    private fun haptic() {
-        if (!prefs.haptics) return
-        runCatching { panel?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) }
+    private fun handleMoveTouch(v: View, e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                movingPanel = true
+                movingFromX = e.rawX; movingFromY = e.rawY
+                movingPanelX = panelParams?.x ?: 0
+                movingPanelY = panelParams?.y ?: 0
+            }
+            MotionEvent.ACTION_MOVE -> if (movingPanel) {
+                val lp = panelParams ?: return true
+                lp.x = movingPanelX + (e.rawX - movingFromX).roundToInt()
+                lp.y = movingPanelY + (e.rawY - movingFromY).roundToInt()
+                panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
+                prefs.padX = lp.x
+                prefs.padY = lp.y
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> movingPanel = false
+        }
+        return true
+    }
+
+    private fun handleResizeTouch(v: View, e: MotionEvent): Boolean {
+        // 复用移动逻辑之外的高度调整：上下拖动改高度
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+            movingFromY = e.rawY
+            movingPanelY = dp(prefs.padHeightDp)
+        }
+        if (e.actionMasked == MotionEvent.ACTION_MOVE) {
+            val delta = (e.rawY - movingFromY).roundToInt()
+            val h = (movingPanelY - delta).coerceIn(dp(80), screenH / 2)
+            prefs.padHeightDp = h / resources.displayMetrics.density.toInt().coerceAtLeast(1)
+            addFullPanelWithKeepPosition()
+        }
+        return true
+    }
+
+    private fun addFullPanelWithKeepPosition() {
+        val x = panelParams?.x ?: -1
+        val y = panelParams?.y ?: -1
+        removePanel()
+        addFullPanel()
+        if (x >= 0 && y >= 0) {
+            prefs.padX = x
+            prefs.padY = y
+            panelParams?.let { lp ->
+                lp.x = x; lp.y = y
+                panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
+            }
+        }
     }
 
     // ───────────────────────── 手势注入 ─────────────────────────
 
-    private fun dispatch(g: GestureDescription) {
-        runCatching { dispatchGesture(g, null, null) }
+    private fun dispatch(gesture: GestureDescription) {
+        runCatching { dispatchGesture(gesture, null, null) }
     }
 
     private fun tapAt(x: Float, y: Float, ms: Long = 50) {
@@ -330,12 +511,16 @@ class TouchpadService : AccessibilityService() {
         )
     }
 
-    private fun longPressAt(x: Float, y: Float) = tapAt(x, y, prefs.longPressMs + 120L)
+    private fun longPressAt(x: Float, y: Float) = tapAt(x, y, prefs.longPressMs.toLong() + 200)
 
-    private fun swipe(x: Float, y: Float, dx: Float, dy: Float, ms: Long = 200) {
+    private fun swipeBy(dx: Float, dy: Float, ms: Long) {
+        val x0 = cursorX
+        val y0 = cursorY
+        val x1 = (x0 + dx).coerceIn(0f, screenW.toFloat())
+        val y1 = (y0 + dy).coerceIn(0f, screenH.toFloat())
         val path = Path().apply {
-            moveTo(x, y)
-            lineTo(x + dx, y + dy)
+            moveTo(x0, y0)
+            lineTo(x1, y1)
         }
         dispatch(
             GestureDescription.Builder()
@@ -344,22 +529,15 @@ class TouchpadService : AccessibilityService() {
         )
     }
 
-    /** 开始拖拽：按下不放，之后靠 continueStroke 跟随光标。 */
-    fun startDrag() {
-        if (dragging) return
+    private fun startDrag() {
         dragging = true
         lastDragX = cursorX
         lastDragY = cursorY
         val path = Path().apply {
             moveTo(cursorX, cursorY)
-            lineTo(cursorX + 1f, cursorY + 1f)
+            lineTo(cursorX + 1, cursorY + 1)
         }
-        val stroke = runCatching {
-            GestureDescription.StrokeDescription(path, 0, 1, true)
-        }.getOrNull() ?: run {
-            dragging = false
-            return
-        }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 1, true)
         activeStroke = stroke
         dispatch(GestureDescription.Builder().addStroke(stroke).build())
         haptic()
@@ -378,24 +556,143 @@ class TouchpadService : AccessibilityService() {
         lastDragY = y
     }
 
-    fun endDrag() {
+    private fun endDrag() {
         val prev = activeStroke
         dragging = false
         activeStroke = null
         if (prev != null) {
             val path = Path().apply {
                 moveTo(lastDragX, lastDragY)
-                lineTo(lastDragX + 1f, lastDragY + 1f)
+                lineTo(lastDragX + 1, lastDragY + 1)
             }
-            val finish = runCatching { prev.continueStroke(path, 0, 1, false) }.getOrNull()
-            if (finish != null) {
-                dispatch(GestureDescription.Builder().addStroke(finish).build())
+            runCatching {
+                dispatch(
+                    GestureDescription.Builder()
+                        .addStroke(prev.continueStroke(path, 0, 1, false))
+                        .build()
+                )
             }
         }
         haptic()
     }
 
-    // ───────────────────────── 工具 ─────────────────────────
+    // ───────────────────────── 动作派发 ─────────────────────────
+
+    fun performAction(action: PadAction) {
+        when (action) {
+            PadAction.CLICK -> tapAt(cursorX, cursorY)
+            PadAction.LONG_PRESS -> longPressAt(cursorX, cursorY)
+            PadAction.DRAG_LOCK -> if (dragging) endDrag() else startDrag()
+
+            PadAction.SCROLL_UP -> swipeBy(0f, -dp(prefs.scrollDistanceDp).toFloat(), 150)
+            PadAction.SCROLL_DOWN -> swipeBy(0f, dp(prefs.scrollDistanceDp).toFloat(), 150)
+            PadAction.SCROLL_LEFT -> swipeBy(-dp(prefs.scrollDistanceDp).toFloat(), 0f, 150)
+            PadAction.SCROLL_RIGHT -> swipeBy(dp(prefs.scrollDistanceDp).toFloat(), 0f, 150)
+
+            PadAction.SWIPE_UP -> swipeBy(0f, -dp(prefs.swipeDistanceDp).toFloat(), 320)
+            PadAction.SWIPE_DOWN -> swipeBy(0f, dp(prefs.swipeDistanceDp).toFloat(), 320)
+            PadAction.SWIPE_LEFT -> swipeBy(-dp(prefs.swipeDistanceDp).toFloat(), 0f, 320)
+            PadAction.SWIPE_RIGHT -> swipeBy(dp(prefs.swipeDistanceDp).toFloat(), 0f, 320)
+
+            PadAction.NOTIFICATIONS -> global(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+            PadAction.POWER -> global(AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
+            PadAction.BACK -> global(AccessibilityService.GLOBAL_ACTION_BACK)
+            PadAction.HOME -> global(AccessibilityService.GLOBAL_ACTION_HOME)
+            PadAction.RECENTS -> global(AccessibilityService.GLOBAL_ACTION_RECENTS)
+            PadAction.SCREENSHOT -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    global(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+                } else {
+                    toast(getString(R.string.screenshot_needs_p))
+                }
+            }
+            PadAction.VOLUME_UP -> adjustVolume(AudioManager.ADJUST_RAISE)
+            PadAction.VOLUME_DOWN -> adjustVolume(AudioManager.ADJUST_LOWER)
+            PadAction.KEYBOARD -> focusEditable()
+            PadAction.SETTINGS -> openSettings()
+            PadAction.MINIMIZE -> toggleMinimize()
+            PadAction.NONE -> Unit
+        }
+        haptic()
+    }
+
+    private fun global(action: Int) {
+        runCatching { performGlobalAction(action) }
+    }
+
+    private fun adjustVolume(dir: Int) {
+        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        runCatching { am.adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, AudioManager.FLAG_SHOW_UI) }
+    }
+
+    /** 让输入法弹出来：把焦点交给当前界面里的输入框。 */
+    private fun focusEditable() {
+        val root = rootInActiveWindow
+        if (root == null) {
+            toast(getString(R.string.no_input_field))
+            return
+        }
+        val target = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
+            ?: findEditable(root)
+        if (target == null) {
+            toast(getString(R.string.no_input_field))
+            return
+        }
+        runCatching {
+            target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+    }
+
+    private fun findEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable && node.isVisibleToUser) return node
+        for (i in 0 until node.childCount) {
+            val found = runCatching { findEditable(node.getChild(i)) }.getOrNull()
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun openSettings() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { startActivity(intent) }
+    }
+
+    private fun isImeVisible(): Boolean = runCatching {
+        windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+    }.getOrDefault(false)
+
+    // ───────────────────────── 小工具 ─────────────────────────
+
+    private fun updateCursor() {
+        val p = cursorParams ?: return
+        val half = dp(prefs.cursorSizeDp) / 2
+        p.x = (cursorX - half).toInt()
+        p.y = (cursorY - half).toInt()
+        cursorView?.let { runCatching { wm.updateViewLayout(it, p) } }
+    }
+
+    private fun haptic() {
+        if (!prefs.haptics) return
+        runCatching {
+            padArea?.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+        }
+    }
+
+    private fun toast(msg: String) {
+        runCatching { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
+    }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).roundToInt()
+
+    /** 供设置界面查询：无障碍服务当前是否由系统连接着。 */
+    fun isConnected(): Boolean = instance != null
+
+    /** 打开系统无障碍设置页（给 MainActivity 用）。 */
+    fun openAccessibilitySettingsFromService() {
+        runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
 }
