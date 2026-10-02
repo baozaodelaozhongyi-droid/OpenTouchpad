@@ -38,7 +38,8 @@ Reference: [Android Developers blog](https://developer.android.com/blog/posts/en
 - Desktop-style arrow cursor with its tip aligned to the actual click coordinate; size and colour adjustable
 - Floating touchpad panel — drag the **move** handle to place it anywhere, drag **resize** to change the overall width and height down to a compact 180dp width, and minimise it to a draggable floating ball
 - Floating ball size and opacity are adjustable; tap the ball to restore the touchpad
-- White, black and follow-system appearance modes for both settings and the floating controls
+- Screenshot-style control surface: a large rounded touch area surrounded by circular action buttons; width and height are independently adjustable up to the screen bounds
+- Custom swipe: hold on the touchpad until the long-press vibration, move the cursor, then release to execute one swipe from start to end
 - Single tap / double tap / **long press** / **drag & drop with a lock button** (real "hold", not a fake long press)
 - **Dwell click** (auto click after the finger rests for N ms) — for very limited dexterity
 - Scroll in 4 directions + long swipes in 4 directions
@@ -106,7 +107,8 @@ Android 16 引入的 `accessibilityDataSensitive` 与旧的 `setFilterTouchesWhe
 - 电脑风格箭头光标，箭头尖端与实际点击坐标对齐，可调大小并可选择颜色
 - 悬浮触控板 —— 拖「移动」把手可放到屏幕任何位置，拖「调整大小」可同时改变整体宽高，最窄可调至 180dp，收起后变成可拖动悬浮球
 - 悬浮球大小与透明度可调，点击悬浮球即可恢复触控板
-- 设置页与悬浮控制均支持白色模式、黑色模式和跟随系统
+- 截图式控制面板：中央为大号圆角触控区，四周为圆形动作按钮；宽度和高度可独立调节，最大不超过屏幕边界
+- 自定义滑动：在触控板上长按到震动，移动光标，松手后执行从起点到终点的一次滑动
 - 单击 / 双击 / **长按** / **拖拽（带锁定按钮，真正的"按住不放"）**
 - **停留点击**（手指静止 N 毫秒自动点击）—— 适合手部动作非常有限的人
 - 四方向滚动 + 四方向长滑动

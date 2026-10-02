@@ -13,6 +13,38 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun customSwipeNeedsARealPath() {
+        assertEquals(null, customSwipeFrom(10f, 20f, 15f, 23f, minDistancePx = 8f))
+        assertEquals(
+            CustomSwipe(10f, 20f, 40f, 60f),
+            customSwipeFrom(10f, 20f, 40f, 60f, minDistancePx = 8f),
+        )
+    }
+
+    @Test
+    fun customSwipeUsesIndependentControlSizeBounds() {
+        assertEquals(540..1080, controlWidthRange(screenWidth = 1080, density = 3f))
+        assertEquals(540..1920, controlHeightRange(screenHeight = 1920, density = 3f))
+        assertEquals(180..240, controlWidthRange(screenWidth = 240, density = 1f))
+    }
+
+    @Test
+    fun padReleaseDistinguishesClickLongPressAndCustomSwipe() {
+        assertEquals(PadTouchOutcome.CLICK, resolvePadTouchOutcome(false, false, false, 0f, 12f))
+        assertEquals(PadTouchOutcome.MOVE_ONLY, resolvePadTouchOutcome(false, false, true, 80f, 12f))
+        assertEquals(PadTouchOutcome.LONG_PRESS, resolvePadTouchOutcome(true, false, false, 0f, 12f))
+        assertEquals(PadTouchOutcome.CUSTOM_SWIPE, resolvePadTouchOutcome(true, false, true, 80f, 12f))
+        assertEquals(PadTouchOutcome.MOVE_ONLY, resolvePadTouchOutcome(true, false, true, 4f, 12f))
+        assertEquals(PadTouchOutcome.DWELL_CLICK, resolvePadTouchOutcome(false, true, false, 0f, 12f))
+    }
+
+    @Test
+    fun controlHeightResizeGrowsDownwardAndClamps() {
+        assertEquals(620, resizeControlHeight(startPx = 420, deltaY = 200, minPx = 180, maxPx = 900))
+        assertEquals(180, resizeControlHeight(startPx = 420, deltaY = -500, minPx = 180, maxPx = 900))
+    }
+
+    @Test
     fun panelPositionIsKeptInsideScreen() {
         assertEquals(
             PanelPosition(0, 1200),
@@ -26,8 +58,8 @@ class TouchpadMathTest {
     }
 
     @Test
-    fun dwellModeReplacesLongPressScheduling() {
-        assertFalse(shouldScheduleLongPress(dwellMs = 800, dragging = false))
+    fun longPressSchedulingIsDisabledOnlyDuringDragLock() {
+        assertTrue(shouldScheduleLongPress(dwellMs = 800, dragging = false))
         assertTrue(shouldScheduleLongPress(dwellMs = 0, dragging = false))
         assertFalse(shouldScheduleLongPress(dwellMs = 0, dragging = true))
     }

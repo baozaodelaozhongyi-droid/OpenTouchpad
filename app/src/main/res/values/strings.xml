@@ -20,6 +20,9 @@
     <string name="handle_resize">⤡ resize</string>
     <string name="handle_minimize">⌄ hide</string>
     <string name="cursor_content_description">Arrow cursor</string>
+    <string name="control_surface_content_description">OpenTouchpad controls</string>
+    <string name="touchpad_content_description">Touchpad area. Hold until the long-press vibration, move, then release for a custom swipe.</string>
+    <string name="custom_swipe_hint">Custom swipe: hold still until long press, move the cursor, then release.</string>
     <string name="floating_ball_content_description">Expand OpenTouchpad</string>
     <string name="pick_action">Choose an action</string>
 
@@ -61,8 +64,8 @@
     <string name="theme_light">White mode</string>
     <string name="theme_dark">Black mode</string>
 
-    <string name="set_pad_height">Touchpad height</string>
-    <string name="set_pad_width">Touchpad overall width</string>
+    <string name="set_pad_height">Touchpad control area height</string>
+    <string name="set_pad_width">Touchpad control area width</string>
     <string name="set_opacity">Touchpad opacity</string>
     <string name="set_ball_size">Floating ball size</string>
     <string name="set_ball_opacity">Floating ball opacity</string>

@@ -20,6 +20,9 @@
     <string name="handle_resize">⤡ 调整大小</string>
     <string name="handle_minimize">⌄ 收起</string>
     <string name="cursor_content_description">箭头光标</string>
+    <string name="control_surface_content_description">OpenTouchpad 控制区</string>
+    <string name="touchpad_content_description">触控板区域。长按到震动后移动光标，松手执行自定义滑动。</string>
+    <string name="custom_swipe_hint">自定义滑动：长按到震动，移动光标，松手执行滑动。</string>
     <string name="floating_ball_content_description">展开 OpenTouchpad</string>
     <string name="pick_action">选择动作</string>
 
@@ -61,8 +64,8 @@
     <string name="theme_light">白色模式</string>
     <string name="theme_dark">黑色模式</string>
 
-    <string name="set_pad_height">触控板高度</string>
-    <string name="set_pad_width">触控板整体宽度</string>
+    <string name="set_pad_height">触控板控制区高度</string>
+    <string name="set_pad_width">触控板控制区宽度</string>
     <string name="set_opacity">触控板透明度</string>
     <string name="set_ball_size">悬浮球大小</string>
     <string name="set_ball_opacity">悬浮球透明度</string>

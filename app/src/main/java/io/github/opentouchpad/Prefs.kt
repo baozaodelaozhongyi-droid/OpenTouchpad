@@ -29,6 +29,7 @@ class Prefs(ctx: Context) {
         set(v) = sp.edit().putInt("cursorColor", v).apply()
 
     // ── 触控板 ──
+    /** Legacy pad height retained for preference compatibility. */
     var padHeightDp: Int
         get() = sp.getInt("padHeight", 240)
         set(v) = sp.edit().putInt("padHeight", v).apply()
@@ -41,6 +42,12 @@ class Prefs(ctx: Context) {
     var panelWidthDp: Int
         get() = sp.getInt("panelWidthDp", 0)
         set(v) = sp.edit().putInt("panelWidthDp", v).apply()
+
+    /** Overall overlay height in dp. 0 keeps the legacy pad-height preference. */
+    var controlHeightDp: Int
+        get() = sp.getInt("controlHeightDp", 0).takeIf { it > 0 }
+            ?: (padHeightDp + 168).coerceIn(CONTROL_MIN_SIZE_DP, CONTROL_MAX_SIZE_DP)
+        set(v) = sp.edit().putInt("controlHeightDp", v).apply()
 
     var opacityPercent: Int
         get() = sp.getInt("opacity", 75)

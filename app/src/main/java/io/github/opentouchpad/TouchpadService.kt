@@ -22,7 +22,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import android.widget.LinearLayout
+import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
@@ -51,8 +51,9 @@ class TouchpadService : AccessibilityService() {
     private var panel: View? = null
     private var panelParams: WindowManager.LayoutParams? = null
     private var padArea: View? = null
-    private var buttonHost: LinearLayout? = null
     private var miniBallView: View? = null
+    private val actionViews = mutableListOf<View>()
+    private val actionSlots = mutableListOf<Slot>()
 
     private var cursorView: View? = null
     private var cursorParams: WindowManager.LayoutParams? = null
@@ -71,6 +72,12 @@ class TouchpadService : AccessibilityService() {
     private var moved = false
     private var longPressFired = false
     private var dwellFired = false
+
+    private var customSwipeArmed = false
+    private var customSwipeStartX = 0f
+    private var customSwipeStartY = 0f
+    private var customSwipeEndX = 0f
+    private var customSwipeEndY = 0f
 
     // 拖拽锁定
     private var dragging = false
@@ -93,7 +100,6 @@ class TouchpadService : AccessibilityService() {
     // 收起后的悬浮球拖动，抬手未移动才展开
     private var movingBall = false
     private var ballMoved = false
-    private var compactButtons = false
     private var ballFromX = 0f
     private var ballFromY = 0f
     private var ballX = 0
@@ -105,7 +111,12 @@ class TouchpadService : AccessibilityService() {
     private val longPressRunnable = Runnable {
         if (!moved && !dwellFired) {
             longPressFired = true
-            longPressAt(cursorX, cursorY)
+            customSwipeArmed = true
+            customSwipeStartX = cursorX
+            customSwipeStartY = cursorY
+            customSwipeEndX = cursorX
+            customSwipeEndY = cursorY
+            cancelDwell()
             haptic()
         }
     }
@@ -150,7 +161,6 @@ class TouchpadService : AccessibilityService() {
 
     override fun onInterrupt() {
         main.removeCallbacksAndMessages(null)
-        cancelDwell()
         if (dragging) endDrag()
     }
 
@@ -253,7 +263,8 @@ class TouchpadService : AccessibilityService() {
         panelParams = null
         miniBallView = null
         padArea = null
-        buttonHost = null
+        actionViews.clear()
+        actionSlots.clear()
         movingPanel = false
         resizingPanel = false
         movingBall = false
@@ -272,7 +283,7 @@ class TouchpadService : AccessibilityService() {
         val storedX = prefs.padX
         val storedY = prefs.padY
         if (storedX >= 0 && storedY >= 0) {
-            val position = clampPanelPosition(storedX, storedY, w, 0, screenW, screenH)
+            val position = clampPanelPosition(storedX, storedY, w, h, screenW, screenH)
             lp.x = position.x
             lp.y = position.y
         } else {
@@ -304,54 +315,66 @@ class TouchpadService : AccessibilityService() {
 
     private fun addFullPanel() {
         val dark = isDarkTheme()
-        val panelColor = if (dark) 0xFF151619.toInt() else 0xFFF8F9FA.toInt()
-        val padColor = if (dark) 0xFF27282D.toInt() else 0xFFE8EAED.toInt()
-        val padH = dp(prefs.padHeightDp.coerceIn(80, 900))
+        val widthRange = controlWidthRange(screenW, resources.displayMetrics.density)
+        val heightRange = controlHeightRange(screenH, resources.displayMetrics.density)
         val widthPx = if (prefs.panelWidthDp > 0) {
             dp(prefs.panelWidthDp)
         } else {
-            (screenW * prefs.padWidthPercent / 100)
-        }.coerceIn(dp(PANEL_MIN_WIDTH_DP).coerceAtMost(screenW), screenW)
+            screenW * prefs.padWidthPercent / 100
+        }.coerceIn(widthRange.first, widthRange.last)
+        val heightPx = dp(prefs.controlHeightDp).coerceIn(heightRange.first, heightRange.last)
+        val gap = dp(prefs.buttonSpacingDp.coerceIn(4, 24))
+        val buttonPx = minOf(
+            dp(72),
+            ((widthPx - dp(44) - gap * 5) / 4).coerceAtLeast(dp(24)),
+            ((widthPx - dp(80) - gap * 2) / 2).coerceAtLeast(dp(24)),
+            ((heightPx - dp(80) - gap * 2) / 2).coerceAtLeast(dp(24)),
+        )
+        val padLeft = buttonPx + gap
+        val padTop = buttonPx + gap
+        val padWidth = (widthPx - padLeft * 2).coerceAtLeast(dp(80))
+        val padHeight = (heightPx - padTop * 2).coerceAtLeast(dp(80))
+        val padColor = if (dark) 0xFF4D4D4D.toInt() else 0xFFE1E3E6.toInt()
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedBox(panelColor, 22)
-            setPadding(dp(8), dp(6), dp(8), dp(8))
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            contentDescription = getString(R.string.control_surface_content_description)
+            setOnTouchListener { v, e -> handleMoveTouch(v, e) }
         }
 
-        // 把手行：移动 / 缩放 / 最小化
-        val handleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val moveHandle = makeHandle(getString(R.string.handle_move), dark) { v, e -> handleMoveTouch(v, e) }
-        val resizeHandle = makeHandle(getString(R.string.handle_resize), dark) { v, e -> handleResizeTouch(v, e) }
-        val miniHandle = makeHandle(getString(R.string.handle_minimize), dark) { _, e ->
-            if (e.actionMasked == MotionEvent.ACTION_UP) toggleMinimize()
-            true
-        }
-        handleRow.addView(moveHandle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 3f))
-        handleRow.addView(resizeHandle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f))
-        handleRow.addView(miniHandle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f))
-
-        // 触控区
         val pad = View(this).apply {
-            background = roundedBox(padColor, 16)
+            background = roundedBox(padColor, 24)
+            contentDescription = getString(R.string.touchpad_content_description)
             setOnTouchListener { _, e -> handlePadTouch(e); true }
         }
         padArea = pad
-
-        // 按钮区
-        val host = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        buttonHost = host
-        compactButtons = widthPx < dp(260)
-        renderButtons(dark, compactButtons)
-
-        val spacing = dp(prefs.buttonSpacingDp)
-        root.addView(handleRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        root.addView(pad, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, padH).apply {
-            setMargins(spacing, spacing / 2, spacing, spacing / 2)
+        root.addView(pad, FrameLayout.LayoutParams(padWidth, padHeight).apply {
+            leftMargin = padLeft
+            topMargin = padTop
         })
-        root.addView(host, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
-        val lp = panelLayoutParams(widthPx, WindowManager.LayoutParams.WRAP_CONTENT)
+        val actions = prefs.buttons.filter { it != PadAction.NONE }.take(12)
+        val slots = listOf(
+            Slot.TOP_1, Slot.TOP_2, Slot.TOP_3, Slot.TOP_4,
+            Slot.BOTTOM_1, Slot.BOTTOM_2, Slot.BOTTOM_3, Slot.BOTTOM_4,
+            Slot.LEFT_1, Slot.LEFT_2, Slot.RIGHT_1, Slot.RIGHT_2,
+        )
+        actions.forEachIndexed { index, action ->
+            val button = makeActionButton(action, dark)
+            actionViews += button
+            actionSlots += slots[index]
+            root.addView(button, actionLayoutParams(slots[index], widthPx, heightPx, buttonPx, padLeft, padTop, padWidth, padHeight))
+        }
+
+        val moveGrip = makeHandle("⣿", dark) { v, e -> handleMoveTouch(v, e) }
+        moveGrip.contentDescription = getString(R.string.handle_move)
+        root.addView(moveGrip, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.START))
+        val resizeGrip = makeHandle("⤡", dark) { v, e -> handleResizeTouch(v, e) }
+        resizeGrip.contentDescription = getString(R.string.handle_resize)
+        root.addView(resizeGrip, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.END))
+        layoutControlChildren(root, widthPx, heightPx)
+
+        val lp = panelLayoutParams(widthPx, heightPx)
         runCatching { wm.addView(root, lp) }
         panel = root
         panelParams = lp
@@ -367,6 +390,86 @@ class TouchpadService : AccessibilityService() {
                 }
             }
         }
+    }
+
+    private enum class Slot { TOP_1, TOP_2, TOP_3, TOP_4, BOTTOM_1, BOTTOM_2, BOTTOM_3, BOTTOM_4, LEFT_1, LEFT_2, RIGHT_1, RIGHT_2 }
+
+    private fun actionLayoutParams(
+        slot: Slot,
+        width: Int,
+        height: Int,
+        button: Int,
+        padLeft: Int,
+        padTop: Int,
+        padWidth: Int,
+        padHeight: Int,
+    ): FrameLayout.LayoutParams {
+        val lp = FrameLayout.LayoutParams(button, button)
+        val gap = dp(prefs.buttonSpacingDp.coerceIn(4, 24))
+        val topStart = dp(44) + gap
+        val topEnd = width - button - gap
+        val topX = { index: Int ->
+            (topStart + (topEnd - topStart).coerceAtLeast(0) * index / 3)
+                .coerceIn(topStart, topEnd.coerceAtLeast(topStart))
+        }
+        val bottomStart = gap
+        val bottomEnd = width - button - dp(44) - gap
+        val bottomX = { index: Int ->
+            (bottomStart + (bottomEnd - bottomStart).coerceAtLeast(0) * index / 3)
+                .coerceIn(bottomStart, bottomEnd.coerceAtLeast(bottomStart))
+        }
+        val sideStart = gap
+        val sideEnd = height - button - gap
+        val sideY = { index: Int ->
+            (padTop + padHeight * (index + 1) / 3 - button / 2)
+                .coerceIn(sideStart, sideEnd.coerceAtLeast(sideStart))
+        }
+        when (slot) {
+            Slot.TOP_1 -> { lp.leftMargin = topX(0); lp.topMargin = gap }
+            Slot.TOP_2 -> { lp.leftMargin = topX(1); lp.topMargin = gap }
+            Slot.TOP_3 -> { lp.leftMargin = topX(2); lp.topMargin = gap }
+            Slot.TOP_4 -> { lp.leftMargin = topX(3); lp.topMargin = gap }
+            Slot.BOTTOM_1 -> { lp.leftMargin = bottomX(0); lp.topMargin = height - button - gap }
+            Slot.BOTTOM_2 -> { lp.leftMargin = bottomX(1); lp.topMargin = height - button - gap }
+            Slot.BOTTOM_3 -> { lp.leftMargin = bottomX(2); lp.topMargin = height - button - gap }
+            Slot.BOTTOM_4 -> { lp.leftMargin = bottomX(3); lp.topMargin = height - button - gap }
+            Slot.LEFT_1 -> { lp.leftMargin = gap; lp.topMargin = sideY(0) }
+            Slot.LEFT_2 -> { lp.leftMargin = gap; lp.topMargin = sideY(1) }
+            Slot.RIGHT_1 -> { lp.leftMargin = width - button - gap; lp.topMargin = sideY(0) }
+            Slot.RIGHT_2 -> { lp.leftMargin = width - button - gap; lp.topMargin = sideY(1) }
+        }
+        return lp
+    }
+
+    private fun layoutControlChildren(root: FrameLayout, width: Int, height: Int) {
+        val gap = dp(prefs.buttonSpacingDp.coerceIn(4, 24))
+        val button = minOf(
+            dp(72),
+            ((width - dp(44) - gap * 5) / 4).coerceAtLeast(dp(24)),
+            ((width - dp(80) - gap * 2) / 2).coerceAtLeast(dp(24)),
+            ((height - dp(80) - gap * 2) / 2).coerceAtLeast(dp(24)),
+        )
+        val padLeft = button + gap
+        val padTop = button + gap
+        val padWidth = (width - padLeft * 2).coerceAtLeast(dp(80))
+        val padHeight = (height - padTop * 2).coerceAtLeast(dp(80))
+        padArea?.layoutParams = FrameLayout.LayoutParams(padWidth, padHeight).apply {
+            leftMargin = padLeft
+            topMargin = padTop
+        }
+        actionViews.forEachIndexed { index, view ->
+            val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
+            view.layoutParams = actionLayoutParams(slot, width, height, button, padLeft, padTop, padWidth, padHeight)
+        }
+        if (root.childCount > 1) {
+            root.getChildAt(root.childCount - 2).layoutParams =
+                FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.START)
+        }
+        if (root.childCount > 0) {
+            root.getChildAt(root.childCount - 1).layoutParams =
+                FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.END)
+        }
+        root.requestLayout()
     }
 
     private fun addMiniDot() {
@@ -399,42 +502,29 @@ class TouchpadService : AccessibilityService() {
         TextView(this).apply {
             text = label
             gravity = Gravity.CENTER
-            textSize = 12f
-            setTextColor(if (dark) 0xFFD1D5DB.toInt() else 0xFF4B5563.toInt())
-            setPadding(0, dp(6), 0, dp(6))
+            textSize = 16f
+            setTextColor(if (dark) 0xFFE5E7EB.toInt() else 0xFF374151.toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(withAlpha(if (dark) 0xFF4D4D4D.toInt() else 0xFFF1F3F4.toInt(), prefs.opacityPercent))
+                setStroke(dp(1), if (dark) 0x22444444 else 0x33000000)
+            }
             isClickable = true
             setOnTouchListener { v, e -> onTouch(v, e) }
         }
-
-    private fun renderButtons(dark: Boolean = isDarkTheme(), compact: Boolean = compactButtons) {
-        val host = buttonHost ?: return
-        host.removeAllViews()
-        val list = prefs.buttons.filter { it != PadAction.NONE }
-        if (list.isEmpty()) return
-        val perRow = if (compact) 3 else 6
-        val spacing = dp(prefs.buttonSpacingDp)
-        list.chunked(perRow).forEach { chunk ->
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            chunk.forEach { action ->
-                row.addView(makeActionButton(action, dark), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    setMargins(spacing / 2, spacing / 2, spacing / 2, spacing / 2)
-                })
-            }
-            repeat(perRow - chunk.size) {
-                row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-            }
-            host.addView(row)
-        }
-    }
 
     private fun makeActionButton(action: PadAction, dark: Boolean): View = TextView(this).apply {
         text = action.icon
         gravity = Gravity.CENTER
         textSize = prefs.buttonTextSizeSp.toFloat()
-        setTextColor(if (dark) 0xFFF4F4F5.toInt() else 0xFF1F2937.toInt())
-        setPadding(0, dp(12), 0, dp(12))
-        background = roundedBox(if (dark) 0xFF303137.toInt() else 0xFFFFFFFF.toInt(), prefs.buttonRadiusDp)
+        setTextColor(if (dark) 0xFFE5E7EB.toInt() else 0xFF111827.toInt())
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(withAlpha(if (dark) 0xFF4D4D4D.toInt() else 0xFFF1F3F4.toInt(), prefs.opacityPercent))
+            setStroke(dp(1), if (dark) 0x22444444 else 0x33000000)
+        }
         isClickable = true
+        contentDescription = getString(action.labelRes)
         setOnClickListener { performAction(action) }
         setOnLongClickListener { showActionPicker(action); true }
     }
@@ -443,7 +533,6 @@ class TouchpadService : AccessibilityService() {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(radiusDp).toFloat()
         setColor(withAlpha(color, prefs.opacityPercent))
-        setStroke(dp(1), if (isDarkTheme()) 0x33FFFFFF else 0x22000000)
     }
 
     private fun withAlpha(color: Int, percent: Int): Int {
@@ -469,7 +558,7 @@ class TouchpadService : AccessibilityService() {
                 val idx = list.indexOf(current)
                 if (idx >= 0) list[idx] = picked
                 prefs.buttons = list
-                renderButtons()
+                buildPanel()
                 dialog.dismiss()
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -488,11 +577,18 @@ class TouchpadService : AccessibilityService() {
                 lastRawX = e.rawX; lastRawY = e.rawY
                 downTime = System.currentTimeMillis()
                 moved = false; longPressFired = false; dwellFired = false
+                customSwipeArmed = false
+                customSwipeStartX = cursorX
+                customSwipeStartY = cursorY
+                customSwipeEndX = cursorX
+                customSwipeEndY = cursorY
+                main.removeCallbacks(longPressRunnable)
                 if (dragging) {
                     moveDragTo(cursorX, cursorY)
-                } else if (shouldScheduleLongPress(prefs.dwellMs, dragging = false)) {
-                    main.postDelayed(longPressRunnable, prefs.longPressMs.toLong())
                 } else {
+                    if (shouldScheduleLongPress(prefs.dwellMs, dragging = false)) {
+                        main.postDelayed(longPressRunnable, prefs.longPressMs.toLong())
+                    }
                     scheduleDwell()
                 }
             }
@@ -510,6 +606,10 @@ class TouchpadService : AccessibilityService() {
                 cursorX = (cursorX + dx * prefs.sensitivity).coerceIn(0f, screenW.toFloat())
                 cursorY = (cursorY + dy * prefs.sensitivity).coerceIn(0f, screenH.toFloat())
                 updateCursor()
+                if (customSwipeArmed) {
+                    customSwipeEndX = cursorX
+                    customSwipeEndY = cursorY
+                }
                 if (dragging) moveDragTo(cursorX, cursorY)
                 scheduleDwell()
             }
@@ -517,16 +617,21 @@ class TouchpadService : AccessibilityService() {
             MotionEvent.ACTION_UP -> {
                 main.removeCallbacks(longPressRunnable)
                 cancelDwell()
-                when {
-                    dragging -> endDrag()
-                    longPressFired || dwellFired -> Unit
-                    !moved -> tapOrDouble()
+                val distance = kotlin.math.hypot(customSwipeEndX - customSwipeStartX, customSwipeEndY - customSwipeStartY)
+                if (dragging) endDrag()
+                when (resolvePadTouchOutcome(longPressFired, dwellFired, moved, distance, dp(12).toFloat())) {
+                    PadTouchOutcome.CUSTOM_SWIPE -> customSwipeAt(customSwipeStartX, customSwipeStartY, customSwipeEndX, customSwipeEndY)
+                    PadTouchOutcome.LONG_PRESS -> longPressAt(cursorX, cursorY)
+                    PadTouchOutcome.CLICK -> tapOrDouble()
+                    PadTouchOutcome.DWELL_CLICK, PadTouchOutcome.MOVE_ONLY -> Unit
                 }
+                customSwipeArmed = false
             }
 
             MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(longPressRunnable)
                 cancelDwell()
+                customSwipeArmed = false
                 if (dragging) endDrag()
             }
         }
@@ -596,40 +701,33 @@ class TouchpadService : AccessibilityService() {
                 resizingFromX = e.rawX
                 resizingFromY = e.rawY
                 resizingPanelWidth = panel?.width ?: dp(prefs.panelWidthDp.coerceAtLeast(PANEL_MIN_WIDTH_DP))
-                resizingPanelHeight = dp(prefs.padHeightDp)
+                resizingPanelHeight = panel?.height ?: dp(prefs.controlHeightDp)
             }
             MotionEvent.ACTION_MOVE -> if (resizingPanel) {
                 val width = resizePanelWidth(
                     resizingPanelWidth,
                     (e.rawX - resizingFromX).roundToInt(),
-                    dp(PANEL_MIN_WIDTH_DP).coerceAtMost(screenW),
-                    screenW,
+                    controlWidthRange(screenW, resources.displayMetrics.density).first,
+                    controlWidthRange(screenW, resources.displayMetrics.density).last,
                 )
-                val height = resizePanelHeight(
+                val height = resizeControlHeight(
                     resizingPanelHeight,
                     (e.rawY - resizingFromY).roundToInt(),
-                    dp(80),
-                    screenH / 2,
+                    controlHeightRange(screenH, resources.displayMetrics.density).first,
+                    controlHeightRange(screenH, resources.displayMetrics.density).last,
                 )
                 prefs.panelWidthDp = pixelsToDp(width, resources.displayMetrics.density)
                 prefs.padWidthPercent = (width * 100 / screenW).coerceIn(20, 100)
-                prefs.padHeightDp = pixelsToDp(height, resources.displayMetrics.density)
-                val nextCompact = width < dp(260)
-                if (nextCompact != compactButtons) {
-                    compactButtons = nextCompact
-                    renderButtons(compact = compactButtons)
-                }
-                panel?.let { root ->
+                prefs.controlHeightDp = pixelsToDp(height, resources.displayMetrics.density)
+                panel?.let { panelView ->
+                    val root = panelView as? FrameLayout ?: return@let
                     val window = panelParams ?: return@let
                     window.width = width
-                    window.height = WindowManager.LayoutParams.WRAP_CONTENT
+                    window.height = height
                     root.layoutParams = window
+                    layoutControlChildren(root, width, height)
                     runCatching { wm.updateViewLayout(root, window) }
                     root.requestLayout()
-                }
-                padArea?.let { area ->
-                    area.layoutParams = area.layoutParams.apply { this.height = height }
-                    area.requestLayout()
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -721,6 +819,20 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun longPressAt(x: Float, y: Float) = tapAt(x, y, prefs.longPressMs.toLong() + 200)
+
+    private fun customSwipeAt(startX: Float, startY: Float, endX: Float, endY: Float, ms: Long = 320) {
+        val swipe = customSwipeFrom(startX, startY, endX, endY, dp(12).toFloat()) ?: return
+        val path = Path().apply {
+            moveTo(swipe.startX, swipe.startY)
+            lineTo(swipe.endX, swipe.endY)
+        }
+        dispatch(
+            GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
+                .build(),
+        )
+        haptic()
+    }
 
     private fun swipeBy(dx: Float, dy: Float, ms: Long) {
         val x0 = cursorX

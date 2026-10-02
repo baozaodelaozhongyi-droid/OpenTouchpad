@@ -109,10 +109,13 @@ class MainActivity : Activity() {
         // ── 触控板 ──
         col.addView(section(getString(R.string.sec_pad)))
         val maxPanelWidth = pixelsToDp(resources.displayMetrics.widthPixels, resources.displayMetrics.density)
-            .coerceAtLeast(PANEL_MIN_WIDTH_DP)
+            .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
         val currentPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
             ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
-        col.addView(slider(getString(R.string.set_pad_height), 80, 900, prefs.padHeightDp, onChange = { prefs.padHeightDp = it; reload() }))
+        val maxPanelHeight = pixelsToDp(resources.displayMetrics.heightPixels, resources.displayMetrics.density)
+            .coerceIn(CONTROL_MIN_SIZE_DP, CONTROL_MAX_SIZE_DP)
+        val currentPanelHeight = prefs.controlHeightDp.coerceIn(CONTROL_MIN_SIZE_DP, maxPanelHeight)
+        col.addView(slider(getString(R.string.set_pad_height), CONTROL_MIN_SIZE_DP, maxPanelHeight, currentPanelHeight, onChange = { prefs.controlHeightDp = it; reload() }))
         col.addView(slider(getString(R.string.set_pad_width), PANEL_MIN_WIDTH_DP, maxPanelWidth, currentPanelWidth, onChange = { prefs.panelWidthDp = it; reload() }))
         col.addView(slider(getString(R.string.set_opacity), 20, 100, prefs.opacityPercent, onChange = { prefs.opacityPercent = it; reload() }))
         col.addView(bigButton(getString(R.string.btn_toggle_panel)) {
@@ -143,7 +146,7 @@ class MainActivity : Activity() {
         col.addView(slider(getString(R.string.set_long_press), 200, 1500, prefs.longPressMs, onChange = { prefs.longPressMs = it }))
         col.addView(slider(getString(R.string.set_dwell), 0, 2000, prefs.dwellMs, getString(R.string.dwell_off), onChange = { prefs.dwellMs = it }))
         col.addView(slider(getString(R.string.set_scroll_distance), 60, 500, prefs.scrollDistanceDp, onChange = { prefs.scrollDistanceDp = it }))
-        col.addView(slider(getString(R.string.set_swipe_distance), 150, 900, prefs.swipeDistanceDp, onChange = { prefs.swipeDistanceDp = it }))
+        col.addView(label(getString(R.string.custom_swipe_hint)))
         col.addView(switchRow(getString(R.string.switch_haptics), prefs.haptics, onChange = { prefs.haptics = it }))
         col.addView(switchRow(getString(R.string.switch_autohide_landscape), prefs.autoHideLandscape, onChange = { prefs.autoHideLandscape = it; reload() }))
         col.addView(switchRow(getString(R.string.switch_minimize_keyboard), prefs.minimizeOnKeyboard, onChange = { prefs.minimizeOnKeyboard = it }))
