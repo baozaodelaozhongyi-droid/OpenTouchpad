@@ -9,6 +9,23 @@ class Prefs(ctx: Context) {
 
     init {
         migrateCompactLayout()
+        migrateUniformGrid()
+    }
+
+    /**
+     * v0.4.4：改成等间距网格。高度改为「网格最小高度 + 额外高度」，额外高度归零；
+     * 宽度再缩到 85%，按钮间距最多 3dp。只执行一次。
+     */
+    private fun migrateUniformGrid() {
+        if (sp.getBoolean("uniformGridV044", false)) return
+        val e = sp.edit().putBoolean("uniformGridV044", true).putInt("extraHeightDp", 0)
+        sp.getInt("panelWidthDp", 0).takeIf { it > 0 }?.let {
+            e.putInt("panelWidthDp", (it * 0.85f).toInt().coerceIn(PANEL_MIN_WIDTH_DP, DEFAULT_PANEL_WIDTH_DP))
+        }
+        if (sp.getInt("buttonSpacing", DEFAULT_BUTTON_SPACING_DP) > DEFAULT_BUTTON_SPACING_DP) {
+            e.putInt("buttonSpacing", DEFAULT_BUTTON_SPACING_DP)
+        }
+        e.apply()
     }
 
     /**
@@ -73,9 +90,14 @@ class Prefs(ctx: Context) {
             ?: if (sp.contains("padHeight")) {
                 (padHeightDp + 168).coerceIn(CONTROL_MIN_SIZE_DP, CONTROL_MAX_SIZE_DP)
             } else {
-                DEFAULT_CONTROL_HEIGHT_DP
+                248
             }
         set(v) = sp.edit().putInt("controlHeightDp", v).apply()
+
+    /** 面板高度超出最紧凑网格的部分（dp），只加高触控板。0 = 最紧凑。 */
+    var extraHeightDp: Int
+        get() = sp.getInt("extraHeightDp", 0)
+        set(v) = sp.edit().putInt("extraHeightDp", v).apply()
 
     var opacityPercent: Int
         get() = sp.getInt("opacity", 75)
@@ -135,7 +157,7 @@ class Prefs(ctx: Context) {
         set(v) = sp.edit().putInt("buttonRadius", v).apply()
 
     var buttonSpacingDp: Int
-        get() = sp.getInt("buttonSpacing", 6)
+        get() = sp.getInt("buttonSpacing", DEFAULT_BUTTON_SPACING_DP)
         set(v) = sp.edit().putInt("buttonSpacing", v).apply()
 
     var buttonTextSizeSp: Int

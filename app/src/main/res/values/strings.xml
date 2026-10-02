@@ -64,7 +64,7 @@
     <string name="theme_light">White mode</string>
     <string name="theme_dark">Black mode</string>
 
-    <string name="set_pad_height">Touchpad control area height</string>
+    <string name="set_pad_height">Extra touchpad height</string>
     <string name="set_pad_width">Touchpad control area width</string>
     <string name="set_opacity">Touchpad opacity</string>
     <string name="set_ball_size">Floating ball size</string>
@@ -120,4 +120,5 @@
         <item>Bottom-left corner</item>
         <item>Bottom-right corner</item>
     </string-array>
+    <string name="pad_height_hint">Width sets the button size. At 0 extra height the panel is a compact grid with equal gaps everywhere; more height only makes the touchpad taller.</string>
 </resources>

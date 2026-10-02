@@ -2,16 +2,17 @@ package io.github.opentouchpad
 
 import kotlin.math.roundToInt
 
-internal const val PANEL_MIN_WIDTH_DP = 180
-internal const val CONTROL_MIN_SIZE_DP = 180
+internal const val PANEL_MIN_WIDTH_DP = 110
+internal const val CONTROL_MIN_SIZE_DP = 110
 internal const val CONTROL_MAX_SIZE_DP = 2400
 internal const val FLOATING_BALL_MIN_DP = 16
 internal const val FLOATING_BALL_MAX_DP = 140
 internal const val CURSOR_MIN_DP = 8
 internal const val CURSOR_MAX_DP = 160
-internal const val BUTTON_SPACING_MAX_DP = 80
-internal const val DEFAULT_PANEL_WIDTH_DP = 288
-internal const val DEFAULT_CONTROL_HEIGHT_DP = 248
+internal const val BUTTON_SPACING_MAX_DP = 24
+internal const val DEFAULT_PANEL_WIDTH_DP = 168
+internal const val CONTROL_EXTRA_HEIGHT_MAX_DP = 400
+internal const val DEFAULT_BUTTON_SPACING_DP = 3
 
 internal data class PanelPosition(val x: Int, val y: Int)
 
@@ -98,55 +99,62 @@ internal data class ControlLayout(
     val slots: List<ControlRect>,
 )
 
-internal const val CONTROL_EDGE_DP = 2
-internal const val CONTROL_PAD_GAP_DP = 4
+internal const val CONTROL_EDGE_DP = 1
 internal const val CONTROL_BUTTON_MAX_DP = 46
+internal const val CONTROL_BUTTON_MIN_DP = 16
+
+/** 6 列 × 5 行网格：按钮直径只由面板宽度和间距决定。 */
+internal fun controlButtonSize(width: Int, density: Float, gapPx: Int): Int {
+    val edge = (CONTROL_EDGE_DP * density).roundToInt()
+    return ((width - 2 * edge - 5 * gapPx) / 6)
+        .coerceIn((CONTROL_BUTTON_MIN_DP * density).roundToInt(), (CONTROL_BUTTON_MAX_DP * density).roundToInt())
+}
+
+/** 网格最紧凑时的面板高度（触控板高度 = 3 个按钮 + 2 个间距）。 */
+internal fun controlGridHeight(width: Int, density: Float, gapPx: Int): Int {
+    val edge = (CONTROL_EDGE_DP * density).roundToInt()
+    return 2 * edge + 5 * controlButtonSize(width, density, gapPx) + 4 * gapPx
+}
 
 /**
- * Compact layout: 4 buttons above and below the touchpad, 3 in each side column.
+ * Uniform grid layout. Every neighbour distance — button↔button and button↔touchpad — is
+ * exactly [spacingPx], in rows, side columns and corners alike.
+ *
+ * Columns: corner/left | top 1..4 | corner/right. Rows: corner/top | left/right ×3 | corner/bottom.
  * Left column = move grip, LEFT 1, LEFT 2. Right column = RIGHT 1, RIGHT 2, resize grip.
- * The four corners hold one custom button each, aligned with the top/bottom rows and side columns.
+ * Height above [controlGridHeight] only makes the touchpad taller; side-column buttons stay
+ * packed with the same gap and are centred vertically.
  */
 internal fun computeControlLayout(width: Int, height: Int, density: Float, spacingPx: Int): ControlLayout {
-    fun d(v: Int) = (v * density).roundToInt()
-    val edge = d(CONTROL_EDGE_DP)
-    val inner = d(CONTROL_PAD_GAP_DP)
-    val button = minOf(
-        d(CONTROL_BUTTON_MAX_DP),
-        (width - 2 * edge - 2 * inner) / 6,
-        (height - 2 * edge - 2 * inner) / 5,
-    ).coerceAtLeast(d(16))
-    val padLeft = edge + button + inner
-    val padTop = edge + button + inner
-    val padW = (width - 2 * padLeft).coerceAtLeast(d(40))
-    val padH = (height - 2 * padTop).coerceAtLeast(d(40))
-
-    fun spread(count: Int, start: Int, end: Int): List<Int> {
-        val avail = end - start
-        val maxGap = if (count > 1) ((avail - count * button) / (count - 1)).coerceAtLeast(0) else 0
-        val gap = spacingPx.coerceIn(0, maxGap)
-        val group = count * button + (count - 1) * gap
-        val s = start + (avail - group) / 2
-        return List(count) { s + it * (button + gap) }
-    }
-
-    val rowXs = spread(4, padLeft, padLeft + padW)
-    val colYs = spread(3, padTop, padTop + padH)
+    val edge = (CONTROL_EDGE_DP * density).roundToInt()
+    val gap = spacingPx.coerceAtLeast(0)
+    val b = controlButtonSize(width, density, gap)
+    val step = b + gap
+    // 宽度被最小按钮尺寸卡住时，整体水平居中
+    val gridW = 6 * b + 5 * gap
+    val x0 = ((width - gridW) / 2).coerceAtLeast(0)
+    val colX = List(6) { x0 + it * step }
     val topY = edge
-    val bottomY = height - edge - button
-    val leftX = edge
-    val rightX = width - edge - button
-    fun at(x: Int, y: Int) = ControlRect(x, y, button, button)
-    val slots = rowXs.map { at(it, topY) } +
-        rowXs.map { at(it, bottomY) } +
-        listOf(at(leftX, colYs[1]), at(leftX, colYs[2])) +
-        listOf(at(rightX, colYs[0]), at(rightX, colYs[1])) +
+    val bottomY = (height - edge - b).coerceAtLeast(topY + 4 * step)
+    val padTop = topY + step
+    val padH = bottomY - gap - padTop
+    val pad = ControlRect(colX[1], padTop, 4 * b + 3 * gap, padH)
+    // 侧列 3 个按钮按同样间距紧排，并在触控板高度内居中
+    val sideStart = padTop + (padH - (3 * b + 2 * gap)) / 2
+    val sideY = List(3) { sideStart + it * step }
+    fun at(x: Int, y: Int) = ControlRect(x, y, b, b)
+    val leftX = colX[0]
+    val rightX = colX[5]
+    val slots = (1..4).map { at(colX[it], topY) } +
+        (1..4).map { at(colX[it], bottomY) } +
+        listOf(at(leftX, sideY[1]), at(leftX, sideY[2])) +
+        listOf(at(rightX, sideY[0]), at(rightX, sideY[1])) +
         listOf(at(leftX, topY), at(rightX, topY), at(leftX, bottomY), at(rightX, bottomY))
     return ControlLayout(
-        button = button,
-        pad = ControlRect(padLeft, padTop, padW, padH),
-        moveGrip = at(leftX, colYs[0]),
-        resizeGrip = at(rightX, colYs[2]),
+        button = b,
+        pad = pad,
+        moveGrip = at(leftX, sideY[0]),
+        resizeGrip = at(rightX, sideY[2]),
         slots = slots,
     )
 }

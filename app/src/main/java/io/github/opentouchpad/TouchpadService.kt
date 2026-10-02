@@ -328,13 +328,12 @@ class TouchpadService : AccessibilityService() {
     private fun addFullPanel() {
         val dark = isDarkTheme()
         val widthRange = controlWidthRange(screenW, resources.displayMetrics.density)
-        val heightRange = controlHeightRange(screenH, resources.displayMetrics.density)
         val widthPx = if (prefs.panelWidthDp > 0) {
             dp(prefs.panelWidthDp)
         } else {
             screenW * prefs.padWidthPercent / 100
         }.coerceIn(widthRange.first, widthRange.last)
-        val heightPx = dp(prefs.controlHeightDp).coerceIn(heightRange.first, heightRange.last)
+        val heightPx = panelHeightFor(widthPx)
 
         // 根容器本身不处理触摸：只有左侧列顶部的移动键可以拖动面板。
         val root = FrameLayout(this).apply {
@@ -387,6 +386,14 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
+    private fun spacingPx(): Int = dp(prefs.buttonSpacingDp.coerceIn(0, BUTTON_SPACING_MAX_DP))
+
+    /** 面板高度 = 当前宽度下最紧凑的网格高度 + 用户加的额外高度，不超过屏幕。 */
+    private fun panelHeightFor(widthPx: Int, extraDp: Int = prefs.extraHeightDp): Int {
+        val grid = controlGridHeight(widthPx, resources.displayMetrics.density, spacingPx())
+        return (grid + dp(extraDp.coerceIn(0, CONTROL_EXTRA_HEIGHT_MAX_DP))).coerceAtMost(maxOf(grid, screenH))
+    }
+
     private fun rectParams(r: ControlRect): FrameLayout.LayoutParams =
         FrameLayout.LayoutParams(r.w, r.h).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -394,11 +401,10 @@ class TouchpadService : AccessibilityService() {
             topMargin = r.y
         }
 
-    /** 统一布局：按钮大小、触控板大小只由面板尺寸决定；按钮间距只改变按钮之间的距离。 */
+    /** 等间距网格：按钮之间、按钮与触控板之间都是同一个间距。 */
     private fun layoutControlChildren(root: FrameLayout, width: Int, height: Int) {
         val layout = computeControlLayout(
-            width, height, resources.displayMetrics.density,
-            dp(prefs.buttonSpacingDp.coerceIn(0, BUTTON_SPACING_MAX_DP)),
+            width, height, resources.displayMetrics.density, spacingPx(),
         )
         padArea?.layoutParams = rectParams(layout.pad)
         // 触控板圆角随按钮大小变化，保持和圆形按钮的视觉比例
@@ -707,7 +713,7 @@ class TouchpadService : AccessibilityService() {
                 resizingFromX = e.rawX
                 resizingFromY = e.rawY
                 resizingPanelWidth = panel?.width ?: dp(prefs.panelWidthDp.coerceAtLeast(PANEL_MIN_WIDTH_DP))
-                resizingPanelHeight = panel?.height ?: dp(prefs.controlHeightDp)
+                resizingPanelHeight = prefs.extraHeightDp
             }
             MotionEvent.ACTION_MOVE -> if (resizingPanel) {
                 val width = resizePanelWidth(
@@ -716,15 +722,14 @@ class TouchpadService : AccessibilityService() {
                     controlWidthRange(screenW, resources.displayMetrics.density).first,
                     controlWidthRange(screenW, resources.displayMetrics.density).last,
                 )
-                val height = resizeControlHeight(
-                    resizingPanelHeight,
-                    (e.rawY - resizingFromY).roundToInt(),
-                    controlHeightRange(screenH, resources.displayMetrics.density).first,
-                    controlHeightRange(screenH, resources.displayMetrics.density).last,
-                )
+                // 横向拖动改宽度（按钮跟着缩放），纵向拖动只改触控板的额外高度
+                val extraDp = (resizingPanelHeight +
+                    ((e.rawY - resizingFromY) / resources.displayMetrics.density).roundToInt())
+                    .coerceIn(0, CONTROL_EXTRA_HEIGHT_MAX_DP)
+                val height = panelHeightFor(width, extraDp)
                 prefs.panelWidthDp = pixelsToDp(width, resources.displayMetrics.density)
                 prefs.padWidthPercent = (width * 100 / screenW).coerceIn(20, 100)
-                prefs.controlHeightDp = pixelsToDp(height, resources.displayMetrics.density)
+                prefs.extraHeightDp = extraDp
                 panel?.let { panelView ->
                     val root = panelView as? FrameLayout ?: return@let
                     val window = panelParams ?: return@let

@@ -112,11 +112,9 @@ class MainActivity : Activity() {
             .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
         val currentPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
             ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
-        val maxPanelHeight = pixelsToDp(resources.displayMetrics.heightPixels, resources.displayMetrics.density)
-            .coerceIn(CONTROL_MIN_SIZE_DP, CONTROL_MAX_SIZE_DP)
-        val currentPanelHeight = prefs.controlHeightDp.coerceIn(CONTROL_MIN_SIZE_DP, maxPanelHeight)
-        col.addView(slider(getString(R.string.set_pad_height), CONTROL_MIN_SIZE_DP, maxPanelHeight, currentPanelHeight, onChange = { prefs.controlHeightDp = it; reload() }))
         col.addView(slider(getString(R.string.set_pad_width), PANEL_MIN_WIDTH_DP, maxPanelWidth, currentPanelWidth, onChange = { prefs.panelWidthDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_pad_height), 0, CONTROL_EXTRA_HEIGHT_MAX_DP, prefs.extraHeightDp.coerceIn(0, CONTROL_EXTRA_HEIGHT_MAX_DP), onChange = { prefs.extraHeightDp = it; reload() }))
+        col.addView(label(getString(R.string.pad_height_hint)))
         col.addView(slider(getString(R.string.set_opacity), 20, 100, prefs.opacityPercent, onChange = { prefs.opacityPercent = it; reload() }))
         col.addView(bigButton(getString(R.string.btn_toggle_panel)) {
             TouchpadService.instance?.toggleMinimize() ?: toast(getString(R.string.status_off))

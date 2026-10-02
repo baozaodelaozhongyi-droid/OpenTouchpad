@@ -64,7 +64,7 @@
     <string name="theme_light">白色模式</string>
     <string name="theme_dark">黑色模式</string>
 
-    <string name="set_pad_height">触控板控制区高度</string>
+    <string name="set_pad_height">触控板加高</string>
     <string name="set_pad_width">触控板控制区宽度</string>
     <string name="set_opacity">触控板透明度</string>
     <string name="set_ball_size">悬浮球大小</string>
@@ -120,4 +120,5 @@
         <item>左下角</item>
         <item>右下角</item>
     </string-array>
+    <string name="pad_height_hint">宽度决定按钮大小。加高为 0 时是最紧凑的等间距网格；加高只让中间触控板变高，按钮间距不变。</string>
 </resources>

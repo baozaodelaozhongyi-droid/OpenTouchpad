@@ -23,9 +23,9 @@ class TouchpadMathTest {
 
     @Test
     fun customSwipeUsesIndependentControlSizeBounds() {
-        assertEquals(540..1080, controlWidthRange(screenWidth = 1080, density = 3f))
-        assertEquals(540..1920, controlHeightRange(screenHeight = 1920, density = 3f))
-        assertEquals(180..240, controlWidthRange(screenWidth = 240, density = 1f))
+        assertEquals(330..1080, controlWidthRange(screenWidth = 1080, density = 3f))
+        assertEquals(330..1920, controlHeightRange(screenHeight = 1920, density = 3f))
+        assertEquals(110..240, controlWidthRange(screenWidth = 240, density = 1f))
     }
 
     @Test
@@ -72,8 +72,8 @@ class TouchpadMathTest {
 
     @Test
     fun panelWidthCanShrinkToCompactAccessibilityLayout() {
-        assertEquals(180, PANEL_MIN_WIDTH_DP)
-        assertEquals(180, resizePanelWidth(startPx = 420, deltaX = -300, minPx = PANEL_MIN_WIDTH_DP, maxPx = 720))
+        assertEquals(110, PANEL_MIN_WIDTH_DP)
+        assertEquals(120, resizePanelWidth(startPx = 420, deltaX = -300, minPx = PANEL_MIN_WIDTH_DP, maxPx = 720))
         assertEquals(720, resizePanelWidth(startPx = 420, deltaX = 500, minPx = PANEL_MIN_WIDTH_DP, maxPx = 720))
     }
 
@@ -97,53 +97,69 @@ class TouchpadMathTest {
         )
     }
 
-    @Test
-    fun buttonSpacingDoesNotResizeTouchpadOrButtons() {
-        val a = computeControlLayout(1000, 800, 1f, spacingPx = 0)
-        val b = computeControlLayout(1000, 800, 1f, spacingPx = 60)
-        assertEquals(a.pad, b.pad)
-        assertEquals(a.button, b.button)
-        assertEquals(a.moveGrip.x, b.moveGrip.x)
-        assertEquals(a.resizeGrip.x, b.resizeGrip.x)
-        assertTrue(b.slots[1].x - b.slots[0].x > a.slots[1].x - a.slots[0].x)
+    private fun gridOf(width: Int, gap: Int, extra: Int = 0, density: Float = 1f): ControlLayout {
+        val h = controlGridHeight(width, density, gap) + extra
+        return computeControlLayout(width, h, density, gap)
     }
 
-    @Test
-    fun buttonsHugTheTouchpad() {
-        val l = computeControlLayout(1000, 800, 1f, spacingPx = 6)
-        val gap = CONTROL_PAD_GAP_DP
-        assertEquals(gap, l.pad.y - (l.slots[0].y + l.button))
-        assertEquals(gap, l.slots[4].y - (l.pad.y + l.pad.h))
-        assertEquals(gap, l.pad.x - (l.moveGrip.x + l.button))
-        assertEquals(gap, l.resizeGrip.x - (l.pad.x + l.pad.w))
-    }
-
-    @Test
-    fun gripsSitInSideColumnsAndNothingOverlaps() {
-        val l = computeControlLayout(900, 700, 1f, spacingPx = 200)
-        assertEquals(l.button, l.moveGrip.w)
-        assertEquals(l.button, l.resizeGrip.h)
-        // move grip: top of the left column; resize grip: bottom of the right column
-        assertEquals(l.slots[8].x, l.moveGrip.x)
-        assertTrue(l.moveGrip.y < l.slots[8].y)
-        assertEquals(l.slots[10].x, l.resizeGrip.x)
-        assertTrue(l.resizeGrip.y > l.slots[11].y)
-        // side columns stay inside the touchpad's vertical span (corners empty)
-        for (r in listOf(l.moveGrip, l.resizeGrip) + l.slots.subList(8, 12)) {
-            assertTrue(r.y >= l.pad.y && r.y + r.h <= l.pad.y + l.pad.h)
-        }
-        // corner buttons line up with the top/bottom rows and side columns
-        val (tl, tr, bl, br) = l.slots.subList(12, 16)
-        assertEquals(l.slots[0].y, tl.y); assertEquals(l.moveGrip.x, tl.x)
-        assertEquals(l.slots[3].y, tr.y); assertEquals(l.resizeGrip.x, tr.x)
-        assertEquals(l.slots[4].y, bl.y); assertEquals(l.moveGrip.x, bl.x)
-        assertEquals(l.slots[7].y, br.y); assertEquals(l.resizeGrip.x, br.x)
-        assertEquals(16, l.slots.size)
+    private fun assertNoOverlap(l: ControlLayout) {
         val all = l.slots + l.moveGrip + l.resizeGrip + l.pad
         for (i in all.indices) for (j in i + 1 until all.size) {
             val p = all[i]; val q = all[j]
             val overlap = p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h
             assertFalse("$p overlaps $q", overlap)
         }
+    }
+
+    @Test
+    fun everyGapIsTheSameInRowsColumnsCornersAndAroundTouchpad() {
+        for (gap in listOf(0, 3, 8)) {
+            val l = gridOf(168, gap)
+            val b = l.button
+            val (tl, tr, bl, br) = l.slots.subList(12, 16)
+            val top = listOf(tl) + l.slots.subList(0, 4) + tr
+            val bottom = listOf(bl) + l.slots.subList(4, 8) + br
+            for (row in listOf(top, bottom)) for (i in 1 until row.size) {
+                assertEquals("row gap", gap, row[i].x - (row[i - 1].x + b))
+                assertEquals(row[0].y, row[i].y)
+            }
+            val left = listOf(tl, l.moveGrip, l.slots[8], l.slots[9], bl)
+            val right = listOf(tr, l.slots[10], l.slots[11], l.resizeGrip, br)
+            for (col in listOf(left, right)) for (i in 1 until col.size) {
+                assertEquals("column gap", gap, col[i].y - (col[i - 1].y + b))
+                assertEquals(col[0].x, col[i].x)
+            }
+            // touchpad keeps the same gap to every neighbour
+            assertEquals(gap, l.pad.y - (tl.y + b))
+            assertEquals(gap, bl.y - (l.pad.y + l.pad.h))
+            assertEquals(gap, l.pad.x - (tl.x + b))
+            assertEquals(gap, tr.x - (l.pad.x + l.pad.w))
+            assertNoOverlap(l)
+        }
+    }
+
+    @Test
+    fun extraHeightOnlyMakesTouchpadTaller() {
+        val a = gridOf(168, 3)
+        val b = gridOf(168, 3, extra = 60)
+        assertEquals(a.button, b.button)
+        assertEquals(a.pad.w, b.pad.w)
+        assertEquals(a.pad.h + 60, b.pad.h)
+        // side buttons stay packed with the same gap
+        assertEquals(3, b.slots[8].y - (b.moveGrip.y + b.button))
+        assertEquals(3, b.resizeGrip.y - (b.slots[11].y + b.button))
+        assertNoOverlap(b)
+    }
+
+    @Test
+    fun widthControlsButtonSizeAndSmallPanelsStayValid() {
+        assertTrue(gridOf(240, 3).button > gridOf(168, 3).button)
+        val tiny = gridOf(PANEL_MIN_WIDTH_DP, 3)
+        assertTrue(tiny.button >= CONTROL_BUTTON_MIN_DP)
+        assertNoOverlap(tiny)
+        // densities other than 1 also keep equal gaps
+        val hi = gridOf(168 * 3, 9, density = 3f)
+        assertEquals(9, hi.slots[1].x - (hi.slots[0].x + hi.button))
+        assertEquals(9, hi.slots[8].y - (hi.moveGrip.y + hi.button))
     }
 }
