@@ -436,7 +436,7 @@ class TouchpadService : AccessibilityService() {
             textSize = (size / resources.displayMetrics.density * 0.45f).coerceIn(5f, 40f)
             includeFontPadding = false
             val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
-                ?: if (isDarkTheme()) 0xFF6EA8FE.toInt() else 0xFF2563EB.toInt()
+                ?: if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
             // 浅色球用深色图标，深色球用浅色图标
             setTextColor(if (Color.luminance(ballColor) > 0.55f) 0xFF111827.toInt() else 0xFFF8FAFC.toInt())
             alpha = prefs.floatingBallOpacityPercent.coerceIn(20, 100) / 100f
@@ -469,22 +469,24 @@ class TouchpadService : AccessibilityService() {
     )
 
     private fun palette(dark: Boolean): Palette = if (dark) {
+        // 暖深色：炭灰按钮 + 陶土色移动/缩放键
         Palette(
-            buttonTop = 0xFF3A3D44.toInt(), buttonBottom = 0xFF2C2F35.toInt(),
-            buttonStroke = 0x33FFFFFF, buttonText = 0xFFF1F3F6.toInt(),
-            padTop = 0xFF34373D.toInt(), padBottom = 0xFF282A2F.toInt(), padStroke = 0x26FFFFFF,
-            gripTop = 0xFF3B4C6B.toInt(), gripBottom = 0xFF2D3B55.toInt(),
-            gripStroke = 0x556EA8FE, gripText = 0xFFBFD6FF.toInt(),
-            ripple = 0x40FFFFFF,
+            buttonTop = 0xFF3A3936.toInt(), buttonBottom = 0xFF2E2D2B.toInt(),
+            buttonStroke = 0x26FAF9F5, buttonText = 0xFFFAF9F5.toInt(),
+            padTop = 0xFF30302E.toInt(), padBottom = 0xFF262624.toInt(), padStroke = 0x1FFAF9F5,
+            gripTop = 0xFF5A3A2E.toInt(), gripBottom = 0xFF4A3026.toInt(),
+            gripStroke = 0x66D97757, gripText = 0xFFF0B9A3.toInt(),
+            ripple = 0x33FAF9F5,
         )
     } else {
+        // 暖浅色：象牙白按钮 + 羊皮纸触控板
         Palette(
-            buttonTop = 0xFFFFFFFF.toInt(), buttonBottom = 0xFFEEF0F3.toInt(),
-            buttonStroke = 0x1F000000, buttonText = 0xFF1F2937.toInt(),
-            padTop = 0xFFF4F5F7.toInt(), padBottom = 0xFFE4E7EB.toInt(), padStroke = 0x1A000000,
-            gripTop = 0xFFE6EEFF.toInt(), gripBottom = 0xFFD5E2FC.toInt(),
-            gripStroke = 0x552563EB, gripText = 0xFF1D4ED8.toInt(),
-            ripple = 0x26000000,
+            buttonTop = 0xFFFFFFFF.toInt(), buttonBottom = 0xFFF5F4ED.toInt(),
+            buttonStroke = 0x33B0AEA5, buttonText = 0xFF141413.toInt(),
+            padTop = 0xFFF0EEE6.toInt(), padBottom = 0xFFE8E6DC.toInt(), padStroke = 0x33B0AEA5,
+            gripTop = 0xFFF6E3DA.toInt(), gripBottom = 0xFFEFD2C5.toInt(),
+            gripStroke = 0x66C96442, gripText = 0xFFC96442.toInt(),
+            ripple = 0x26141413,
         )
     }
 

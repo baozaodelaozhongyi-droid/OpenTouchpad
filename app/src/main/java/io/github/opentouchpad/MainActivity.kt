@@ -12,11 +12,13 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -37,21 +39,28 @@ class MainActivity : Activity() {
     private lateinit var content: LinearLayout
     private var darkUi = false
 
-    // 页面是浅灰底 + 白色卡片（深色模式：近黑底 + 深灰卡片）
-    private val pageColor get() = if (darkUi) 0xFF0E0F12.toInt() else 0xFFF2F3F7.toInt()
-    private val surfaceColor get() = if (darkUi) 0xFF1A1B20.toInt() else 0xFFFFFFFF.toInt()
-    private val elevatedColor get() = if (darkUi) 0xFF2A2B31.toInt() else 0xFFFFFFFF.toInt()
-    private val trackColor get() = if (darkUi) 0xFF26272D.toInt() else 0xFFEDEEF2.toInt()
-    private val trackStrongColor get() = if (darkUi) 0xFF3A3B42.toInt() else 0xFFD5D8DF.toInt()
-    private val textColor get() = if (darkUi) 0xFFF4F4F5.toInt() else 0xFF15171A.toInt()
-    private val secondaryTextColor get() = if (darkUi) 0xFFA4A6AD.toInt() else 0xFF6B7078.toInt()
-    private val tertiaryTextColor get() = if (darkUi) 0xFF6E7078.toInt() else 0xFFA3A7AE.toInt()
-    private val borderColor get() = if (darkUi) 0xFF2C2D33.toInt() else 0xFFE6E8EC.toInt()
-    private val accentColor get() = if (darkUi) 0xFF8AB4F8.toInt() else 0xFF2563EB.toInt()
-    private val accentSoftColor get() = if (darkUi) 0x338AB4F8 else 0x1A2563EB
-    private val accentSoftStrongColor get() = if (darkUi) 0x808AB4F8.toInt() else 0x662563EB
-    private val rippleColor get() = if (darkUi) 0x22FFFFFF else 0x14000000
-    private val dangerColor get() = if (darkUi) 0xFFF28B82.toInt() else 0xFFD93025.toInt()
+    // 暖色调配色（参考 Claude 官网）：羊皮纸底色 + 象牙白卡片 + 陶土橙强调色；所有灰色都带暖黄底调。
+    private val pageColor get() = if (darkUi) 0xFF1F1E1D.toInt() else 0xFFF5F4ED.toInt()
+    private val surfaceColor get() = if (darkUi) 0xFF262624.toInt() else 0xFFFAF9F5.toInt()
+    private val elevatedColor get() = if (darkUi) 0xFF30302E.toInt() else 0xFFFFFFFF.toInt()
+    private val trackColor get() = if (darkUi) 0xFF30302E.toInt() else 0xFFF0EEE6.toInt()
+    private val trackStrongColor get() = if (darkUi) 0xFF4D4C48.toInt() else 0xFFD1CFC5.toInt()
+    private val textColor get() = if (darkUi) 0xFFFAF9F5.toInt() else 0xFF141413.toInt()
+    private val secondaryTextColor get() = if (darkUi) 0xFFB0AEA5.toInt() else 0xFF5E5D59.toInt()
+    private val tertiaryTextColor get() = if (darkUi) 0xFF87867F.toInt() else 0xFF87867F.toInt()
+    private val borderColor get() = if (darkUi) 0xFF3D3D3A.toInt() else 0xFFE8E6DC.toInt()
+    private val accentColor get() = if (darkUi) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+    private val onAccentColor get() = 0xFFFAF9F5.toInt()
+    private val accentSoftColor get() = if (darkUi) 0x33D97757 else 0x1FC96442
+    private val accentSoftStrongColor get() = if (darkUi) 0x80D97757.toInt() else 0x66C96442
+    private val rippleColor get() = if (darkUi) 0x1FFAF9F5 else 0x14141413
+    private val dangerColor get() = if (darkUi) 0xFFE5826F.toInt() else 0xFFB53333.toInt()
+
+    /** 标题用衬线体（内置 Noto Serif SC Medium 子集），正文/控件用系统无衬线体。 */
+    private val serif: Typeface by lazy {
+        runCatching { resources.getFont(R.font.serif_medium) }.getOrDefault(Typeface.SERIF)
+    }
+    private val sansMedium: Typeface by lazy { Typeface.create("sans-serif-medium", Typeface.NORMAL) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         prefs = Prefs(this)
@@ -60,10 +69,28 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = pageColor
         window.navigationBarColor = pageColor
+        @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = if (darkUi) 0 else {
             View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
-        setContentView(buildUi())
+        val root = buildUi()
+        // Android 15 起强制全面屏：内容会画到状态栏下面，这里按系统栏高度补内边距。
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            val top: Int
+            val bottom: Int
+            if (Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                top = bars.top; bottom = bars.bottom
+            } else {
+                @Suppress("DEPRECATION")
+                top = insets.systemWindowInsetTop
+                @Suppress("DEPRECATION")
+                bottom = insets.systemWindowInsetBottom
+            }
+            v.setPadding(0, top, 0, bottom)
+            insets
+        }
+        setContentView(root)
     }
 
     override fun onResume() {
@@ -184,29 +211,25 @@ class MainActivity : Activity() {
     private fun hero(): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(22), dp(20), dp(18))
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                if (darkUi) intArrayOf(0xFF1E3A8A.toInt(), 0xFF312E81.toInt())
-                else intArrayOf(0xFF2563EB.toInt(), 0xFF4F46E5.toInt()),
-            ).apply { cornerRadius = dp(24).toFloat() }
+            setPadding(dp(8), dp(28), dp(8), dp(8))
         }
         box.addView(TextView(this).apply {
             text = getString(R.string.app_name)
-            textSize = 26f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(Color.WHITE)
+            textSize = 34f
+            typeface = serif
+            letterSpacing = -0.01f
+            setTextColor(textColor)
         })
         box.addView(TextView(this).apply {
             text = getString(R.string.app_description)
-            textSize = 13f
-            setTextColor(0xD9FFFFFF.toInt())
-            setLineSpacing(dp(2).toFloat(), 1f)
-            setPadding(0, dp(6), 0, dp(14))
+            textSize = 15f
+            setTextColor(secondaryTextColor)
+            setLineSpacing(0f, 1.5f)
+            setPadding(0, dp(10), 0, dp(18))
         })
         statusView = TextView(this).apply {
             textSize = 13f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = sansMedium
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(6), dp(14), dp(6))
             compoundDrawablePadding = dp(8)
@@ -215,15 +238,15 @@ class MainActivity : Activity() {
         val primary = TextView(this).apply {
             text = getString(R.string.open_a11y_settings)
             textSize = 15f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = sansMedium
             gravity = Gravity.CENTER
-            setTextColor(if (darkUi) 0xFF1E3A8A.toInt() else 0xFF1D4ED8.toInt())
-            background = ripple(roundedSurface(Color.WHITE, 14), 0x332563EB, 14)
+            setTextColor(onAccentColor)
+            background = ripple(roundedSurface(accentColor, 12), 0x33FAF9F5, 12)
             isClickable = true
             setOnClickListener { openAccessibilitySettings() }
         }
         box.addView(primary, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply {
-            topMargin = dp(16)
+            topMargin = dp(18)
         })
         return box
     }
@@ -232,18 +255,17 @@ class MainActivity : Activity() {
 
     private fun sectionHeader(title: String): View = TextView(this).apply {
         text = title
-        textSize = 13f
-        letterSpacing = 0.04f
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        setTextColor(accentColor)
-        setPadding(dp(8), dp(26), 0, dp(8))
+        textSize = 20f
+        typeface = serif
+        setTextColor(textColor)
+        setPadding(dp(8), dp(32), 0, dp(12))
     }
 
     /** 一组设置放在同一张圆角卡片里，组内用细分隔线隔开。 */
     private fun card(vararg rows: View): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = borderedSurface(surfaceColor, borderColor, 20)
+            background = borderedSurface(surfaceColor, borderColor, 16)
             clipToOutline = true
             setPadding(0, dp(4), 0, dp(4))
         }
@@ -265,9 +287,9 @@ class MainActivity : Activity() {
 
     private fun hintText(text: String): TextView = TextView(this).apply {
         this.text = text
-        textSize = 12.5f
-        setTextColor(secondaryTextColor)
-        setLineSpacing(dp(2).toFloat(), 1f)
+        textSize = 13f
+        setTextColor(tertiaryTextColor)
+        setLineSpacing(0f, 1.45f)
         setPadding(0, dp(4), 0, 0)
     }
 
@@ -297,7 +319,7 @@ class MainActivity : Activity() {
     }
 
     private fun borderedSurface(color: Int, strokeColor: Int, radiusDp: Int): GradientDrawable =
-        roundedSurface(color, radiusDp).apply { setStroke(maxOf(1, dp(1) / 2), strokeColor) }
+        roundedSurface(color, radiusDp).apply { setStroke(maxOf(1, dp(1)), strokeColor) }
 
     private fun ripple(content: Drawable?, color: Int, radiusDp: Int): Drawable =
         RippleDrawable(ColorStateList.valueOf(color), content, roundedSurface(Color.WHITE, radiusDp))
@@ -305,10 +327,10 @@ class MainActivity : Activity() {
     private fun pill(text: String): TextView = TextView(this).apply {
         this.text = text
         textSize = 13f
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        setTextColor(accentColor)
+        typeface = sansMedium
+        setTextColor(if (darkUi) 0xFFE8E6DC.toInt() else 0xFF4D4C48.toInt())
         setPadding(dp(10), dp(3), dp(10), dp(3))
-        background = roundedSurface(accentSoftColor, 999)
+        background = roundedSurface(trackColor, 8)
     }
 
     /** 外观：三段式分段选择器。 */
@@ -316,7 +338,7 @@ class MainActivity : Activity() {
         val track = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
-            background = roundedSurface(trackColor, 14)
+            background = roundedSurface(trackColor, 12)
         }
         listOf(
             ThemeMode.SYSTEM to R.string.theme_system,
@@ -328,12 +350,12 @@ class MainActivity : Activity() {
                 text = getString(labelRes)
                 textSize = 14f
                 gravity = Gravity.CENTER
-                typeface = Typeface.create(if (selected) "sans-serif-medium" else "sans-serif", Typeface.NORMAL)
+                typeface = if (selected) sansMedium else Typeface.DEFAULT
                 setTextColor(if (selected) textColor else secondaryTextColor)
                 background = if (selected) {
-                    roundedSurface(elevatedColor, 11).apply { setStroke(maxOf(1, dp(1) / 2), borderColor) }
+                    roundedSurface(elevatedColor, 9).apply { setStroke(maxOf(1, dp(1)), borderColor) }
                 } else {
-                    ripple(null, rippleColor, 11)
+                    ripple(null, rippleColor, 9)
                 }
                 if (selected) elevation = dp(1).toFloat()
                 isClickable = true
@@ -443,7 +465,7 @@ class MainActivity : Activity() {
     }
 
     /**
-     * 标题 + 一排颜色色块。[palette] 里的 0 代表「跟随主题默认色」，显示为蓝色渐变色块。
+     * 标题 + 一排颜色色块。[palette] 里的 0 代表「跟随主题默认色」，显示为陶土色渐变色块。
      * 选中的色块外圈加强调色描边并显示对勾；色块多时可以横向滑动。
      */
     private fun colorRow(title: String, palette: List<Int>, get: () -> Int, set: (Int) -> Unit): View {
@@ -453,7 +475,7 @@ class MainActivity : Activity() {
         }
         palette.forEach { color ->
             val selected = get() == color
-            val fill = if (color == 0) 0xFF2563EB.toInt() else color
+            val fill = if (color == 0) 0xFFC96442.toInt() else color
             val swatch = TextView(this).apply {
                 gravity = Gravity.CENTER
                 textSize = 15f
@@ -463,7 +485,7 @@ class MainActivity : Activity() {
                     shape = GradientDrawable.OVAL
                     if (color == 0) {
                         orientation = GradientDrawable.Orientation.TL_BR
-                        colors = intArrayOf(0xFF2563EB.toInt(), 0xFF8AB4F8.toInt())
+                        colors = intArrayOf(0xFFC96442.toInt(), 0xFFD97757.toInt())
                     } else {
                         setColor(color)
                     }
@@ -573,11 +595,7 @@ class MainActivity : Activity() {
 
     private fun pickAction(index: Int, current: PadAction) {
         val labels = PadAction.ALL.map { "${it.icon}  ${getString(it.labelRes)}" }.toTypedArray()
-        val dialogTheme = if (darkUi) {
-            android.R.style.Theme_DeviceDefault_Dialog_Alert
-        } else {
-            android.R.style.Theme_DeviceDefault_Light_Dialog_Alert
-        }
+        val dialogTheme = if (darkUi) R.style.WarmDialog_Dark else R.style.WarmDialog
         AlertDialog.Builder(this, dialogTheme)
             .setTitle(R.string.pick_action)
             .setSingleChoiceItems(labels, PadAction.ALL.indexOf(current)) { dialog, which ->
@@ -594,11 +612,7 @@ class MainActivity : Activity() {
     }
 
     private fun showDialog(title: String, body: String) {
-        val dialogTheme = if (darkUi) {
-            android.R.style.Theme_DeviceDefault_Dialog_Alert
-        } else {
-            android.R.style.Theme_DeviceDefault_Light_Dialog_Alert
-        }
+        val dialogTheme = if (darkUi) R.style.WarmDialog_Dark else R.style.WarmDialog
         AlertDialog.Builder(this, dialogTheme)
             .setTitle(title)
             .setMessage(body)
@@ -619,11 +633,11 @@ class MainActivity : Activity() {
     private fun updateStatus() {
         val on = isServiceEnabled()
         statusView.text = getString(if (on) R.string.status_on else R.string.status_off)
-        statusView.setTextColor(Color.WHITE)
-        statusView.background = roundedSurface(if (on) 0x4022C55E else 0x40F59E0B, 999)
+        statusView.setTextColor(if (darkUi) 0xFFE8E6DC.toInt() else 0xFF4D4C48.toInt())
+        statusView.background = roundedSurface(trackColor, 999).apply { setStroke(maxOf(1, dp(1)), borderColor) }
         statusView.setCompoundDrawablesRelativeWithIntrinsicBounds(GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(if (on) 0xFF4ADE80.toInt() else 0xFFFBBF24.toInt())
+            setColor(if (on) 0xFF7A9A5B.toInt() else accentColor)
             setSize(dp(8), dp(8))
         }, null, null, null)
     }
@@ -661,10 +675,10 @@ class MainActivity : Activity() {
             0xFFFFFFFF.toInt(), 0xFF000000.toInt(), 0xFFFFEB3B.toInt(),
             0xFF00E5FF.toInt(), 0xFFFF4081.toInt(), 0xFF76FF03.toInt(),
         )
-        /** 0 = 跟随主题的默认蓝色。 */
+        /** 0 = 跟随主题的默认陶土色。 */
         val BALL_COLORS = listOf(
-            0, 0xFFFFFFFF.toInt(), 0xFF374151.toInt(), 0xFF111827.toInt(), 0xFF7C3AED.toInt(),
-            0xFFEC4899.toInt(), 0xFFEF4444.toInt(), 0xFFF59E0B.toInt(), 0xFF10B981.toInt(), 0xFF06B6D4.toInt(),
+            0, 0xFFFAF9F5.toInt(), 0xFFE8E6DC.toInt(), 0xFF87867F.toInt(), 0xFF30302E.toInt(), 0xFF141413.toInt(),
+            0xFFD97757.toInt(), 0xFFB53333.toInt(), 0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
         )
     }
 }

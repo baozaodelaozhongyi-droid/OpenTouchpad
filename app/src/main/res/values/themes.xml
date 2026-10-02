@@ -1,20 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- 暖色调：羊皮纸底 #F5F4ED，陶土橙强调色 #C96442（深色模式 #1F1E1D / #D97757） -->
     <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#2563EB</item>
-        <item name="android:navigationBarColor">#F2F3F7</item>
+        <item name="android:colorAccent">#C96442</item>
+        <item name="android:colorControlActivated">#C96442</item>
+        <item name="android:colorControlHighlight">#14141413</item>
+        <item name="android:windowBackground">@color/page_light</item>
+        <item name="android:textColorHighlight">#33C96442</item>
+        <item name="android:navigationBarColor">#F5F4ED</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
-        <item name="android:statusBarColor">#F2F3F7</item>
+        <item name="android:statusBarColor">#F5F4ED</item>
     </style>
 
     <style name="AppTheme.Dark" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#8AB4F8</item>
-        <item name="android:navigationBarColor">#0E0F12</item>
+        <item name="android:colorAccent">#D97757</item>
+        <item name="android:colorControlActivated">#D97757</item>
+        <item name="android:colorControlHighlight">#1FFAF9F5</item>
+        <item name="android:windowBackground">@color/page_dark</item>
+        <item name="android:textColorHighlight">#33D97757</item>
+        <item name="android:navigationBarColor">#1F1E1D</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
-        <item name="android:statusBarColor">#0E0F12</item>
+        <item name="android:statusBarColor">#1F1E1D</item>
+    </style>
+
+    <!-- 对话框：同一套暖色，标题衬线体 -->
+    <style name="WarmDialog" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">#C96442</item>
+        <item name="android:colorControlActivated">#C96442</item>
+        <item name="android:colorBackground">#FAF9F5</item>
+        <item name="android:textColorPrimary">#141413</item>
+        <item name="android:textColorSecondary">#5E5D59</item>
+        <item name="android:windowTitleStyle">@style/WarmDialogTitle</item>
+    </style>
+
+    <style name="WarmDialog.Dark" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#D97757</item>
+        <item name="android:colorControlActivated">#D97757</item>
+        <item name="android:colorBackground">#262624</item>
+        <item name="android:textColorPrimary">#FAF9F5</item>
+        <item name="android:textColorSecondary">#B0AEA5</item>
+        <item name="android:windowTitleStyle">@style/WarmDialogTitle</item>
+    </style>
+
+    <style name="WarmDialogTitle" parent="@android:style/TextAppearance.Material.DialogWindowTitle">
+        <item name="android:fontFamily">@font/serif_medium</item>
+        <item name="android:textSize">20sp</item>
     </style>
 </resources>

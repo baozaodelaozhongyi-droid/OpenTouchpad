@@ -112,7 +112,7 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("hideFloatingBall", false)
         set(v) = sp.edit().putBoolean("hideFloatingBall", v).apply()
 
-    /** 悬浮球颜色；0 表示跟随主题的默认蓝色。 */
+    /** 悬浮球颜色；0 表示跟随主题的默认陶土色。 */
     var floatingBallColor: Int
         get() = sp.getInt("floatingBallColor", 0)
         set(v) = sp.edit().putInt("floatingBallColor", v).apply()
