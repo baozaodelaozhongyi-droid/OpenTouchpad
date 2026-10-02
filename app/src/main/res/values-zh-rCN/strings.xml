@@ -6,8 +6,8 @@
     <string name="service_description">在屏幕一角显示触控板、光标和大按钮，用很小的动作操作整块屏幕。不联网、无广告、无统计。</string>
 
     <!-- 状态 / 引导 -->
-    <string name="status_on">✅ 服务正在运行</string>
-    <string name="status_off">⚠️ 服务未开启 —— 点下面的按钮去开启</string>
+    <string name="status_on">服务运行中</string>
+    <string name="status_off">服务未开启</string>
     <string name="open_a11y_settings">打开无障碍设置</string>
     <string name="cannot_open_settings">无法打开无障碍设置</string>
     <string name="steps_title">开启步骤</string>

@@ -15,8 +15,8 @@ android {
         applicationId = "io.github.opentouchpad"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.4.4"
+        versionCode = 12
+        versionName = "0.4.5"
     }
 
     // 仓库里绝不存密钥。CI 通过 GitHub Secrets 注入以下环境变量即可产出正式签名包：

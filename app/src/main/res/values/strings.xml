@@ -6,8 +6,8 @@
     <string name="service_description">Shows a touchpad, an on-screen cursor and large buttons so you can control the whole screen with small movements. No internet, no ads, no tracking.</string>
 
     <!-- 状态 / 引导 -->
-    <string name="status_on">✅ Service is running</string>
-    <string name="status_off">⚠️ Service is off — tap the button below to enable it</string>
+    <string name="status_on">Service running</string>
+    <string name="status_off">Service off</string>
     <string name="open_a11y_settings">Open accessibility settings</string>
     <string name="cannot_open_settings">Could not open accessibility settings</string>
     <string name="steps_title">Setup</string>
