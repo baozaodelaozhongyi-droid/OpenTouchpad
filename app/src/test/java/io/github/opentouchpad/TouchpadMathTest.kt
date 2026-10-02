@@ -132,6 +132,13 @@ class TouchpadMathTest {
         for (r in listOf(l.moveGrip, l.resizeGrip) + l.slots.subList(8, 12)) {
             assertTrue(r.y >= l.pad.y && r.y + r.h <= l.pad.y + l.pad.h)
         }
+        // corner buttons line up with the top/bottom rows and side columns
+        val (tl, tr, bl, br) = l.slots.subList(12, 16)
+        assertEquals(l.slots[0].y, tl.y); assertEquals(l.moveGrip.x, tl.x)
+        assertEquals(l.slots[3].y, tr.y); assertEquals(l.resizeGrip.x, tr.x)
+        assertEquals(l.slots[4].y, bl.y); assertEquals(l.moveGrip.x, bl.x)
+        assertEquals(l.slots[7].y, br.y); assertEquals(l.resizeGrip.x, br.x)
+        assertEquals(16, l.slots.size)
         val all = l.slots + l.moveGrip + l.resizeGrip + l.pad
         for (i in all.indices) for (j in i + 1 until all.size) {
             val p = all[i]; val q = all[j]

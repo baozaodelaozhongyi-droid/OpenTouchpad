@@ -10,6 +10,8 @@ internal const val FLOATING_BALL_MAX_DP = 140
 internal const val CURSOR_MIN_DP = 8
 internal const val CURSOR_MAX_DP = 160
 internal const val BUTTON_SPACING_MAX_DP = 80
+internal const val DEFAULT_PANEL_WIDTH_DP = 288
+internal const val DEFAULT_CONTROL_HEIGHT_DP = 248
 
 internal data class PanelPosition(val x: Int, val y: Int)
 
@@ -84,7 +86,7 @@ internal data class ControlRect(val x: Int, val y: Int, val w: Int, val h: Int) 
 
 /**
  * Geometry of the full control surface.
- * [slots] order: TOP 1-4, BOTTOM 1-4, LEFT 1-2, RIGHT 1-2.
+ * [slots] order: TOP 1-4, BOTTOM 1-4, LEFT 1-2, RIGHT 1-2, corners TL, TR, BL, BR.
  * Button size and the touchpad rectangle depend only on the panel size; [spacingPx]
  * only changes the distance between neighbouring buttons inside each row/column.
  */
@@ -98,12 +100,12 @@ internal data class ControlLayout(
 
 internal const val CONTROL_EDGE_DP = 2
 internal const val CONTROL_PAD_GAP_DP = 4
-internal const val CONTROL_BUTTON_MAX_DP = 56
+internal const val CONTROL_BUTTON_MAX_DP = 46
 
 /**
  * Compact layout: 4 buttons above and below the touchpad, 3 in each side column.
  * Left column = move grip, LEFT 1, LEFT 2. Right column = RIGHT 1, RIGHT 2, resize grip.
- * The four corners stay empty, so every button hugs the touchpad with a small gap.
+ * The four corners hold one custom button each, aligned with the top/bottom rows and side columns.
  */
 internal fun computeControlLayout(width: Int, height: Int, density: Float, spacingPx: Int): ControlLayout {
     fun d(v: Int) = (v * density).roundToInt()
@@ -138,7 +140,8 @@ internal fun computeControlLayout(width: Int, height: Int, density: Float, spaci
     val slots = rowXs.map { at(it, topY) } +
         rowXs.map { at(it, bottomY) } +
         listOf(at(leftX, colYs[1]), at(leftX, colYs[2])) +
-        listOf(at(rightX, colYs[0]), at(rightX, colYs[1]))
+        listOf(at(rightX, colYs[0]), at(rightX, colYs[1])) +
+        listOf(at(leftX, topY), at(rightX, topY), at(leftX, bottomY), at(rightX, bottomY))
     return ControlLayout(
         button = button,
         pad = ControlRect(padLeft, padTop, padW, padH),

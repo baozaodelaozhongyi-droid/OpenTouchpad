@@ -100,4 +100,24 @@
     <string name="switch_hide_ball">Hide floating ball</string>
     <string name="hide_ball_hint">When on, collapsing leaves no floating ball. Use “Show / hide touchpad” here to expand again.</string>
     <string name="set_cursor_opacity">Cursor opacity</string>
+    <string name="set_ball_color">Floating ball colour</string>
+    <string name="color_default">Theme default</string>
+    <string-array name="slot_positions">
+        <item>Top 1</item>
+        <item>Top 2</item>
+        <item>Top 3</item>
+        <item>Top 4</item>
+        <item>Bottom 1</item>
+        <item>Bottom 2</item>
+        <item>Bottom 3</item>
+        <item>Bottom 4</item>
+        <item>Left 1</item>
+        <item>Left 2</item>
+        <item>Right 1</item>
+        <item>Right 2</item>
+        <item>Top-left corner</item>
+        <item>Top-right corner</item>
+        <item>Bottom-left corner</item>
+        <item>Bottom-right corner</item>
+    </string-array>
 </resources>

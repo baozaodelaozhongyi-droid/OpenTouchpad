@@ -100,4 +100,24 @@
     <string name="switch_hide_ball">隐藏悬浮球</string>
     <string name="hide_ball_hint">开启后收起触控板不显示悬浮球，可在本页点「显示／隐藏触控板」重新展开。</string>
     <string name="set_cursor_opacity">光标透明度</string>
+    <string name="set_ball_color">悬浮球颜色</string>
+    <string name="color_default">跟随主题</string>
+    <string-array name="slot_positions">
+        <item>上 1</item>
+        <item>上 2</item>
+        <item>上 3</item>
+        <item>上 4</item>
+        <item>下 1</item>
+        <item>下 2</item>
+        <item>下 3</item>
+        <item>下 4</item>
+        <item>左 1</item>
+        <item>左 2</item>
+        <item>右 1</item>
+        <item>右 2</item>
+        <item>左上角</item>
+        <item>右上角</item>
+        <item>左下角</item>
+        <item>右下角</item>
+    </string-array>
 </resources>

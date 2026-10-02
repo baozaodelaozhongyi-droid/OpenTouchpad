@@ -350,11 +350,12 @@ class TouchpadService : AccessibilityService() {
         padArea = pad
         root.addView(pad)
 
-        val actions = prefs.buttons.filter { it != PadAction.NONE }.take(12)
-        actions.forEachIndexed { index, action ->
-            val button = makeActionButton(action, dark)
+        // 槽位与布局一一对应；设为「无」的槽位留空，不会让后面的按钮挪位。
+        prefs.buttons.take(BUTTON_SLOT_COUNT).forEachIndexed { slot, action ->
+            if (action == PadAction.NONE) return@forEachIndexed
+            val button = makeActionButton(slot, action, dark)
             actionViews += button
-            actionSlots += index
+            actionSlots += slot
             root.addView(button)
         }
 
@@ -428,12 +429,15 @@ class TouchpadService : AccessibilityService() {
             gravity = Gravity.CENTER
             textSize = (size / resources.displayMetrics.density * 0.45f).coerceIn(5f, 40f)
             includeFontPadding = false
-            setTextColor(0xFFF8FAFC.toInt())
+            val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
+                ?: if (isDarkTheme()) 0xFF6EA8FE.toInt() else 0xFF2563EB.toInt()
+            // 浅色球用深色图标，深色球用浅色图标
+            setTextColor(if (Color.luminance(ballColor) > 0.55f) 0xFF111827.toInt() else 0xFFF8FAFC.toInt())
             alpha = prefs.floatingBallOpacityPercent.coerceIn(20, 100) / 100f
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(if (isDarkTheme()) 0xFF6EA8FE.toInt() else 0xFF2563EB.toInt())
-                setStroke(if (size < dp(28)) dp(1) else dp(2), if (isDarkTheme()) 0x66FFFFFF else 0x33000000)
+                setColor(ballColor)
+                setStroke(if (size < dp(28)) dp(1) else dp(2), if (Color.luminance(ballColor) > 0.55f) 0x33000000 else 0x66FFFFFF)
             }
             setOnTouchListener { v, e -> handleBallTouch(v, e) }
             contentDescription = getString(R.string.floating_ball_content_description)
@@ -512,7 +516,7 @@ class TouchpadService : AccessibilityService() {
             }
         }
 
-    private fun makeActionButton(action: PadAction, dark: Boolean): View = TextView(this).apply {
+    private fun makeActionButton(slot: Int, action: PadAction, dark: Boolean): View = TextView(this).apply {
         val p = palette(dark)
         text = action.icon
         gravity = Gravity.CENTER
@@ -523,7 +527,7 @@ class TouchpadService : AccessibilityService() {
         isClickable = true
         contentDescription = getString(action.labelRes)
         setOnClickListener { performAction(action) }
-        setOnLongClickListener { showActionPicker(action); true }
+        setOnLongClickListener { showActionPicker(slot, action); true }
     }
 
     private fun padBackground(dark: Boolean, radiusPx: Float): GradientDrawable {
@@ -544,7 +548,7 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 按钮长按换动作 ─────────────────────────
 
-    private fun showActionPicker(current: PadAction) {
+    private fun showActionPicker(slot: Int, current: PadAction) {
         val labels = PadAction.ALL.map { "${it.icon}  ${getString(it.labelRes)}" }.toTypedArray()
         val checked = PadAction.ALL.indexOf(current)
         val dialogTheme = if (isDarkTheme()) {
@@ -557,8 +561,8 @@ class TouchpadService : AccessibilityService() {
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 val picked = PadAction.ALL[which]
                 val list = prefs.buttons.toMutableList()
-                val idx = list.indexOf(current)
-                if (idx >= 0) list[idx] = picked
+                while (list.size <= slot) list.add(PadAction.NONE)
+                list[slot] = picked
                 prefs.buttons = list
                 buildPanel()
                 dialog.dismiss()

@@ -132,6 +132,8 @@ class MainActivity : Activity() {
         // ── 悬浮球 ──
         col.addView(section(getString(R.string.sec_ball)))
         col.addView(slider(getString(R.string.set_ball_size), FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP, prefs.floatingBallSizeDp, onChange = { prefs.floatingBallSizeDp = it; reload() }))
+        col.addView(label(getString(R.string.set_ball_color)))
+        col.addView(colorRow(BALL_COLORS, { prefs.floatingBallColor }, { prefs.floatingBallColor = it }))
         col.addView(slider(getString(R.string.set_ball_opacity), 20, 100, prefs.floatingBallOpacityPercent, onChange = { prefs.floatingBallOpacityPercent = it; reload() }))
         col.addView(switchRow(getString(R.string.switch_hide_ball), prefs.hideFloatingBall, onChange = { prefs.hideFloatingBall = it; reload() }))
         col.addView(label(getString(R.string.hide_ball_hint)))
@@ -141,7 +143,7 @@ class MainActivity : Activity() {
         col.addView(slider(getString(R.string.set_cursor_size), CURSOR_MIN_DP, CURSOR_MAX_DP, prefs.cursorSizeDp, onChange = { prefs.cursorSizeDp = it; reload() }))
         col.addView(slider(getString(R.string.set_cursor_opacity), 10, 100, prefs.cursorOpacityPercent, onChange = { prefs.cursorOpacityPercent = it; reload() }))
         col.addView(label(getString(R.string.set_cursor_color)))
-        col.addView(colorRow())
+        col.addView(colorRow(CURSOR_COLORS, { prefs.cursorColor }, { prefs.cursorColor = it }))
 
         // ── 手感 ──
         col.addView(section(getString(R.string.sec_feel)))
@@ -301,43 +303,50 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, value -> onChange(value) }
         }
 
-    private fun colorRow(): View {
+    /**
+     * 一排颜色色块。[palette] 里的 0 代表「跟随主题默认色」，显示为半蓝半灰的色块。
+     * 色块多时可以横向滑动。
+     */
+    private fun colorRow(palette: List<Int>, get: () -> Int, set: (Int) -> Unit): View {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val colors = listOf(
-            0xFFFFFFFF.toInt() to "white",
-            0xFF000000.toInt() to "black",
-            0xFFFFEB3B.toInt() to "yellow",
-            0xFF00E5FF.toInt() to "cyan",
-            0xFFFF4081.toInt() to "pink",
-            0xFF76FF03.toInt() to "green",
-        )
-        colors.forEach { (color, _) ->
+        palette.forEach { color ->
+            val selected = get() == color
             val swatch = View(this).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(color)
-                    setStroke(dp(2), if (prefs.cursorColor == color) 0xFF1A73E8.toInt() else 0x55000000)
+                    if (color == 0) {
+                        orientation = GradientDrawable.Orientation.TL_BR
+                        colors = intArrayOf(0xFF2563EB.toInt(), 0xFF6EA8FE.toInt())
+                    } else {
+                        setColor(color)
+                    }
+                    setStroke(if (selected) dp(3) else dp(1), if (selected) accentColor else 0x55000000)
                 }
+                contentDescription = if (color == 0) getString(R.string.color_default) else String.format("#%06X", color and 0xFFFFFF)
                 setOnClickListener {
-                    prefs.cursorColor = color
+                    set(color)
                     reload()
                     recreate()
                 }
             }
-            row.addView(swatch, LinearLayout.LayoutParams(dp(48), dp(48)).apply {
-                setMargins(dp(6), dp(6), dp(6), dp(6))
+            row.addView(swatch, LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                setMargins(dp(5), dp(6), dp(5), dp(6))
             })
         }
-        return row
+        return android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(row)
+        }
     }
 
     private fun buttonSlotList(): View {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val slots = prefs.buttons.toMutableList()
-        while (slots.size < 12) slots.add(PadAction.NONE)
+        while (slots.size < BUTTON_SLOT_COUNT) slots.add(PadAction.NONE)
+        val positions = resources.getStringArray(R.array.slot_positions)
         slots.forEachIndexed { index, action ->
             val row = TextView(this).apply {
-                text = "${index + 1}.  ${action.icon}  ${getString(action.labelRes)}"
+                text = "${positions.getOrElse(index) { "${index + 1}" }}  ·  ${action.icon}  ${getString(action.labelRes)}"
                 textSize = 16f
                 setTextColor(textColor)
                 setPadding(dp(4), dp(14), dp(4), dp(14))
@@ -420,4 +429,16 @@ class MainActivity : Activity() {
 
     private fun pixelsToDp(v: Int, density: Float): Int =
         if (density > 0f) (v / density).roundToInt() else v
+
+    private companion object {
+        val CURSOR_COLORS = listOf(
+            0xFFFFFFFF.toInt(), 0xFF000000.toInt(), 0xFFFFEB3B.toInt(),
+            0xFF00E5FF.toInt(), 0xFFFF4081.toInt(), 0xFF76FF03.toInt(),
+        )
+        /** 0 = 跟随主题的默认蓝色。 */
+        val BALL_COLORS = listOf(
+            0, 0xFFFFFFFF.toInt(), 0xFF374151.toInt(), 0xFF111827.toInt(), 0xFF7C3AED.toInt(),
+            0xFFEC4899.toInt(), 0xFFEF4444.toInt(), 0xFFF59E0B.toInt(), 0xFF10B981.toInt(), 0xFF06B6D4.toInt(),
+        )
+    }
 }

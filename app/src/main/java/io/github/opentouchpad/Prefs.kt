@@ -7,6 +7,26 @@ class Prefs(ctx: Context) {
 
     private val sp = ctx.getSharedPreferences("opentouchpad", Context.MODE_PRIVATE)
 
+    init {
+        migrateCompactLayout()
+    }
+
+    /**
+     * v0.4.3：整体缩小。已经手动调过尺寸的用户，宽高各缩到 80%，只执行一次。
+     * 之后用户再调的尺寸原样保留。
+     */
+    private fun migrateCompactLayout() {
+        if (sp.getBoolean("compactLayoutV043", false)) return
+        val e = sp.edit().putBoolean("compactLayoutV043", true)
+        sp.getInt("panelWidthDp", 0).takeIf { it > 0 }?.let {
+            e.putInt("panelWidthDp", (it * 0.8f).toInt().coerceAtLeast(PANEL_MIN_WIDTH_DP))
+        }
+        sp.getInt("controlHeightDp", 0).takeIf { it > 0 }?.let {
+            e.putInt("controlHeightDp", (it * 0.8f).toInt().coerceAtLeast(CONTROL_MIN_SIZE_DP))
+        }
+        e.apply()
+    }
+
     var themeMode: ThemeMode
         get() = if (sp.contains("themeMode")) {
             ThemeMode.fromId(sp.getString("themeMode", null))
@@ -44,13 +64,17 @@ class Prefs(ctx: Context) {
 
     /** Absolute panel width in dp. 0 keeps the legacy percentage-based width. */
     var panelWidthDp: Int
-        get() = sp.getInt("panelWidthDp", 0)
+        get() = sp.getInt("panelWidthDp", DEFAULT_PANEL_WIDTH_DP)
         set(v) = sp.edit().putInt("panelWidthDp", v).apply()
 
     /** Overall overlay height in dp. 0 keeps the legacy pad-height preference. */
     var controlHeightDp: Int
         get() = sp.getInt("controlHeightDp", 0).takeIf { it > 0 }
-            ?: (padHeightDp + 168).coerceIn(CONTROL_MIN_SIZE_DP, CONTROL_MAX_SIZE_DP)
+            ?: if (sp.contains("padHeight")) {
+                (padHeightDp + 168).coerceIn(CONTROL_MIN_SIZE_DP, CONTROL_MAX_SIZE_DP)
+            } else {
+                DEFAULT_CONTROL_HEIGHT_DP
+            }
         set(v) = sp.edit().putInt("controlHeightDp", v).apply()
 
     var opacityPercent: Int
@@ -65,6 +89,11 @@ class Prefs(ctx: Context) {
     var hideFloatingBall: Boolean
         get() = sp.getBoolean("hideFloatingBall", false)
         set(v) = sp.edit().putBoolean("hideFloatingBall", v).apply()
+
+    /** 悬浮球颜色；0 表示跟随主题的默认蓝色。 */
+    var floatingBallColor: Int
+        get() = sp.getInt("floatingBallColor", 0)
+        set(v) = sp.edit().putInt("floatingBallColor", v).apply()
 
     var floatingBallOpacityPercent: Int
         get() = sp.getInt("floatingBallOpacity", 90)
@@ -113,7 +142,7 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("buttonTextSize", 16)
         set(v) = sp.edit().putInt("buttonTextSize", v).apply()
 
-    /** 按钮槽位，逗号分隔的 PadAction.id；默认 12 个。 */
+    /** 按钮槽位，逗号分隔的 PadAction.id；默认 16 个（含四角）。 */
     var buttons: List<PadAction>
         get() = decodeButtonSlots(sp.getString("buttons", null))
         set(v) = sp.edit().putString("buttons", v.joinToString(",") { it.id }).apply()
