@@ -5,6 +5,11 @@ import kotlin.math.roundToInt
 internal const val PANEL_MIN_WIDTH_DP = 180
 internal const val CONTROL_MIN_SIZE_DP = 180
 internal const val CONTROL_MAX_SIZE_DP = 2400
+internal const val FLOATING_BALL_MIN_DP = 16
+internal const val FLOATING_BALL_MAX_DP = 140
+internal const val CURSOR_MIN_DP = 8
+internal const val CURSOR_MAX_DP = 160
+internal const val BUTTON_SPACING_MAX_DP = 80
 
 internal data class PanelPosition(val x: Int, val y: Int)
 
@@ -72,6 +77,66 @@ internal fun controlWidthRange(screenWidth: Int, density: Float): IntRange {
 
 internal fun resizeControlHeight(startPx: Int, deltaY: Int, minPx: Int, maxPx: Int): Int =
     (startPx + deltaY).coerceIn(minPx, maxPx)
+
+internal data class ControlRect(val x: Int, val y: Int, val w: Int, val h: Int) {
+    fun contains(px: Float, py: Float): Boolean = px >= x && px < x + w && py >= y && py < y + h
+}
+
+/**
+ * Geometry of the full control surface.
+ * [slots] order: TOP 1-4, BOTTOM 1-4, LEFT 1-2, RIGHT 1-2.
+ * Button size and the touchpad rectangle depend only on the panel size; [spacingPx]
+ * only changes the distance between neighbouring buttons inside each row/column.
+ */
+internal data class ControlLayout(
+    val button: Int,
+    val pad: ControlRect,
+    val moveGrip: ControlRect,
+    val resizeGrip: ControlRect,
+    val slots: List<ControlRect>,
+)
+
+internal fun computeControlLayout(width: Int, height: Int, density: Float, spacingPx: Int): ControlLayout {
+    fun d(v: Int) = (v * density).roundToInt()
+    val edge = d(4)
+    val inner = d(6)
+    val button = minOf(
+        d(72),
+        (width - 2 * edge - 2 * inner) / 6,
+        (height - 2 * edge - 2 * inner) / 4,
+    ).coerceAtLeast(d(16))
+    val padLeft = edge + button + inner
+    val padTop = edge + button + inner
+    val padW = (width - 2 * padLeft).coerceAtLeast(d(40))
+    val padH = (height - 2 * padTop).coerceAtLeast(d(40))
+
+    fun spread(count: Int, start: Int, end: Int): List<Int> {
+        val avail = end - start
+        val maxGap = if (count > 1) ((avail - count * button) / (count - 1)).coerceAtLeast(0) else 0
+        val gap = spacingPx.coerceIn(0, maxGap)
+        val group = count * button + (count - 1) * gap
+        val s = start + (avail - group) / 2
+        return List(count) { s + it * (button + gap) }
+    }
+
+    val rowXs = spread(4, padLeft, padLeft + padW)
+    val colYs = spread(2, padTop, padTop + padH)
+    val topY = edge
+    val bottomY = height - edge - button
+    val leftX = edge
+    val rightX = width - edge - button
+    val slots = rowXs.map { ControlRect(it, topY, button, button) } +
+        rowXs.map { ControlRect(it, bottomY, button, button) } +
+        colYs.map { ControlRect(leftX, it, button, button) } +
+        colYs.map { ControlRect(rightX, it, button, button) }
+    return ControlLayout(
+        button = button,
+        pad = ControlRect(padLeft, padTop, padW, padH),
+        moveGrip = ControlRect(leftX, topY, button, button),
+        resizeGrip = ControlRect(rightX, bottomY, button, button),
+        slots = slots,
+    )
+}
 
 internal fun controlHeightRange(screenHeight: Int, density: Float): IntRange {
     val minPx = (CONTROL_MIN_SIZE_DP * density).roundToInt()

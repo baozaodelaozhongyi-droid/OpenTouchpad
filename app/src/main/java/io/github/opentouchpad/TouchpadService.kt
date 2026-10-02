@@ -39,6 +39,8 @@ import kotlin.math.roundToInt
 class TouchpadService : AccessibilityService() {
 
     companion object {
+        private const val OVERLAY_PASS_THROUGH_DELAY_MS = 40L
+
         @Volatile
         var instance: TouchpadService? = null
             private set
@@ -53,7 +55,9 @@ class TouchpadService : AccessibilityService() {
     private var padArea: View? = null
     private var miniBallView: View? = null
     private val actionViews = mutableListOf<View>()
-    private val actionSlots = mutableListOf<Slot>()
+    private val actionSlots = mutableListOf<Int>()
+    private var moveGripView: View? = null
+    private var resizeGripView: View? = null
 
     private var cursorView: View? = null
     private var cursorParams: WindowManager.LayoutParams? = null
@@ -222,10 +226,10 @@ class TouchpadService : AccessibilityService() {
 
     private fun buildCursor() {
         cursorView?.let { runCatching { wm.removeView(it) } }
-        val size = dp(prefs.cursorSizeDp.coerceIn(16, 160))
+        val size = dp(prefs.cursorSizeDp.coerceIn(CURSOR_MIN_DP, CURSOR_MAX_DP))
         val v = CursorArrowView(this).apply {
             pointerColor = prefs.cursorColor
-            alpha = 0.98f
+            alpha = prefs.cursorOpacityPercent.coerceIn(10, 100) / 100f
         }
         cursorParams = WindowManager.LayoutParams(
             size, size,
@@ -265,6 +269,10 @@ class TouchpadService : AccessibilityService() {
         padArea = null
         actionViews.clear()
         actionSlots.clear()
+        moveGripView = null
+        resizeGripView = null
+        main.removeCallbacks(restoreTouchRunnable)
+        passThroughCount = 0
         movingPanel = false
         resizingPanel = false
         movingBall = false
@@ -323,23 +331,12 @@ class TouchpadService : AccessibilityService() {
             screenW * prefs.padWidthPercent / 100
         }.coerceIn(widthRange.first, widthRange.last)
         val heightPx = dp(prefs.controlHeightDp).coerceIn(heightRange.first, heightRange.last)
-        val gap = dp(prefs.buttonSpacingDp.coerceIn(4, 24))
-        val buttonPx = minOf(
-            dp(72),
-            ((widthPx - dp(44) - gap * 5) / 4).coerceAtLeast(dp(24)),
-            ((widthPx - dp(80) - gap * 2) / 2).coerceAtLeast(dp(24)),
-            ((heightPx - dp(80) - gap * 2) / 2).coerceAtLeast(dp(24)),
-        )
-        val padLeft = buttonPx + gap
-        val padTop = buttonPx + gap
-        val padWidth = (widthPx - padLeft * 2).coerceAtLeast(dp(80))
-        val padHeight = (heightPx - padTop * 2).coerceAtLeast(dp(80))
         val padColor = if (dark) 0xFF4D4D4D.toInt() else 0xFFE1E3E6.toInt()
 
+        // 根容器本身不处理触摸：只有左上角的移动键可以拖动面板。
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
             contentDescription = getString(R.string.control_surface_content_description)
-            setOnTouchListener { v, e -> handleMoveTouch(v, e) }
         }
 
         val pad = View(this).apply {
@@ -348,30 +345,24 @@ class TouchpadService : AccessibilityService() {
             setOnTouchListener { _, e -> handlePadTouch(e); true }
         }
         padArea = pad
-        root.addView(pad, FrameLayout.LayoutParams(padWidth, padHeight).apply {
-            leftMargin = padLeft
-            topMargin = padTop
-        })
+        root.addView(pad)
 
         val actions = prefs.buttons.filter { it != PadAction.NONE }.take(12)
-        val slots = listOf(
-            Slot.TOP_1, Slot.TOP_2, Slot.TOP_3, Slot.TOP_4,
-            Slot.BOTTOM_1, Slot.BOTTOM_2, Slot.BOTTOM_3, Slot.BOTTOM_4,
-            Slot.LEFT_1, Slot.LEFT_2, Slot.RIGHT_1, Slot.RIGHT_2,
-        )
         actions.forEachIndexed { index, action ->
             val button = makeActionButton(action, dark)
             actionViews += button
-            actionSlots += slots[index]
-            root.addView(button, actionLayoutParams(slots[index], widthPx, heightPx, buttonPx, padLeft, padTop, padWidth, padHeight))
+            actionSlots += index
+            root.addView(button)
         }
 
         val moveGrip = makeHandle("⣿", dark) { v, e -> handleMoveTouch(v, e) }
         moveGrip.contentDescription = getString(R.string.handle_move)
-        root.addView(moveGrip, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.START))
+        root.addView(moveGrip)
+        moveGripView = moveGrip
         val resizeGrip = makeHandle("⤡", dark) { v, e -> handleResizeTouch(v, e) }
         resizeGrip.contentDescription = getString(R.string.handle_resize)
-        root.addView(resizeGrip, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.END))
+        root.addView(resizeGrip)
+        resizeGripView = resizeGrip
         layoutControlChildren(root, widthPx, heightPx)
 
         val lp = panelLayoutParams(widthPx, heightPx)
@@ -392,98 +383,52 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
-    private enum class Slot { TOP_1, TOP_2, TOP_3, TOP_4, BOTTOM_1, BOTTOM_2, BOTTOM_3, BOTTOM_4, LEFT_1, LEFT_2, RIGHT_1, RIGHT_2 }
+    private fun rectParams(r: ControlRect): FrameLayout.LayoutParams =
+        FrameLayout.LayoutParams(r.w, r.h).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = r.x
+            topMargin = r.y
+        }
 
-    private fun actionLayoutParams(
-        slot: Slot,
-        width: Int,
-        height: Int,
-        button: Int,
-        padLeft: Int,
-        padTop: Int,
-        padWidth: Int,
-        padHeight: Int,
-    ): FrameLayout.LayoutParams {
-        val lp = FrameLayout.LayoutParams(button, button)
-        val gap = dp(prefs.buttonSpacingDp.coerceIn(4, 24))
-        val topStart = dp(44) + gap
-        val topEnd = width - button - gap
-        val topX = { index: Int ->
-            (topStart + (topEnd - topStart).coerceAtLeast(0) * index / 3)
-                .coerceIn(topStart, topEnd.coerceAtLeast(topStart))
-        }
-        val bottomStart = gap
-        val bottomEnd = width - button - dp(44) - gap
-        val bottomX = { index: Int ->
-            (bottomStart + (bottomEnd - bottomStart).coerceAtLeast(0) * index / 3)
-                .coerceIn(bottomStart, bottomEnd.coerceAtLeast(bottomStart))
-        }
-        val sideStart = gap
-        val sideEnd = height - button - gap
-        val sideY = { index: Int ->
-            (padTop + padHeight * (index + 1) / 3 - button / 2)
-                .coerceIn(sideStart, sideEnd.coerceAtLeast(sideStart))
-        }
-        when (slot) {
-            Slot.TOP_1 -> { lp.leftMargin = topX(0); lp.topMargin = gap }
-            Slot.TOP_2 -> { lp.leftMargin = topX(1); lp.topMargin = gap }
-            Slot.TOP_3 -> { lp.leftMargin = topX(2); lp.topMargin = gap }
-            Slot.TOP_4 -> { lp.leftMargin = topX(3); lp.topMargin = gap }
-            Slot.BOTTOM_1 -> { lp.leftMargin = bottomX(0); lp.topMargin = height - button - gap }
-            Slot.BOTTOM_2 -> { lp.leftMargin = bottomX(1); lp.topMargin = height - button - gap }
-            Slot.BOTTOM_3 -> { lp.leftMargin = bottomX(2); lp.topMargin = height - button - gap }
-            Slot.BOTTOM_4 -> { lp.leftMargin = bottomX(3); lp.topMargin = height - button - gap }
-            Slot.LEFT_1 -> { lp.leftMargin = gap; lp.topMargin = sideY(0) }
-            Slot.LEFT_2 -> { lp.leftMargin = gap; lp.topMargin = sideY(1) }
-            Slot.RIGHT_1 -> { lp.leftMargin = width - button - gap; lp.topMargin = sideY(0) }
-            Slot.RIGHT_2 -> { lp.leftMargin = width - button - gap; lp.topMargin = sideY(1) }
-        }
-        return lp
-    }
-
+    /** 统一布局：按钮大小、触控板大小只由面板尺寸决定；按钮间距只改变按钮之间的距离。 */
     private fun layoutControlChildren(root: FrameLayout, width: Int, height: Int) {
-        val gap = dp(prefs.buttonSpacingDp.coerceIn(4, 24))
-        val button = minOf(
-            dp(72),
-            ((width - dp(44) - gap * 5) / 4).coerceAtLeast(dp(24)),
-            ((width - dp(80) - gap * 2) / 2).coerceAtLeast(dp(24)),
-            ((height - dp(80) - gap * 2) / 2).coerceAtLeast(dp(24)),
+        val layout = computeControlLayout(
+            width, height, resources.displayMetrics.density,
+            dp(prefs.buttonSpacingDp.coerceIn(0, BUTTON_SPACING_MAX_DP)),
         )
-        val padLeft = button + gap
-        val padTop = button + gap
-        val padWidth = (width - padLeft * 2).coerceAtLeast(dp(80))
-        val padHeight = (height - padTop * 2).coerceAtLeast(dp(80))
-        padArea?.layoutParams = FrameLayout.LayoutParams(padWidth, padHeight).apply {
-            leftMargin = padLeft
-            topMargin = padTop
-        }
+        padArea?.layoutParams = rectParams(layout.pad)
         actionViews.forEachIndexed { index, view ->
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
-            view.layoutParams = actionLayoutParams(slot, width, height, button, padLeft, padTop, padWidth, padHeight)
+            view.layoutParams = rectParams(layout.slots[slot])
+            (view as? TextView)?.textSize = minOf(
+                prefs.buttonTextSizeSp.toFloat(),
+                layout.button / resources.displayMetrics.density * 0.5f,
+            )
         }
-        if (root.childCount > 1) {
-            root.getChildAt(root.childCount - 2).layoutParams =
-                FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.START)
-        }
-        if (root.childCount > 0) {
-            root.getChildAt(root.childCount - 1).layoutParams =
-                FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.END)
-        }
+        val gripText = layout.button / resources.displayMetrics.density * 0.36f
+        moveGripView?.let { it.layoutParams = rectParams(layout.moveGrip); (it as? TextView)?.textSize = gripText }
+        resizeGripView?.let { it.layoutParams = rectParams(layout.resizeGrip); (it as? TextView)?.textSize = gripText }
         root.requestLayout()
     }
 
     private fun addMiniDot() {
-        val size = dp(prefs.floatingBallSizeDp.coerceIn(40, 140))
+        if (prefs.hideFloatingBall) {
+            panel = null
+            panelParams = null
+            return
+        }
+        val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
         val dot = TextView(this).apply {
             text = "⌁"
             gravity = Gravity.CENTER
-            textSize = (size / resources.displayMetrics.density * 0.38f).coerceIn(18f, 36f)
+            textSize = (size / resources.displayMetrics.density * 0.45f).coerceIn(5f, 40f)
+            includeFontPadding = false
             setTextColor(0xFFF8FAFC.toInt())
             alpha = prefs.floatingBallOpacityPercent.coerceIn(20, 100) / 100f
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(if (isDarkTheme()) 0xFF6EA8FE.toInt() else 0xFF2563EB.toInt())
-                setStroke(dp(2), if (isDarkTheme()) 0x66FFFFFF else 0x33000000)
+                setStroke(if (size < dp(28)) dp(1) else dp(2), if (isDarkTheme()) 0x66FFFFFF else 0x33000000)
             }
             setOnTouchListener { v, e -> handleBallTouch(v, e) }
             contentDescription = getString(R.string.floating_ball_content_description)
@@ -794,6 +739,7 @@ class TouchpadService : AccessibilityService() {
 
     private fun keepBallInBounds() {
         val lp = panelParams ?: return
+        if (miniBallView == null) return
         val size = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
         val position = clampFloatingBallPosition(lp.x, lp.y, size, screenW, screenH)
         lp.x = position.x
@@ -809,9 +755,58 @@ class TouchpadService : AccessibilityService() {
         runCatching { dispatchGesture(gesture, null, null) }
     }
 
+    // 注入的点击/滑动要穿透 OpenTouchpad 自己的面板，落到下面的应用上；
+    // 否则光标移到触控板或按钮上点击时，会点到触控板自己。
+    private var passThroughCount = 0
+    private val restoreTouchRunnable = Runnable {
+        passThroughCount = 0
+        setOverlayTouchable(true)
+    }
+
+    private fun setOverlayTouchable(touchable: Boolean) {
+        val v = panel ?: return
+        val lp = panelParams ?: return
+        val flag = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        val next = if (touchable) lp.flags and flag.inv() else lp.flags or flag
+        if (next == lp.flags) return
+        lp.flags = next
+        runCatching { wm.updateViewLayout(v, lp) }
+    }
+
+    private fun dispatchPassThrough(gesture: GestureDescription) {
+        if (panel == null) {
+            dispatch(gesture)
+            return
+        }
+        passThroughCount++
+        setOverlayTouchable(false)
+        main.removeCallbacks(restoreTouchRunnable)
+        // 兜底：无论回调是否到达，最多几秒后恢复面板可触摸。
+        main.postDelayed(restoreTouchRunnable, 5000)
+        val done = {
+            main.post {
+                passThroughCount = (passThroughCount - 1).coerceAtLeast(0)
+                if (passThroughCount == 0) {
+                    main.removeCallbacks(restoreTouchRunnable)
+                    setOverlayTouchable(true)
+                }
+            }
+        }
+        // 等窗口标志真正生效后再注入手势。
+        main.postDelayed({
+            val ok = runCatching {
+                dispatchGesture(gesture, object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) { done() }
+                    override fun onCancelled(gestureDescription: GestureDescription?) { done() }
+                }, main)
+            }.getOrDefault(false)
+            if (!ok) done()
+        }, OVERLAY_PASS_THROUGH_DELAY_MS)
+    }
+
     private fun tapAt(x: Float, y: Float, ms: Long = 50) {
         val path = Path().apply { moveTo(x, y) }
-        dispatch(
+        dispatchPassThrough(
             GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
                 .build()
@@ -826,7 +821,7 @@ class TouchpadService : AccessibilityService() {
             moveTo(swipe.startX, swipe.startY)
             lineTo(swipe.endX, swipe.endY)
         }
-        dispatch(
+        dispatchPassThrough(
             GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
                 .build(),
@@ -843,7 +838,7 @@ class TouchpadService : AccessibilityService() {
             moveTo(x0, y0)
             lineTo(x1, y1)
         }
-        dispatch(
+        dispatchPassThrough(
             GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
                 .build()

@@ -96,4 +96,31 @@ class TouchpadMathTest {
             clampFloatingBallPosition(1200, 2100, 180, 1080, 1920),
         )
     }
+
+    @Test
+    fun buttonSpacingDoesNotResizeTouchpadOrButtons() {
+        val a = computeControlLayout(1000, 800, 1f, spacingPx = 0)
+        val b = computeControlLayout(1000, 800, 1f, spacingPx = 60)
+        assertEquals(a.pad, b.pad)
+        assertEquals(a.button, b.button)
+        assertEquals(a.moveGrip, b.moveGrip)
+        assertEquals(a.resizeGrip, b.resizeGrip)
+        assertTrue(b.slots[1].x - b.slots[0].x > a.slots[1].x - a.slots[0].x)
+    }
+
+    @Test
+    fun gripsSitInCornersWithButtonSizeAndNoOverlap() {
+        val l = computeControlLayout(900, 700, 1f, spacingPx = 200)
+        assertEquals(l.button, l.moveGrip.w)
+        assertEquals(l.button, l.resizeGrip.h)
+        assertEquals(4, l.moveGrip.x)
+        assertEquals(900 - 4 - l.button, l.resizeGrip.x)
+        assertEquals(700 - 4 - l.button, l.resizeGrip.y)
+        val all = l.slots + l.moveGrip + l.resizeGrip + l.pad
+        for (i in all.indices) for (j in i + 1 until all.size) {
+            val p = all[i]; val q = all[j]
+            val overlap = p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h
+            assertFalse("$p overlaps $q", overlap)
+        }
+    }
 }

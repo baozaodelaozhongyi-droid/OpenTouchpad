@@ -131,12 +131,15 @@ class MainActivity : Activity() {
 
         // ── 悬浮球 ──
         col.addView(section(getString(R.string.sec_ball)))
-        col.addView(slider(getString(R.string.set_ball_size), 40, 140, prefs.floatingBallSizeDp, onChange = { prefs.floatingBallSizeDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_ball_size), FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP, prefs.floatingBallSizeDp, onChange = { prefs.floatingBallSizeDp = it; reload() }))
         col.addView(slider(getString(R.string.set_ball_opacity), 20, 100, prefs.floatingBallOpacityPercent, onChange = { prefs.floatingBallOpacityPercent = it; reload() }))
+        col.addView(switchRow(getString(R.string.switch_hide_ball), prefs.hideFloatingBall, onChange = { prefs.hideFloatingBall = it; reload() }))
+        col.addView(label(getString(R.string.hide_ball_hint)))
 
         // ── 光标 ──
         col.addView(section(getString(R.string.sec_cursor)))
-        col.addView(slider(getString(R.string.set_cursor_size), 16, 160, prefs.cursorSizeDp, onChange = { prefs.cursorSizeDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_cursor_size), CURSOR_MIN_DP, CURSOR_MAX_DP, prefs.cursorSizeDp, onChange = { prefs.cursorSizeDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_cursor_opacity), 10, 100, prefs.cursorOpacityPercent, onChange = { prefs.cursorOpacityPercent = it; reload() }))
         col.addView(label(getString(R.string.set_cursor_color)))
         col.addView(colorRow())
 
@@ -156,7 +159,7 @@ class MainActivity : Activity() {
         col.addView(label(getString(R.string.btn_edit_buttons)))
         col.addView(buttonSlotList())
         col.addView(slider(getString(R.string.set_button_radius), 0, 40, prefs.buttonRadiusDp, onChange = { prefs.buttonRadiusDp = it; reload() }))
-        col.addView(slider(getString(R.string.set_button_spacing), 0, 24, prefs.buttonSpacingDp, onChange = { prefs.buttonSpacingDp = it; reload() }))
+        col.addView(slider(getString(R.string.set_button_spacing), 0, BUTTON_SPACING_MAX_DP, prefs.buttonSpacingDp, onChange = { prefs.buttonSpacingDp = it; reload() }))
         col.addView(slider(getString(R.string.set_button_text_size), 10, 34, prefs.buttonTextSizeSp, onChange = { prefs.buttonTextSizeSp = it; reload() }))
 
         // ── 关于 ──

@@ -97,4 +97,7 @@
     <string name="dwell_off">关闭</string>
     <string name="reset_done">已恢复默认设置</string>
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
+    <string name="switch_hide_ball">隐藏悬浮球</string>
+    <string name="hide_ball_hint">开启后收起触控板不显示悬浮球，可在本页点「显示／隐藏触控板」重新展开。</string>
+    <string name="set_cursor_opacity">光标透明度</string>
 </resources>

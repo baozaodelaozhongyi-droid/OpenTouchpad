@@ -97,4 +97,7 @@
     <string name="dwell_off">off</string>
     <string name="reset_done">Settings reset</string>
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
+    <string name="switch_hide_ball">Hide floating ball</string>
+    <string name="hide_ball_hint">When on, collapsing leaves no floating ball. Use “Show / hide touchpad” here to expand again.</string>
+    <string name="set_cursor_opacity">Cursor opacity</string>
 </resources>

@@ -24,6 +24,10 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("cursorSize", 36)
         set(v) = sp.edit().putInt("cursorSize", v).apply()
 
+    var cursorOpacityPercent: Int
+        get() = sp.getInt("cursorOpacity", 100)
+        set(v) = sp.edit().putInt("cursorOpacity", v).apply()
+
     var cursorColor: Int
         get() = sp.getInt("cursorColor", 0xFFFFFFFF.toInt())
         set(v) = sp.edit().putInt("cursorColor", v).apply()
@@ -56,6 +60,11 @@ class Prefs(ctx: Context) {
     var floatingBallSizeDp: Int
         get() = sp.getInt("floatingBallSize", 64)
         set(v) = sp.edit().putInt("floatingBallSize", v).apply()
+
+    /** 收起时完全不显示悬浮球；从设置页「显示／隐藏触控板」展开。 */
+    var hideFloatingBall: Boolean
+        get() = sp.getBoolean("hideFloatingBall", false)
+        set(v) = sp.edit().putBoolean("hideFloatingBall", v).apply()
 
     var floatingBallOpacityPercent: Int
         get() = sp.getInt("floatingBallOpacity", 90)
@@ -97,7 +106,7 @@ class Prefs(ctx: Context) {
         set(v) = sp.edit().putInt("buttonRadius", v).apply()
 
     var buttonSpacingDp: Int
-        get() = sp.getInt("buttonSpacing", 6)
+        get() = sp.getInt("buttonSpacing", 12)
         set(v) = sp.edit().putInt("buttonSpacing", v).apply()
 
     var buttonTextSizeSp: Int
