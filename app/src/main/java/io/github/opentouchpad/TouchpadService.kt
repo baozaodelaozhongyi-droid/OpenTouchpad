@@ -5,11 +5,14 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -23,6 +26,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
@@ -331,16 +335,15 @@ class TouchpadService : AccessibilityService() {
             screenW * prefs.padWidthPercent / 100
         }.coerceIn(widthRange.first, widthRange.last)
         val heightPx = dp(prefs.controlHeightDp).coerceIn(heightRange.first, heightRange.last)
-        val padColor = if (dark) 0xFF4D4D4D.toInt() else 0xFFE1E3E6.toInt()
 
-        // 根容器本身不处理触摸：只有左上角的移动键可以拖动面板。
+        // 根容器本身不处理触摸：只有左侧列顶部的移动键可以拖动面板。
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
             contentDescription = getString(R.string.control_surface_content_description)
         }
 
         val pad = View(this).apply {
-            background = roundedBox(padColor, 24)
+            background = padBackground(dark, dp(22).toFloat())
             contentDescription = getString(R.string.touchpad_content_description)
             setOnTouchListener { _, e -> handlePadTouch(e); true }
         }
@@ -355,11 +358,11 @@ class TouchpadService : AccessibilityService() {
             root.addView(button)
         }
 
-        val moveGrip = makeHandle("⣿", dark) { v, e -> handleMoveTouch(v, e) }
+        val moveGrip = makeHandle(R.drawable.ic_move, dark) { v, e -> handleMoveTouch(v, e) }
         moveGrip.contentDescription = getString(R.string.handle_move)
         root.addView(moveGrip)
         moveGripView = moveGrip
-        val resizeGrip = makeHandle("⤡", dark) { v, e -> handleResizeTouch(v, e) }
+        val resizeGrip = makeHandle(R.drawable.ic_resize, dark) { v, e -> handleResizeTouch(v, e) }
         resizeGrip.contentDescription = getString(R.string.handle_resize)
         root.addView(resizeGrip)
         resizeGripView = resizeGrip
@@ -397,6 +400,8 @@ class TouchpadService : AccessibilityService() {
             dp(prefs.buttonSpacingDp.coerceIn(0, BUTTON_SPACING_MAX_DP)),
         )
         padArea?.layoutParams = rectParams(layout.pad)
+        // 触控板圆角随按钮大小变化，保持和圆形按钮的视觉比例
+        (padArea?.background as? GradientDrawable)?.cornerRadius = layout.button * 0.42f
         actionViews.forEachIndexed { index, view ->
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
             view.layoutParams = rectParams(layout.slots[slot])
@@ -405,9 +410,9 @@ class TouchpadService : AccessibilityService() {
                 layout.button / resources.displayMetrics.density * 0.5f,
             )
         }
-        val gripText = layout.button / resources.displayMetrics.density * 0.36f
-        moveGripView?.let { it.layoutParams = rectParams(layout.moveGrip); (it as? TextView)?.textSize = gripText }
-        resizeGripView?.let { it.layoutParams = rectParams(layout.resizeGrip); (it as? TextView)?.textSize = gripText }
+        val iconInset = (layout.button * 0.27f).roundToInt()
+        moveGripView?.let { it.layoutParams = rectParams(layout.moveGrip); it.setPadding(iconInset, iconInset, iconInset, iconInset) }
+        resizeGripView?.let { it.layoutParams = rectParams(layout.resizeGrip); it.setPadding(iconInset, iconInset, iconInset, iconInset) }
         root.requestLayout()
     }
 
@@ -443,41 +448,93 @@ class TouchpadService : AccessibilityService() {
         keepBallInBounds()
     }
 
-    private fun makeHandle(label: String, dark: Boolean, onTouch: (View, MotionEvent) -> Boolean): View =
-        TextView(this).apply {
-            text = label
-            gravity = Gravity.CENTER
-            textSize = 16f
-            setTextColor(if (dark) 0xFFE5E7EB.toInt() else 0xFF374151.toInt())
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(withAlpha(if (dark) 0xFF4D4D4D.toInt() else 0xFFF1F3F4.toInt(), prefs.opacityPercent))
-                setStroke(dp(1), if (dark) 0x22444444 else 0x33000000)
-            }
+    // ───────────────────────── 外观 ─────────────────────────
+
+    /** 面板配色：按钮/触控板用轻微竖向渐变 + 细描边，移动/缩放键用强调色区分。 */
+    private class Palette(
+        val buttonTop: Int, val buttonBottom: Int, val buttonStroke: Int, val buttonText: Int,
+        val padTop: Int, val padBottom: Int, val padStroke: Int,
+        val gripTop: Int, val gripBottom: Int, val gripStroke: Int, val gripText: Int,
+        val ripple: Int,
+    )
+
+    private fun palette(dark: Boolean): Palette = if (dark) {
+        Palette(
+            buttonTop = 0xFF3A3D44.toInt(), buttonBottom = 0xFF2C2F35.toInt(),
+            buttonStroke = 0x33FFFFFF, buttonText = 0xFFF1F3F6.toInt(),
+            padTop = 0xFF34373D.toInt(), padBottom = 0xFF282A2F.toInt(), padStroke = 0x26FFFFFF,
+            gripTop = 0xFF3B4C6B.toInt(), gripBottom = 0xFF2D3B55.toInt(),
+            gripStroke = 0x556EA8FE, gripText = 0xFFBFD6FF.toInt(),
+            ripple = 0x40FFFFFF,
+        )
+    } else {
+        Palette(
+            buttonTop = 0xFFFFFFFF.toInt(), buttonBottom = 0xFFEEF0F3.toInt(),
+            buttonStroke = 0x1F000000, buttonText = 0xFF1F2937.toInt(),
+            padTop = 0xFFF4F5F7.toInt(), padBottom = 0xFFE4E7EB.toInt(), padStroke = 0x1A000000,
+            gripTop = 0xFFE6EEFF.toInt(), gripBottom = 0xFFD5E2FC.toInt(),
+            gripStroke = 0x552563EB, gripText = 0xFF1D4ED8.toInt(),
+            ripple = 0x26000000,
+        )
+    }
+
+    private fun gradient(shape: Int, top: Int, bottom: Int, stroke: Int, radiusPx: Float = 0f): GradientDrawable =
+        GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(withAlpha(top, prefs.opacityPercent), withAlpha(bottom, prefs.opacityPercent)),
+        ).apply {
+            this.shape = shape
+            if (shape == GradientDrawable.RECTANGLE) cornerRadius = radiusPx
+            setStroke(dp(1), scaleAlpha(stroke, prefs.opacityPercent))
+        }
+
+    /** 圆形按钮背景，带按压水波纹反馈。 */
+    private fun circleBackground(top: Int, bottom: Int, stroke: Int, ripple: Int): Drawable {
+        val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+        return RippleDrawable(ColorStateList.valueOf(ripple), gradient(GradientDrawable.OVAL, top, bottom, stroke), mask)
+    }
+
+    private fun makeHandle(iconRes: Int, dark: Boolean, onTouch: (View, MotionEvent) -> Boolean): View =
+        ImageView(this).apply {
+            val p = palette(dark)
+            setImageResource(iconRes)
+            imageTintList = ColorStateList.valueOf(p.gripText)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            background = circleBackground(p.gripTop, p.gripBottom, p.gripStroke, p.ripple)
             isClickable = true
-            setOnTouchListener { v, e -> onTouch(v, e) }
+            setOnTouchListener { v, e ->
+                // 自己处理拖动，同时让水波纹跟随按下/抬起
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { v.isPressed = true; haptic() }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.isPressed = false
+                }
+                onTouch(v, e)
+            }
         }
 
     private fun makeActionButton(action: PadAction, dark: Boolean): View = TextView(this).apply {
+        val p = palette(dark)
         text = action.icon
         gravity = Gravity.CENTER
+        includeFontPadding = false
         textSize = prefs.buttonTextSizeSp.toFloat()
-        setTextColor(if (dark) 0xFFE5E7EB.toInt() else 0xFF111827.toInt())
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(withAlpha(if (dark) 0xFF4D4D4D.toInt() else 0xFFF1F3F4.toInt(), prefs.opacityPercent))
-            setStroke(dp(1), if (dark) 0x22444444 else 0x33000000)
-        }
+        setTextColor(p.buttonText)
+        background = circleBackground(p.buttonTop, p.buttonBottom, p.buttonStroke, p.ripple)
         isClickable = true
         contentDescription = getString(action.labelRes)
         setOnClickListener { performAction(action) }
         setOnLongClickListener { showActionPicker(action); true }
     }
 
-    private fun roundedBox(color: Int, radiusDp: Int): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = dp(radiusDp).toFloat()
-        setColor(withAlpha(color, prefs.opacityPercent))
+    private fun padBackground(dark: Boolean, radiusPx: Float): GradientDrawable {
+        val p = palette(dark)
+        return gradient(GradientDrawable.RECTANGLE, p.padTop, p.padBottom, p.padStroke, radiusPx)
+    }
+
+    /** 按面板不透明度缩放一个已带 alpha 的颜色。 */
+    private fun scaleAlpha(color: Int, percent: Int): Int {
+        val a = (Color.alpha(color) * percent / 100).coerceIn(0, 255)
+        return Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
     }
 
     private fun withAlpha(color: Int, percent: Int): Int {

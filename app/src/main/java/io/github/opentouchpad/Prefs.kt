@@ -106,7 +106,7 @@ class Prefs(ctx: Context) {
         set(v) = sp.edit().putInt("buttonRadius", v).apply()
 
     var buttonSpacingDp: Int
-        get() = sp.getInt("buttonSpacing", 12)
+        get() = sp.getInt("buttonSpacing", 6)
         set(v) = sp.edit().putInt("buttonSpacing", v).apply()
 
     var buttonTextSizeSp: Int

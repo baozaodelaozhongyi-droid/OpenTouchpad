@@ -103,19 +103,35 @@ class TouchpadMathTest {
         val b = computeControlLayout(1000, 800, 1f, spacingPx = 60)
         assertEquals(a.pad, b.pad)
         assertEquals(a.button, b.button)
-        assertEquals(a.moveGrip, b.moveGrip)
-        assertEquals(a.resizeGrip, b.resizeGrip)
+        assertEquals(a.moveGrip.x, b.moveGrip.x)
+        assertEquals(a.resizeGrip.x, b.resizeGrip.x)
         assertTrue(b.slots[1].x - b.slots[0].x > a.slots[1].x - a.slots[0].x)
     }
 
     @Test
-    fun gripsSitInCornersWithButtonSizeAndNoOverlap() {
+    fun buttonsHugTheTouchpad() {
+        val l = computeControlLayout(1000, 800, 1f, spacingPx = 6)
+        val gap = CONTROL_PAD_GAP_DP
+        assertEquals(gap, l.pad.y - (l.slots[0].y + l.button))
+        assertEquals(gap, l.slots[4].y - (l.pad.y + l.pad.h))
+        assertEquals(gap, l.pad.x - (l.moveGrip.x + l.button))
+        assertEquals(gap, l.resizeGrip.x - (l.pad.x + l.pad.w))
+    }
+
+    @Test
+    fun gripsSitInSideColumnsAndNothingOverlaps() {
         val l = computeControlLayout(900, 700, 1f, spacingPx = 200)
         assertEquals(l.button, l.moveGrip.w)
         assertEquals(l.button, l.resizeGrip.h)
-        assertEquals(4, l.moveGrip.x)
-        assertEquals(900 - 4 - l.button, l.resizeGrip.x)
-        assertEquals(700 - 4 - l.button, l.resizeGrip.y)
+        // move grip: top of the left column; resize grip: bottom of the right column
+        assertEquals(l.slots[8].x, l.moveGrip.x)
+        assertTrue(l.moveGrip.y < l.slots[8].y)
+        assertEquals(l.slots[10].x, l.resizeGrip.x)
+        assertTrue(l.resizeGrip.y > l.slots[11].y)
+        // side columns stay inside the touchpad's vertical span (corners empty)
+        for (r in listOf(l.moveGrip, l.resizeGrip) + l.slots.subList(8, 12)) {
+            assertTrue(r.y >= l.pad.y && r.y + r.h <= l.pad.y + l.pad.h)
+        }
         val all = l.slots + l.moveGrip + l.resizeGrip + l.pad
         for (i in all.indices) for (j in i + 1 until all.size) {
             val p = all[i]; val q = all[j]

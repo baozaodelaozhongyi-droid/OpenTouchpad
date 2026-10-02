@@ -96,14 +96,23 @@ internal data class ControlLayout(
     val slots: List<ControlRect>,
 )
 
+internal const val CONTROL_EDGE_DP = 2
+internal const val CONTROL_PAD_GAP_DP = 4
+internal const val CONTROL_BUTTON_MAX_DP = 56
+
+/**
+ * Compact layout: 4 buttons above and below the touchpad, 3 in each side column.
+ * Left column = move grip, LEFT 1, LEFT 2. Right column = RIGHT 1, RIGHT 2, resize grip.
+ * The four corners stay empty, so every button hugs the touchpad with a small gap.
+ */
 internal fun computeControlLayout(width: Int, height: Int, density: Float, spacingPx: Int): ControlLayout {
     fun d(v: Int) = (v * density).roundToInt()
-    val edge = d(4)
-    val inner = d(6)
+    val edge = d(CONTROL_EDGE_DP)
+    val inner = d(CONTROL_PAD_GAP_DP)
     val button = minOf(
-        d(72),
+        d(CONTROL_BUTTON_MAX_DP),
         (width - 2 * edge - 2 * inner) / 6,
-        (height - 2 * edge - 2 * inner) / 4,
+        (height - 2 * edge - 2 * inner) / 5,
     ).coerceAtLeast(d(16))
     val padLeft = edge + button + inner
     val padTop = edge + button + inner
@@ -120,20 +129,21 @@ internal fun computeControlLayout(width: Int, height: Int, density: Float, spaci
     }
 
     val rowXs = spread(4, padLeft, padLeft + padW)
-    val colYs = spread(2, padTop, padTop + padH)
+    val colYs = spread(3, padTop, padTop + padH)
     val topY = edge
     val bottomY = height - edge - button
     val leftX = edge
     val rightX = width - edge - button
-    val slots = rowXs.map { ControlRect(it, topY, button, button) } +
-        rowXs.map { ControlRect(it, bottomY, button, button) } +
-        colYs.map { ControlRect(leftX, it, button, button) } +
-        colYs.map { ControlRect(rightX, it, button, button) }
+    fun at(x: Int, y: Int) = ControlRect(x, y, button, button)
+    val slots = rowXs.map { at(it, topY) } +
+        rowXs.map { at(it, bottomY) } +
+        listOf(at(leftX, colYs[1]), at(leftX, colYs[2])) +
+        listOf(at(rightX, colYs[0]), at(rightX, colYs[1]))
     return ControlLayout(
         button = button,
         pad = ControlRect(padLeft, padTop, padW, padH),
-        moveGrip = ControlRect(leftX, topY, button, button),
-        resizeGrip = ControlRect(rightX, bottomY, button, button),
+        moveGrip = at(leftX, colYs[0]),
+        resizeGrip = at(rightX, colYs[2]),
         slots = slots,
     )
 }
