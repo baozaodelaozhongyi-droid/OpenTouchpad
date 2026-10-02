@@ -20,6 +20,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -546,25 +547,27 @@ class MainActivity : Activity() {
         place(View(this).apply {
             background = borderedSurface(trackColor, borderColor, 16)
         }, 1, 1, 4 * cell + 3 * gap, 3 * cell + 2 * gap)
-        fun grip(label: String, c: Int, r: Int, desc: String) = place(TextView(this).apply {
-            text = label
-            textSize = 16f
-            gravity = Gravity.CENTER
-            setTextColor(accentColor)
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(accentSoftColor) }
+        val iconPad = (cell * 0.26f).roundToInt()
+        fun grip(iconRes: Int, c: Int, r: Int, desc: String) = place(ImageView(this).apply {
+            setImageResource(iconRes)
+            imageTintList = ColorStateList.valueOf(accentColor)
+            setPadding(iconPad, iconPad, iconPad, iconPad)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(accentSoftColor)
+                setStroke(maxOf(1, dp(1)), accentSoftStrongColor)
+            }
             contentDescription = desc
         }, c, r)
-        grip("✥", 0, 1, getString(R.string.handle_move))
-        grip("⤡", 5, 3, getString(R.string.handle_resize))
+        grip(R.drawable.ic_lu_move, 0, 1, getString(R.string.handle_move))
+        grip(R.drawable.ic_lu_move_diagonal_2, 5, 3, getString(R.string.handle_resize))
         slots.take(BUTTON_SLOT_COUNT).forEachIndexed { index, action ->
             val (c, r) = cells[index]
             val empty = action == PadAction.NONE
-            place(TextView(this).apply {
-                text = if (empty) "+" else action.icon
-                textSize = if (empty) 16f else 15f
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(if (empty) tertiaryTextColor else textColor)
+            place(ImageView(this).apply {
+                setImageResource(action.iconRes)
+                imageTintList = ColorStateList.valueOf(if (empty) tertiaryTextColor else textColor)
+                setPadding(iconPad, iconPad, iconPad, iconPad)
                 val face = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
                     setColor(if (empty) Color.TRANSPARENT else elevatedColor)
@@ -594,21 +597,14 @@ class MainActivity : Activity() {
     }
 
     private fun pickAction(index: Int, current: PadAction) {
-        val labels = PadAction.ALL.map { "${it.icon}  ${getString(it.labelRes)}" }.toTypedArray()
-        val dialogTheme = if (darkUi) R.style.WarmDialog_Dark else R.style.WarmDialog
-        AlertDialog.Builder(this, dialogTheme)
-            .setTitle(R.string.pick_action)
-            .setSingleChoiceItems(labels, PadAction.ALL.indexOf(current)) { dialog, which ->
-                val list = prefs.buttons.toMutableList()
-                while (list.size <= index) list.add(PadAction.NONE)
-                list[index] = PadAction.ALL[which]
-                prefs.buttons = list
-                reload()
-                dialog.dismiss()
-                recreate()
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        ActionPicker.build(this, darkUi, current) { picked ->
+            val list = prefs.buttons.toMutableList()
+            while (list.size <= index) list.add(PadAction.NONE)
+            list[index] = picked
+            prefs.buttons = list
+            reload()
+            recreate()
+        }.show()
     }
 
     private fun showDialog(title: String, body: String) {
@@ -671,9 +667,10 @@ class MainActivity : Activity() {
         if (density > 0f) (v / density).roundToInt() else v
 
     private companion object {
+        /** 和设置页同一套暖色：象牙白、暖黑、陶土、珊瑚、沙色、橄榄绿、雾蓝。 */
         val CURSOR_COLORS = listOf(
-            0xFFFFFFFF.toInt(), 0xFF000000.toInt(), 0xFFFFEB3B.toInt(),
-            0xFF00E5FF.toInt(), 0xFFFF4081.toInt(), 0xFF76FF03.toInt(),
+            0xFFFAF9F5.toInt(), 0xFF141413.toInt(), 0xFFC96442.toInt(), 0xFFD97757.toInt(),
+            0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(),
         )
         /** 0 = 跟随主题的默认陶土色。 */
         val BALL_COLORS = listOf(

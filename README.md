@@ -79,6 +79,7 @@ CI (GitHub Actions) builds an APK on every push — see `.github/workflows/build
 GPL-3.0. Built together with a motor-impaired user, for real daily use.
 
 Headings use a subset of Noto Serif SC Medium (SIL Open Font License 1.1, see `licenses/NotoSerifSC-OFL.txt`).
+Button icons are from [Lucide](https://lucide.dev) v0.460.0 (ISC License, see `licenses/Lucide-ISC.txt`).
 
 ---
 

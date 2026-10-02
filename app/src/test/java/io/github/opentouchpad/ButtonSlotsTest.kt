@@ -24,4 +24,11 @@ class ButtonSlotsTest {
     fun completelyInvalidStoredLayoutFallsBackToDefaults() {
         assertEquals(PadAction.DEFAULT, decodeButtonSlots("removed-action,also-removed"))
     }
+
+    @Test
+    fun everyActionHasItsOwnLineIcon() {
+        val icons = PadAction.ALL.map { it.iconRes }
+        assert(icons.all { it != 0 })
+        assertEquals(icons.size, icons.toSet().size)
+    }
 }

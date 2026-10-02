@@ -10,6 +10,23 @@ class Prefs(ctx: Context) {
     init {
         migrateCompactLayout()
         migrateUniformGrid()
+        migrateWarmColors()
+    }
+
+    /** v0.5.1：光标颜色换成暖色系，旧的高饱和色映射到最接近的新颜色。只执行一次。 */
+    private fun migrateWarmColors() {
+        if (sp.getBoolean("warmColorsV051", false)) return
+        val map = mapOf(
+            0xFFFFFFFF.toInt() to 0xFFFAF9F5.toInt(),
+            0xFF000000.toInt() to 0xFF141413.toInt(),
+            0xFFFFEB3B.toInt() to 0xFFD4A27F.toInt(),
+            0xFF00E5FF.toInt() to 0xFF6A9BCC.toInt(),
+            0xFFFF4081.toInt() to 0xFFD97757.toInt(),
+            0xFF76FF03.toInt() to 0xFF7A9A5B.toInt(),
+        )
+        val e = sp.edit().putBoolean("warmColorsV051", true)
+        if (sp.contains("cursorColor")) map[sp.getInt("cursorColor", 0)]?.let { e.putInt("cursorColor", it) }
+        e.apply()
     }
 
     /**
@@ -66,7 +83,7 @@ class Prefs(ctx: Context) {
         set(v) = sp.edit().putInt("cursorOpacity", v).apply()
 
     var cursorColor: Int
-        get() = sp.getInt("cursorColor", 0xFFFFFFFF.toInt())
+        get() = sp.getInt("cursorColor", 0xFFFAF9F5.toInt())
         set(v) = sp.edit().putInt("cursorColor", v).apply()
 
     // ── 触控板 ──

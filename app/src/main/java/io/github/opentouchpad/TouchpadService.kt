@@ -12,6 +12,7 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.media.AudioManager
 import android.os.Build
@@ -160,6 +161,7 @@ class TouchpadService : AccessibilityService() {
         main.removeCallbacksAndMessages(null)
         cancelDwell()
         instance = null
+        cancelTransitions()
         removePanel()
         cursorView?.let { runCatching { wm.removeView(it) } }
         cursorView = null
@@ -210,7 +212,7 @@ class TouchpadService : AccessibilityService() {
     fun toggleMinimize() {
         prefs.minimized = !prefs.minimized
         minimizedByKeyboard = false
-        buildPanel()
+        buildPanel(animate = true)
     }
 
     // ───────────────────────── 视图构建 ─────────────────────────
@@ -248,11 +250,14 @@ class TouchpadService : AccessibilityService() {
         cursorView = v
     }
 
-    private fun buildPanel() {
+    private fun buildPanel(animate: Boolean = false) {
+        // 用户主动展开/收起时做过渡动画：旧窗口先摘下来单独播放退场，再建新窗口播放入场。
+        val outgoing = if (animate) detachPanelForTransition() else null
         removePanel()
         // 横屏时按设置自动隐藏整块触控板（光标保留）
         if (isLandscape() && prefs.autoHideLandscape) {
             cursorView?.visibility = View.VISIBLE
+            outgoing?.let { finishOutgoing(it) }
             return
         }
         if (prefs.minimized) {
@@ -261,6 +266,97 @@ class TouchpadService : AccessibilityService() {
         } else {
             cursorView?.visibility = View.VISIBLE
             addFullPanel()
+        }
+        if (outgoing != null) playTransition(outgoing)
+    }
+
+    // ───────────────────────── 展开／收起过渡 ─────────────────────────
+
+    private class Outgoing(val view: View, val lp: WindowManager.LayoutParams)
+
+    private val transitionInterpolator = android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)
+    private val runningOutgoing = mutableListOf<View>()
+
+    /** 把当前面板/悬浮球从状态里摘出来（窗口暂不移除），供退场动画使用。 */
+    private fun detachPanelForTransition(): Outgoing? {
+        val v = panel ?: return null
+        val lp = panelParams ?: return null
+        if (dragging) endDrag()
+        // 退场期间不再接收触摸，避免误触
+        lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        runCatching { wm.updateViewLayout(v, lp) }
+        panel = null
+        panelParams = null
+        return Outgoing(v, lp)
+    }
+
+    private fun finishOutgoing(o: Outgoing) {
+        o.view.animate().cancel()
+        runningOutgoing.remove(o.view)
+        runCatching { wm.removeView(o.view) }
+    }
+
+    /** 当前所有退场中的窗口立即移除（服务销毁、重建时调用）。 */
+    private fun cancelTransitions() {
+        runningOutgoing.toList().forEach { v ->
+            v.animate().cancel()
+            runCatching { wm.removeView(v) }
+        }
+        runningOutgoing.clear()
+    }
+
+    /**
+     * 面板 ⇄ 悬浮球：两者都朝对方所在的位置缩放。
+     * 收起：面板缩向悬浮球并淡出，悬浮球从小弹出；展开：悬浮球缩小淡出，面板从悬浮球方向长出来。
+     * 系统「动画时长缩放」设为关闭时，ViewPropertyAnimator 会直接跳到终点。
+     */
+    private fun playTransition(o: Outgoing) {
+        val incoming = panel
+        val inLp = panelParams
+        runningOutgoing += o.view
+        // 两个窗口中心点（屏幕坐标）
+        val outW = o.view.width.takeIf { it > 0 } ?: o.lp.width
+        val outH = o.view.height.takeIf { it > 0 } ?: o.lp.height
+        val outCx = o.lp.x + outW / 2f
+        val outCy = o.lp.y + outH / 2f
+        val collapsing = incoming == null || incoming === miniBallView
+
+        // 退场：朝新窗口中心缩放
+        val toward = if (inLp != null) {
+            val inW = if (inLp.width > 0) inLp.width else outW
+            val inH = if (inLp.height > 0) inLp.height else outH
+            (inLp.x + inW / 2f) to (inLp.y + inH / 2f)
+        } else outCx to outCy
+        o.view.pivotX = (toward.first - o.lp.x).coerceIn(0f, outW.toFloat())
+        o.view.pivotY = (toward.second - o.lp.y).coerceIn(0f, outH.toFloat())
+        o.view.animate()
+            .scaleX(if (collapsing) 0.2f else 0.6f)
+            .scaleY(if (collapsing) 0.2f else 0.6f)
+            .alpha(0f)
+            .setDuration(if (collapsing) 220L else 140L)
+            .setInterpolator(transitionInterpolator)
+            .withEndAction { finishOutgoing(o) }
+            .start()
+
+        if (incoming == null || inLp == null) return
+        val targetAlpha = if (incoming === miniBallView) ballRestingAlpha() else 1f
+        incoming.alpha = 0f
+        incoming.scaleX = if (collapsing) 0.4f else 0.2f
+        incoming.scaleY = incoming.scaleX
+        incoming.post {
+            if (panel !== incoming) return@post
+            // 新窗口从旧窗口中心方向长出来
+            incoming.pivotX = (outCx - inLp.x).coerceIn(0f, incoming.width.toFloat())
+            incoming.pivotY = (outCy - inLp.y).coerceIn(0f, incoming.height.toFloat())
+            incoming.animate()
+                .scaleX(1f).scaleY(1f).alpha(targetAlpha)
+                .setStartDelay(if (collapsing) 120L else 40L)
+                .setDuration(if (collapsing) 200L else 260L)
+                .setInterpolator(if (collapsing) android.view.animation.OvershootInterpolator(1.6f) else transitionInterpolator)
+                .withEndAction {
+                    incoming.scaleX = 1f; incoming.scaleY = 1f; incoming.alpha = targetAlpha
+                }
+                .start()
         }
     }
 
@@ -358,11 +454,11 @@ class TouchpadService : AccessibilityService() {
             root.addView(button)
         }
 
-        val moveGrip = makeHandle(R.drawable.ic_move, dark) { v, e -> handleMoveTouch(v, e) }
+        val moveGrip = makeHandle(R.drawable.ic_lu_move, dark) { v, e -> handleMoveTouch(v, e) }
         moveGrip.contentDescription = getString(R.string.handle_move)
         root.addView(moveGrip)
         moveGripView = moveGrip
-        val resizeGrip = makeHandle(R.drawable.ic_resize, dark) { v, e -> handleResizeTouch(v, e) }
+        val resizeGrip = makeHandle(R.drawable.ic_lu_move_diagonal_2, dark) { v, e -> handleResizeTouch(v, e) }
         resizeGrip.contentDescription = getString(R.string.handle_resize)
         root.addView(resizeGrip)
         resizeGripView = resizeGrip
@@ -409,15 +505,14 @@ class TouchpadService : AccessibilityService() {
         padArea?.layoutParams = rectParams(layout.pad)
         // 触控板圆角随按钮大小变化，保持和圆形按钮的视觉比例
         (padArea?.background as? GradientDrawable)?.cornerRadius = layout.button * 0.42f
+        // 「按钮图标大小」= 线条图标的边长（dp），最多占按钮直径的 56%
+        val iconPx = minOf(dp(prefs.buttonTextSizeSp), (layout.button * 0.56f).roundToInt()).coerceAtLeast(dp(8))
+        val iconInset = ((layout.button - iconPx) / 2).coerceAtLeast(0)
         actionViews.forEachIndexed { index, view ->
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
             view.layoutParams = rectParams(layout.slots[slot])
-            (view as? TextView)?.textSize = minOf(
-                prefs.buttonTextSizeSp.toFloat(),
-                layout.button / resources.displayMetrics.density * 0.5f,
-            )
+            view.setPadding(iconInset, iconInset, iconInset, iconInset)
         }
-        val iconInset = (layout.button * 0.27f).roundToInt()
         moveGripView?.let { it.layoutParams = rectParams(layout.moveGrip); it.setPadding(iconInset, iconInset, iconInset, iconInset) }
         resizeGripView?.let { it.layoutParams = rectParams(layout.resizeGrip); it.setPadding(iconInset, iconInset, iconInset, iconInset) }
         root.requestLayout()
@@ -430,22 +525,44 @@ class TouchpadService : AccessibilityService() {
             return
         }
         val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
-        val dot = TextView(this).apply {
-            text = "⌁"
-            gravity = Gravity.CENTER
-            textSize = (size / resources.displayMetrics.density * 0.45f).coerceIn(5f, 40f)
-            includeFontPadding = false
+        val dot = ImageView(this).apply {
             val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
                 ?: if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
-            // 浅色球用深色图标，深色球用浅色图标
-            setTextColor(if (Color.luminance(ballColor) > 0.55f) 0xFF111827.toInt() else 0xFFF8FAFC.toInt())
-            alpha = prefs.floatingBallOpacityPercent.coerceIn(20, 100) / 100f
-            background = GradientDrawable().apply {
+            val light = Color.luminance(ballColor) > 0.55f
+            setImageResource(R.drawable.ic_lu_touchpad)
+            // 浅色球用暖黑图标，深色球用象牙白图标
+            imageTintList = ColorStateList.valueOf(if (light) 0xFF141413.toInt() else 0xFFFAF9F5.toInt())
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            val halo = (size * 0.06f).roundToInt().coerceAtLeast(dp(1))
+            val inset = halo + (size * 0.24f).roundToInt()
+            setPadding(inset, inset, inset, inset)
+            // 外圈一道半透明光晕，在深/浅背景上都能看清；内圈是带细描边的实色圆
+            val ring = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(ballColor)
-                setStroke(if (size < dp(28)) dp(1) else dp(2), if (Color.luminance(ballColor) > 0.55f) 0x33000000 else 0x66FFFFFF)
+                setColor((ballColor and 0x00FFFFFF) or 0x40000000)
             }
-            setOnTouchListener { v, e -> handleBallTouch(v, e) }
+            val disc = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(lighten(ballColor, 0.08f), ballColor),
+            ).apply {
+                shape = GradientDrawable.OVAL
+                setStroke(maxOf(1, dp(1)), if (light) 0x26141413 else 0x33FAF9F5)
+            }
+            val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+            background = RippleDrawable(
+                ColorStateList.valueOf(if (light) 0x26141413 else 0x40FAF9F5),
+                LayerDrawable(arrayOf(ring, disc)).apply { setLayerInset(1, halo, halo, halo, halo) },
+                mask,
+            )
+            alpha = ballRestingAlpha()
+            isClickable = true
+            setOnTouchListener { v, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> v.isPressed = true
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.isPressed = false
+                }
+                handleBallTouch(v, e)
+            }
             contentDescription = getString(R.string.floating_ball_content_description)
         }
         val lp = ballLayoutParams(size)
@@ -456,6 +573,14 @@ class TouchpadService : AccessibilityService() {
         ballX = lp.x
         ballY = lp.y
         keepBallInBounds()
+    }
+
+    private fun ballRestingAlpha(): Float = prefs.floatingBallOpacityPercent.coerceIn(20, 100) / 100f
+
+    /** 把颜色往白色方向提亮一点，用于渐变顶部。 */
+    private fun lighten(color: Int, amount: Float): Int {
+        fun ch(c: Int) = (c + (255 - c) * amount).roundToInt().coerceIn(0, 255)
+        return Color.argb(Color.alpha(color), ch(Color.red(color)), ch(Color.green(color)), ch(Color.blue(color)))
     }
 
     // ───────────────────────── 外观 ─────────────────────────
@@ -524,13 +649,11 @@ class TouchpadService : AccessibilityService() {
             }
         }
 
-    private fun makeActionButton(slot: Int, action: PadAction, dark: Boolean): View = TextView(this).apply {
+    private fun makeActionButton(slot: Int, action: PadAction, dark: Boolean): View = ImageView(this).apply {
         val p = palette(dark)
-        text = action.icon
-        gravity = Gravity.CENTER
-        includeFontPadding = false
-        textSize = prefs.buttonTextSizeSp.toFloat()
-        setTextColor(p.buttonText)
+        setImageResource(action.iconRes)
+        imageTintList = ColorStateList.valueOf(p.buttonText)
+        scaleType = ImageView.ScaleType.FIT_CENTER
         background = circleBackground(p.buttonTop, p.buttonBottom, p.buttonStroke, p.ripple)
         isClickable = true
         contentDescription = getString(action.labelRes)
@@ -557,26 +680,13 @@ class TouchpadService : AccessibilityService() {
     // ───────────────────────── 按钮长按换动作 ─────────────────────────
 
     private fun showActionPicker(slot: Int, current: PadAction) {
-        val labels = PadAction.ALL.map { "${it.icon}  ${getString(it.labelRes)}" }.toTypedArray()
-        val checked = PadAction.ALL.indexOf(current)
-        val dialogTheme = if (isDarkTheme()) {
-            android.R.style.Theme_DeviceDefault_Dialog_Alert
-        } else {
-            android.R.style.Theme_DeviceDefault_Light_Dialog_Alert
+        val dialog = ActionPicker.build(this, isDarkTheme(), current) { picked ->
+            val list = prefs.buttons.toMutableList()
+            while (list.size <= slot) list.add(PadAction.NONE)
+            list[slot] = picked
+            prefs.buttons = list
+            buildPanel()
         }
-        val builder = android.app.AlertDialog.Builder(this, dialogTheme)
-            .setTitle(R.string.pick_action)
-            .setSingleChoiceItems(labels, checked) { dialog, which ->
-                val picked = PadAction.ALL[which]
-                val list = prefs.buttons.toMutableList()
-                while (list.size <= slot) list.add(PadAction.NONE)
-                list[slot] = picked
-                prefs.buttons = list
-                buildPanel()
-                dialog.dismiss()
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-        val dialog = builder.create()
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
         runCatching { dialog.show() }
     }
