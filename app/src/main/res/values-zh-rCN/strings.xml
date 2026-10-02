@@ -29,7 +29,7 @@
     <!-- 动作名 -->
     <string name="act_click">左键单击</string>
     <string name="act_long_press">光标处长按</string>
-    <string name="act_drag_lock">拖拽锁定（按住／释放）</string>
+    <string name="act_drag_lock">拖拽锁定（点起点／点终点）</string>
     <string name="act_scroll_up">向上滚动</string>
     <string name="act_scroll_down">向下滚动</string>
     <string name="act_scroll_left">向左滚动</string>
@@ -72,7 +72,7 @@
     <string name="set_cursor_size">光标大小</string>
     <string name="set_cursor_color">光标颜色</string>
     <string name="set_sensitivity">光标速度</string>
-    <string name="set_long_press">长按时长</string>
+    <string name="set_long_press">触控板长按判定时长</string>
     <string name="set_dwell">停留点击（停住不动即点击）</string>
     <string name="set_scroll_distance">滚动距离</string>
     <string name="set_swipe_distance">长滑动距离</string>
@@ -121,4 +121,7 @@
         <item>右下角</item>
     </string-array>
     <string name="pad_height_hint">宽度决定按钮大小。加高为 0 时是最紧凑的等间距网格；加高只让中间触控板变高，按钮间距不变。</string>
+    <string name="set_cursor_hold">光标处长按时长</string>
+    <string name="cursor_hold_hint">「光标处长按」按住的时间；拖拽锁定也会先在起点按住这么久再拖动。最长 3 秒。</string>
+    <string name="drag_lock_hint">拖拽锁定：按一次记下起点（出现陶土色圆环），移动光标到终点，再按一次执行拖动；没移动就再按一次 = 取消。</string>
 </resources>

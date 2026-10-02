@@ -29,7 +29,7 @@
     <!-- 动作名 -->
     <string name="act_click">Left click</string>
     <string name="act_long_press">Long press at cursor</string>
-    <string name="act_drag_lock">Drag lock (hold / release)</string>
+    <string name="act_drag_lock">Drag lock (tap start / tap end)</string>
     <string name="act_scroll_up">Scroll up</string>
     <string name="act_scroll_down">Scroll down</string>
     <string name="act_scroll_left">Scroll left</string>
@@ -72,7 +72,7 @@
     <string name="set_cursor_size">Cursor size</string>
     <string name="set_cursor_color">Cursor colour</string>
     <string name="set_sensitivity">Cursor speed</string>
-    <string name="set_long_press">Long press duration</string>
+    <string name="set_long_press">Touchpad long-press threshold</string>
     <string name="set_dwell">Dwell click (hold still to click)</string>
     <string name="set_scroll_distance">Scroll distance</string>
     <string name="set_swipe_distance">Long swipe distance</string>
@@ -121,4 +121,7 @@
         <item>Bottom-right corner</item>
     </string-array>
     <string name="pad_height_hint">Width sets the button size. At 0 extra height the panel is a compact grid with equal gaps everywhere; more height only makes the touchpad taller.</string>
+    <string name="set_cursor_hold">Long press at cursor: hold time</string>
+    <string name="cursor_hold_hint">How long "Long press at cursor" holds. Drag lock also holds this long at the start point before moving. Up to 3 s.</string>
+    <string name="drag_lock_hint">Drag lock: tap once to mark the start (a terracotta ring appears), move the cursor, tap again to drag. Tap again without moving to cancel.</string>
 </resources>

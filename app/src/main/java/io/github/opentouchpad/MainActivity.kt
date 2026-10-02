@@ -142,6 +142,10 @@ class MainActivity : Activity() {
         col.addView(sectionHeader(getString(R.string.sec_buttons)))
         col.addView(card(
             buttonSlotMap(),
+            FrameLayout(this).apply {
+                setPadding(dp(16), 0, dp(16), dp(10))
+                addView(hintText(getString(R.string.drag_lock_hint)))
+            },
             slider(getString(R.string.set_button_spacing), 0, BUTTON_SPACING_MAX_DP, prefs.buttonSpacingDp, unit = "dp", onChange = { prefs.buttonSpacingDp = it; reload() }),
             slider(getString(R.string.set_button_text_size), 10, 34, prefs.buttonTextSizeSp, unit = "sp", onChange = { prefs.buttonTextSizeSp = it; reload() }),
         ))
@@ -168,6 +172,8 @@ class MainActivity : Activity() {
         col.addView(card(
             slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt(), format = { String.format(java.util.Locale.US, "%.1f×", it / 10f) }) { prefs.sensitivity = it / 10f },
             slider(getString(R.string.set_long_press), 200, 1500, prefs.longPressMs, unit = "ms", onChange = { prefs.longPressMs = it }),
+            slider(getString(R.string.set_cursor_hold), CURSOR_HOLD_MIN_MS, CURSOR_HOLD_MAX_MS, prefs.cursorHoldMs, unit = "ms",
+                hint = getString(R.string.cursor_hold_hint), onChange = { prefs.cursorHoldMs = it }),
             slider(getString(R.string.set_dwell), 0, 2000, prefs.dwellMs, unit = "ms", offLabel = getString(R.string.dwell_off), onChange = { prefs.dwellMs = it }),
             slider(getString(R.string.set_scroll_distance), 60, 500, prefs.scrollDistanceDp, unit = "dp", hint = getString(R.string.custom_swipe_hint), onChange = { prefs.scrollDistanceDp = it }),
             switchRow(getString(R.string.switch_haptics), prefs.haptics, onChange = { prefs.haptics = it }),

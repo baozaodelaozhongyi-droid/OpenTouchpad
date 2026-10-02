@@ -1,6 +1,7 @@
 package io.github.opentouchpad
 
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 internal const val PANEL_MIN_WIDTH_DP = 110
 internal const val CONTROL_MIN_SIZE_DP = 110
@@ -13,6 +14,10 @@ internal const val BUTTON_SPACING_MAX_DP = 24
 internal const val DEFAULT_PANEL_WIDTH_DP = 168
 internal const val CONTROL_EXTRA_HEIGHT_MAX_DP = 400
 internal const val DEFAULT_BUTTON_SPACING_DP = 3
+internal const val CURSOR_HOLD_MIN_MS = 300
+internal const val CURSOR_HOLD_MAX_MS = 3000
+internal const val CURSOR_HOLD_DEFAULT_MS = 800
+internal const val DRAG_TRAIL_MAX_POINTS = 120
 
 internal data class PanelPosition(val x: Int, val y: Int)
 
@@ -164,3 +169,24 @@ internal fun controlHeightRange(screenHeight: Int, density: Float): IntRange {
     val maxPx = minOf((CONTROL_MAX_SIZE_DP * density).roundToInt(), screenHeight)
     return minPx.coerceAtMost(maxPx)..maxPx
 }
+
+internal data class TrailPoint(val x: Float, val y: Float)
+
+/** 记录拖拽轨迹：离上一个点超过 [minStepPx] 才追加，点数超过上限时隔一个删一个（保留首尾）。 */
+internal fun appendTrailPoint(trail: MutableList<TrailPoint>, x: Float, y: Float, minStepPx: Float) {
+    val last = trail.lastOrNull()
+    if (last != null && kotlin.math.hypot(x - last.x, y - last.y) < minStepPx) return
+    trail += TrailPoint(x, y)
+    if (trail.size > DRAG_TRAIL_MAX_POINTS) {
+        val kept = trail.filterIndexed { i, _ -> i == 0 || i == trail.lastIndex || i % 2 == 0 }
+        trail.clear()
+        trail += kept
+    }
+}
+
+internal fun trailLength(trail: List<TrailPoint>): Float =
+    trail.zipWithNext { a, b -> kotlin.math.hypot(b.x - a.x, b.y - a.y) }.sum()
+
+/** 拖拽移动段时长：按路径长度 ≈ 1.2 px/ms，限制在 250–1500 ms。 */
+internal fun dragMoveDurationMs(lengthPx: Float): Long =
+    (lengthPx * 5f / 6f).roundToLong().coerceIn(250L, 1500L)

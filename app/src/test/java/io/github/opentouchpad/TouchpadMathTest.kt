@@ -162,4 +162,24 @@ class TouchpadMathTest {
         assertEquals(9, hi.slots[1].x - (hi.slots[0].x + hi.button))
         assertEquals(9, hi.slots[8].y - (hi.moveGrip.y + hi.button))
     }
+
+    @Test
+    fun dragTrailSkipsTinyStepsAndStaysBounded() {
+        val trail = mutableListOf<TrailPoint>()
+        appendTrailPoint(trail, 0f, 0f, 4f)
+        appendTrailPoint(trail, 1f, 1f, 4f)
+        assertEquals(1, trail.size)
+        for (i in 1..1000) appendTrailPoint(trail, i * 5f, 0f, 4f)
+        assertTrue(trail.size <= DRAG_TRAIL_MAX_POINTS)
+        assertEquals(TrailPoint(0f, 0f), trail.first())
+        assertEquals(TrailPoint(5000f, 0f), trail.last())
+    }
+
+    @Test
+    fun dragMoveDurationIsClamped() {
+        assertEquals(250L, dragMoveDurationMs(10f))
+        assertEquals(500L, dragMoveDurationMs(600f))
+        assertEquals(1500L, dragMoveDurationMs(100000f))
+        assertEquals(10f, trailLength(listOf(TrailPoint(0f, 0f), TrailPoint(6f, 8f))), 0.001f)
+    }
 }

@@ -191,6 +191,11 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("longPressMs", 600)
         set(v) = sp.edit().putInt("longPressMs", v).apply()
 
+    /** 「光标处长按」按住多久；拖拽锁定也先在起点按住这么久再开始移动。300–3000 ms。 */
+    var cursorHoldMs: Int
+        get() = sp.getInt("cursorHoldMs", CURSOR_HOLD_DEFAULT_MS).coerceIn(CURSOR_HOLD_MIN_MS, CURSOR_HOLD_MAX_MS)
+        set(v) = sp.edit().putInt("cursorHoldMs", v.coerceIn(CURSOR_HOLD_MIN_MS, CURSOR_HOLD_MAX_MS)).apply()
+
     /** 0 = 关闭停留点击；否则为"手指静止这么久就自动点一下"的毫秒数。 */
     var dwellMs: Int
         get() = sp.getInt("dwellMs", 0)

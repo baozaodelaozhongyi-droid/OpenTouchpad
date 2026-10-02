@@ -88,11 +88,12 @@ class TouchpadService : AccessibilityService() {
     private var customSwipeEndX = 0f
     private var customSwipeEndY = 0f
 
-    // 拖拽锁定
+    // 拖拽锁定：第一次按记下起点，之后正常移动光标，第二次按一次性注入「按住→拖到终点→松开」。
+    // 不在两次按键之间保持注入的手指按下：真实手指一碰屏幕，系统就会取消正在注入的手势，
+    // 结果只剩一次点击（旧版本的问题）。
     private var dragging = false
-    private var activeStroke: GestureDescription.StrokeDescription? = null
-    private var lastDragX = 0f
-    private var lastDragY = 0f
+    private val dragTrail = mutableListOf<TrailPoint>()
+    private var dragMarker: View? = null
 
     // 面板拖动 / 缩放
     private var movingPanel = false
@@ -161,6 +162,7 @@ class TouchpadService : AccessibilityService() {
         main.removeCallbacksAndMessages(null)
         cancelDwell()
         instance = null
+        cancelDrag()
         cancelTransitions()
         removePanel()
         cursorView?.let { runCatching { wm.removeView(it) } }
@@ -171,7 +173,7 @@ class TouchpadService : AccessibilityService() {
 
     override fun onInterrupt() {
         main.removeCallbacksAndMessages(null)
-        if (dragging) endDrag()
+        cancelDrag()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -245,7 +247,10 @@ class TouchpadService : AccessibilityService() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP or Gravity.START }
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            windowAnimations = 0
+        }
         runCatching { wm.addView(v, cursorParams) }
         cursorView = v
     }
@@ -254,10 +259,13 @@ class TouchpadService : AccessibilityService() {
         // 用户主动展开/收起时做过渡动画：旧窗口先摘下来单独播放退场，再建新窗口播放入场。
         val outgoing = if (animate) detachPanelForTransition() else null
         removePanel()
+        // 新窗口在 addView 之前就设为透明，第一帧不会以完整样子闪一下
+        enteringWithTransition = outgoing != null
         // 横屏时按设置自动隐藏整块触控板（光标保留）
         if (isLandscape() && prefs.autoHideLandscape) {
             cursorView?.visibility = View.VISIBLE
             outgoing?.let { finishOutgoing(it) }
+            enteringWithTransition = false
             return
         }
         if (prefs.minimized) {
@@ -267,12 +275,15 @@ class TouchpadService : AccessibilityService() {
             cursorView?.visibility = View.VISIBLE
             addFullPanel()
         }
+        enteringWithTransition = false
         if (outgoing != null) playTransition(outgoing)
     }
 
     // ───────────────────────── 展开／收起过渡 ─────────────────────────
 
     private class Outgoing(val view: View, val lp: WindowManager.LayoutParams)
+
+    private var enteringWithTransition = false
 
     private val transitionInterpolator = android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)
     private val runningOutgoing = mutableListOf<View>()
@@ -281,7 +292,6 @@ class TouchpadService : AccessibilityService() {
     private fun detachPanelForTransition(): Outgoing? {
         val v = panel ?: return null
         val lp = panelParams ?: return null
-        if (dragging) endDrag()
         // 退场期间不再接收触摸，避免误触
         lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         runCatching { wm.updateViewLayout(v, lp) }
@@ -292,8 +302,13 @@ class TouchpadService : AccessibilityService() {
 
     private fun finishOutgoing(o: Outgoing) {
         o.view.animate().cancel()
-        runningOutgoing.remove(o.view)
-        runCatching { wm.removeView(o.view) }
+        // 先让最后一帧变成全透明并提交，再移除窗口，避免系统拿到一张半透明快照
+        o.view.alpha = 0f
+        o.view.visibility = View.INVISIBLE
+        o.view.postOnAnimation {
+            runningOutgoing.remove(o.view)
+            runCatching { wm.removeView(o.view) }
+        }
     }
 
     /** 当前所有退场中的窗口立即移除（服务销毁、重建时调用）。 */
@@ -344,7 +359,10 @@ class TouchpadService : AccessibilityService() {
         incoming.scaleX = if (collapsing) 0.4f else 0.2f
         incoming.scaleY = incoming.scaleX
         incoming.post {
-            if (panel !== incoming) return@post
+            if (panel !== incoming) {
+                incoming.alpha = targetAlpha; incoming.scaleX = 1f; incoming.scaleY = 1f
+                return@post
+            }
             // 新窗口从旧窗口中心方向长出来
             incoming.pivotX = (outCx - inLp.x).coerceIn(0f, incoming.width.toFloat())
             incoming.pivotY = (outCy - inLp.y).coerceIn(0f, incoming.height.toFloat())
@@ -361,7 +379,7 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun removePanel() {
-        if (dragging) endDrag()
+        // 拖拽锁定状态（起点标记）跨面板重建保留，不在这里结束
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
         panelParams = null
@@ -388,6 +406,9 @@ class TouchpadService : AccessibilityService() {
             PixelFormat.TRANSLUCENT,
         )
         lp.gravity = Gravity.TOP or Gravity.START
+        // 关掉系统默认的窗口进出动画：它会给被移除的窗口拍一帧快照再淡出，
+        // 和我们自己的缩放动画叠在一起就是「残影」。
+        lp.windowAnimations = 0
         val storedX = prefs.padX
         val storedY = prefs.padY
         if (storedX >= 0 && storedY >= 0) {
@@ -411,6 +432,7 @@ class TouchpadService : AccessibilityService() {
             PixelFormat.TRANSLUCENT,
         )
         lp.gravity = Gravity.TOP or Gravity.START
+        lp.windowAnimations = 0
         val position = if (prefs.ballX >= 0 && prefs.ballY >= 0) {
             clampFloatingBallPosition(prefs.ballX, prefs.ballY, size, screenW, screenH)
         } else {
@@ -463,8 +485,10 @@ class TouchpadService : AccessibilityService() {
         root.addView(resizeGrip)
         resizeGripView = resizeGrip
         layoutControlChildren(root, widthPx, heightPx)
+        refreshDragButtons()
 
         val lp = panelLayoutParams(widthPx, heightPx)
+        if (enteringWithTransition) root.alpha = 0f
         runCatching { wm.addView(root, lp) }
         panel = root
         panelParams = lp
@@ -566,6 +590,7 @@ class TouchpadService : AccessibilityService() {
             contentDescription = getString(R.string.floating_ball_content_description)
         }
         val lp = ballLayoutParams(size)
+        if (enteringWithTransition) dot.alpha = 0f
         runCatching { wm.addView(dot, lp) }
         panel = dot
         miniBallView = dot
@@ -707,9 +732,8 @@ class TouchpadService : AccessibilityService() {
                 customSwipeEndX = cursorX
                 customSwipeEndY = cursorY
                 main.removeCallbacks(longPressRunnable)
-                if (dragging) {
-                    moveDragTo(cursorX, cursorY)
-                } else {
+                // 拖拽锁定期间触控板只移动光标，不点击、不长按、不停留点击
+                if (!dragging) {
                     if (shouldScheduleLongPress(prefs.dwellMs, dragging = false)) {
                         main.postDelayed(longPressRunnable, prefs.longPressMs.toLong())
                     }
@@ -734,7 +758,7 @@ class TouchpadService : AccessibilityService() {
                     customSwipeEndX = cursorX
                     customSwipeEndY = cursorY
                 }
-                if (dragging) moveDragTo(cursorX, cursorY)
+                if (dragging) appendTrailPoint(dragTrail, cursorX, cursorY, dp(4).toFloat())
                 scheduleDwell()
             }
 
@@ -742,7 +766,10 @@ class TouchpadService : AccessibilityService() {
                 main.removeCallbacks(longPressRunnable)
                 cancelDwell()
                 val distance = kotlin.math.hypot(customSwipeEndX - customSwipeStartX, customSwipeEndY - customSwipeStartY)
-                if (dragging) endDrag()
+                if (dragging) {
+                    customSwipeArmed = false
+                    return
+                }
                 when (resolvePadTouchOutcome(longPressFired, dwellFired, moved, distance, dp(12).toFloat())) {
                     PadTouchOutcome.CUSTOM_SWIPE -> customSwipeAt(customSwipeStartX, customSwipeStartY, customSwipeEndX, customSwipeEndY)
                     PadTouchOutcome.LONG_PRESS -> longPressAt(cursorX, cursorY)
@@ -756,7 +783,6 @@ class TouchpadService : AccessibilityService() {
                 main.removeCallbacks(longPressRunnable)
                 cancelDwell()
                 customSwipeArmed = false
-                if (dragging) endDrag()
             }
         }
     }
@@ -951,34 +977,39 @@ class TouchpadService : AccessibilityService() {
         runCatching { wm.updateViewLayout(v, lp) }
     }
 
-    private fun dispatchPassThrough(gesture: GestureDescription) {
+    /** 面板设为不可触摸，最长 [expectedMs] + 2 秒后无论如何恢复。 */
+    private fun beginPassThrough(expectedMs: Long) {
+        passThroughCount++
+        setOverlayTouchable(false)
+        main.removeCallbacks(restoreTouchRunnable)
+        main.postDelayed(restoreTouchRunnable, maxOf(5000L, expectedMs + 2000L))
+    }
+
+    private fun endPassThrough() {
+        main.post {
+            passThroughCount = (passThroughCount - 1).coerceAtLeast(0)
+            if (passThroughCount == 0) {
+                main.removeCallbacks(restoreTouchRunnable)
+                setOverlayTouchable(true)
+            }
+        }
+    }
+
+    private fun dispatchPassThrough(gesture: GestureDescription, expectedMs: Long = 1000L) {
         if (panel == null) {
             dispatch(gesture)
             return
         }
-        passThroughCount++
-        setOverlayTouchable(false)
-        main.removeCallbacks(restoreTouchRunnable)
-        // 兜底：无论回调是否到达，最多几秒后恢复面板可触摸。
-        main.postDelayed(restoreTouchRunnable, 5000)
-        val done = {
-            main.post {
-                passThroughCount = (passThroughCount - 1).coerceAtLeast(0)
-                if (passThroughCount == 0) {
-                    main.removeCallbacks(restoreTouchRunnable)
-                    setOverlayTouchable(true)
-                }
-            }
-        }
+        beginPassThrough(expectedMs)
         // 等窗口标志真正生效后再注入手势。
         main.postDelayed({
             val ok = runCatching {
                 dispatchGesture(gesture, object : GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) { done() }
-                    override fun onCancelled(gestureDescription: GestureDescription?) { done() }
+                    override fun onCompleted(gestureDescription: GestureDescription?) { endPassThrough() }
+                    override fun onCancelled(gestureDescription: GestureDescription?) { endPassThrough() }
                 }, main)
             }.getOrDefault(false)
-            if (!ok) done()
+            if (!ok) endPassThrough()
         }, OVERLAY_PASS_THROUGH_DELAY_MS)
     }
 
@@ -987,11 +1018,13 @@ class TouchpadService : AccessibilityService() {
         dispatchPassThrough(
             GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
-                .build()
+                .build(),
+            ms,
         )
     }
 
-    private fun longPressAt(x: Float, y: Float) = tapAt(x, y, prefs.longPressMs.toLong() + 200)
+    /** 光标处长按：按住时长可在设置里调（300–3000 ms）。 */
+    private fun longPressAt(x: Float, y: Float) = tapAt(x, y, prefs.cursorHoldMs.toLong())
 
     private fun customSwipeAt(startX: Float, startY: Float, endX: Float, endY: Float, ms: Long = 320) {
         val swipe = customSwipeFrom(startX, startY, endX, endY, dp(12).toFloat()) ?: return
@@ -1025,49 +1058,118 @@ class TouchpadService : AccessibilityService() {
 
     private fun startDrag() {
         dragging = true
-        lastDragX = cursorX
-        lastDragY = cursorY
-        val path = Path().apply {
-            // A continued stroke must start exactly where the previous one ends.
-            moveTo(cursorX, cursorY)
-        }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 1, true)
-        activeStroke = stroke
-        dispatch(GestureDescription.Builder().addStroke(stroke).build())
-        haptic()
+        dragTrail.clear()
+        dragTrail += TrailPoint(cursorX, cursorY)
+        showDragMarker(cursorX, cursorY)
+        refreshDragButtons()
     }
 
-    private fun moveDragTo(x: Float, y: Float) {
-        val prev = activeStroke ?: return
-        val path = Path().apply {
-            moveTo(lastDragX, lastDragY)
-            lineTo(x, y)
-        }
-        val next = runCatching { prev.continueStroke(path, 0, 1, true) }.getOrNull() ?: return
-        activeStroke = next
-        dispatch(GestureDescription.Builder().addStroke(next).build())
-        lastDragX = x
-        lastDragY = y
-    }
-
-    private fun endDrag() {
-        val prev = activeStroke
+    /** 放弃拖拽（不注入任何手势）。 */
+    private fun cancelDrag() {
         dragging = false
-        activeStroke = null
-        if (prev != null) {
-            val path = Path().apply {
-                moveTo(lastDragX, lastDragY)
-                lineTo(lastDragX + 1, lastDragY + 1)
-            }
-            runCatching {
-                dispatch(
-                    GestureDescription.Builder()
-                        .addStroke(prev.continueStroke(path, 0, 1, false))
-                        .build()
-                )
+        dragTrail.clear()
+        hideDragMarker()
+        refreshDragButtons()
+    }
+
+    /**
+     * 第二次按下拖拽锁定：在起点按住 [Prefs.cursorHoldMs]，再沿记录的轨迹拖到当前光标，松开。
+     * 两段用 continueStroke 连成同一根手指，目标应用看到的是「长按后拖动」。
+     */
+    private fun endDrag() {
+        appendTrailPoint(dragTrail, cursorX, cursorY, 0.5f)
+        val trail = dragTrail.toList()
+        cancelDrag()
+        val start = trail.firstOrNull() ?: return
+        // 没移动就再按一次 = 取消
+        if (trailLength(trail) < dp(8)) return
+        val hold = prefs.cursorHoldMs.toLong()
+        val moveMs = dragMoveDurationMs(trailLength(trail))
+        val holdPath = Path().apply { moveTo(start.x, start.y) }
+        val holdStroke = GestureDescription.StrokeDescription(holdPath, 0, hold, true)
+        val movePath = Path().apply {
+            moveTo(start.x, start.y)
+            trail.drop(1).forEach { lineTo(it.x, it.y) }
+        }
+        val moveStroke = runCatching { holdStroke.continueStroke(movePath, 0, moveMs, false) }.getOrNull()
+        if (moveStroke == null) {
+            // 极少数机型不支持续接：退化为一笔「慢速拖动」
+            dispatchPassThrough(GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(movePath, 0, hold + moveMs)).build(), hold + moveMs)
+            return
+        }
+        // 面板先变成不可触摸，整个过程（按住 + 拖动）结束后再恢复
+        beginPassThrough(hold + moveMs)
+        main.postDelayed({
+            val ok = runCatching {
+                dispatchGesture(GestureDescription.Builder().addStroke(holdStroke).build(), object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        val ok2 = runCatching {
+                            dispatchGesture(GestureDescription.Builder().addStroke(moveStroke).build(), object : GestureResultCallback() {
+                                override fun onCompleted(gestureDescription: GestureDescription?) { endPassThrough() }
+                                override fun onCancelled(gestureDescription: GestureDescription?) { endPassThrough() }
+                            }, main)
+                        }.getOrDefault(false)
+                        if (!ok2) endPassThrough()
+                    }
+                    override fun onCancelled(gestureDescription: GestureDescription?) { endPassThrough() }
+                }, main)
+            }.getOrDefault(false)
+            if (!ok) endPassThrough()
+        }, OVERLAY_PASS_THROUGH_DELAY_MS)
+    }
+
+    /** 起点标记：一个陶土色小圆环，告诉用户拖拽从哪里开始。不接收触摸。 */
+    private fun showDragMarker(x: Float, y: Float) {
+        hideDragMarker()
+        val size = dp(22)
+        val accent = if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+        val v = View(this).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor((accent and 0x00FFFFFF) or 0x33000000)
+                setStroke(dp(2), accent)
             }
         }
-        haptic()
+        val lp = WindowManager.LayoutParams(
+            size, size,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            this.x = (x - size / 2f).roundToInt()
+            this.y = (y - size / 2f).roundToInt()
+            windowAnimations = 0
+        }
+        runCatching { wm.addView(v, lp) }
+        dragMarker = v
+    }
+
+    private fun hideDragMarker() {
+        dragMarker?.let { runCatching { wm.removeView(it) } }
+        dragMarker = null
+    }
+
+    /** 拖拽进行中，面板上的「拖拽锁定」按钮改成陶土色，提示再按一次结束。 */
+    private fun refreshDragButtons() {
+        val dark = if (this::prefs.isInitialized) isDarkTheme() else false
+        val p = palette(dark)
+        actionViews.forEachIndexed { index, view ->
+            val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
+            if (prefs.buttons.getOrNull(slot) != PadAction.DRAG_LOCK) return@forEachIndexed
+            val iv = view as? ImageView ?: return@forEachIndexed
+            if (dragging) {
+                iv.background = circleBackground(p.gripTop, p.gripBottom, p.gripStroke, p.ripple)
+                iv.imageTintList = ColorStateList.valueOf(p.gripText)
+            } else {
+                iv.background = circleBackground(p.buttonTop, p.buttonBottom, p.buttonStroke, p.ripple)
+                iv.imageTintList = ColorStateList.valueOf(p.buttonText)
+            }
+        }
     }
 
     // ───────────────────────── 动作派发 ─────────────────────────
