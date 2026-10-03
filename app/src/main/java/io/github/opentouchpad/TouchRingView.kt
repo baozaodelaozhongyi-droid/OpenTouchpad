@@ -200,7 +200,7 @@ class TouchRingView(context: Context) : View(context) {
 
     companion object {
         const val EXPAND_MS = 280L
-        const val TAP_HOLD_MS = 120L
+        const val TAP_HOLD_MS = 60L
         const val COLLAPSE_MS = 180L
         private const val MIN_COLLAPSE_MS = 80L
         private const val FILL_ALPHA = 0.18f
