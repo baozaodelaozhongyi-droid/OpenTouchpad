@@ -11,6 +11,16 @@ class Prefs(ctx: Context) {
         migrateCompactLayout()
         migrateUniformGrid()
         migrateWarmColors()
+        migrateDarkCursor()
+    }
+
+    /** v0.5.3：光标默认改成暖黑实心箭头 + 白色描边。还在用旧默认（象牙白）的用户一起换掉，只执行一次。 */
+    private fun migrateDarkCursor() {
+        if (sp.getBoolean("darkCursorV053", false)) return
+        val e = sp.edit().putBoolean("darkCursorV053", true)
+        val c = sp.getInt("cursorColor", 0xFFFAF9F5.toInt())
+        if (c == 0xFFFAF9F5.toInt() || c == 0xFFFFFFFF.toInt()) e.putInt("cursorColor", 0xFF141413.toInt())
+        e.apply()
     }
 
     /** v0.5.1：光标颜色换成暖色系，旧的高饱和色映射到最接近的新颜色。只执行一次。 */
@@ -83,7 +93,7 @@ class Prefs(ctx: Context) {
         set(v) = sp.edit().putInt("cursorOpacity", v).apply()
 
     var cursorColor: Int
-        get() = sp.getInt("cursorColor", 0xFFFAF9F5.toInt())
+        get() = sp.getInt("cursorColor", 0xFF141413.toInt())
         set(v) = sp.edit().putInt("cursorColor", v).apply()
 
     // ── 触控板 ──

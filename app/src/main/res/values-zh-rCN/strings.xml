@@ -83,8 +83,6 @@
     <string name="switch_haptics">震动反馈</string>
     <string name="switch_autohide_landscape">横屏时隐藏触控板</string>
     <string name="switch_minimize_keyboard">键盘弹出时最小化</string>
-
-    <string name="btn_toggle_panel">显示／隐藏触控板</string>
     <string name="btn_reset_position">重置触控板位置</string>
     <string name="btn_reset_all">恢复默认设置</string>
     <string name="btn_tutorial">测试清单</string>
@@ -98,7 +96,7 @@
     <string name="reset_done">已恢复默认设置</string>
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
     <string name="switch_hide_ball">隐藏悬浮球</string>
-    <string name="hide_ball_hint">开启后收起触控板不显示悬浮球，可在本页点「显示／隐藏触控板」重新展开。</string>
+    <string name="hide_ball_hint">开启后收起触控板不显示悬浮球，可在本页打开「显示触控板」重新展开。</string>
     <string name="set_cursor_opacity">光标透明度</string>
     <string name="set_ball_color">悬浮球颜色</string>
     <string name="color_default">跟随主题</string>
@@ -124,4 +122,6 @@
     <string name="set_cursor_hold">光标处长按时长</string>
     <string name="cursor_hold_hint">「光标处长按」按住的时间；拖拽锁定也会先在起点按住这么久再拖动。最长 3 秒。</string>
     <string name="drag_lock_hint">拖拽锁定：按一次记下起点（出现陶土色圆环），移动光标到终点，再按一次执行拖动；没移动就再按一次 = 取消。</string>
+    <string name="switch_show_panel">显示触控板</string>
+    <string name="switch_show_panel_hint">关闭后收起成悬浮球；点悬浮球也能重新展开。</string>
 </resources>

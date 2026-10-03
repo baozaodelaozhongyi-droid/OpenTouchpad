@@ -38,6 +38,8 @@ class MainActivity : Activity() {
     private lateinit var prefs: Prefs
     private lateinit var statusView: TextView
     private lateinit var content: LinearLayout
+    private lateinit var scroller: ScrollView
+    private var showPanelSwitch: Switch? = null
     private var darkUi = false
 
     // 暖色调配色（参考 Claude 官网）：羊皮纸底色 + 象牙白卡片 + 陶土橙强调色；所有灰色都带暖黄底调。
@@ -92,11 +94,30 @@ class MainActivity : Activity() {
             insets
         }
         setContentView(root)
+        val savedScroll = savedInstanceState?.getInt(KEY_SCROLL_Y, 0) ?: 0
+        if (savedScroll > 0) {
+            // 等内容测量完再滚动，否则 ScrollView 还没有可滚动高度
+            scroller.viewTreeObserver.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                override fun onGlobalLayout() {
+                    scroller.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                    scroller.scrollTo(0, savedScroll)
+                }
+            })
+        }
     }
 
     override fun onResume() {
         super.onResume()
         updateStatus()
+        // 用户可能在面板上点了收起/展开，回到设置页时同步开关（不触发回调）
+        showPanelSwitch?.let { sw ->
+            val shown = !prefs.minimized
+            if (sw.isChecked != shown) {
+                sw.tag = SYNCING
+                sw.isChecked = shown
+                sw.tag = null
+            }
+        }
     }
 
     // ───────────────────────── 界面骨架 ─────────────────────────
@@ -126,8 +147,14 @@ class MainActivity : Activity() {
             slider(getString(R.string.set_pad_height), 0, CONTROL_EXTRA_HEIGHT_MAX_DP, prefs.extraHeightDp.coerceIn(0, CONTROL_EXTRA_HEIGHT_MAX_DP), unit = "dp",
                 hint = getString(R.string.pad_height_hint), onChange = { prefs.extraHeightDp = it; reload() }),
             slider(getString(R.string.set_opacity), 20, 100, prefs.opacityPercent, unit = "%", onChange = { prefs.opacityPercent = it; reload() }),
-            actionRow(getString(R.string.btn_toggle_panel)) {
-                TouchpadService.instance?.toggleMinimize() ?: toast(getString(R.string.status_off))
+            switchRow(getString(R.string.switch_show_panel), !prefs.minimized, hint = getString(R.string.switch_show_panel_hint),
+                bind = { showPanelSwitch = it }) { show ->
+                val svc = TouchpadService.instance
+                if (svc == null) {
+                    toast(getString(R.string.status_off))
+                } else if (show == prefs.minimized) {
+                    svc.toggleMinimize()
+                }
             },
             actionRow(getString(R.string.btn_reset_position)) {
                 prefs.padX = -1
@@ -193,7 +220,7 @@ class MainActivity : Activity() {
                 prefs.resetAll()
                 toast(getString(R.string.reset_done))
                 reload()
-                recreate()
+                recreateKeepingScroll()
             },
         ))
 
@@ -206,6 +233,9 @@ class MainActivity : Activity() {
         })
 
         return ScrollView(this).apply {
+            scroller = this
+            // 固定 id：系统重建（换主题/换颜色后的 recreate）时会自动保存并恢复滚动位置
+            id = R.id.settings_scroll
             setBackgroundColor(pageColor)
             isFillViewport = true
             isVerticalScrollBarEnabled = false
@@ -371,7 +401,7 @@ class MainActivity : Activity() {
                     if (prefs.themeMode != mode) {
                         prefs.themeMode = mode
                         reload()
-                        recreate()
+                        recreateKeepingScroll()
                     }
                 }
             }, LinearLayout.LayoutParams(0, dp(42), 1f))
@@ -439,7 +469,13 @@ class MainActivity : Activity() {
         return box
     }
 
-    private fun switchRow(title: String, checked: Boolean, hint: String? = null, onChange: (Boolean) -> Unit): View {
+    private fun switchRow(
+        title: String,
+        checked: Boolean,
+        hint: String? = null,
+        bind: ((Switch) -> Unit)? = null,
+        onChange: (Boolean) -> Unit,
+    ): View {
         val sw = Switch(this).apply {
             isChecked = checked
             thumbTintList = ColorStateList(
@@ -451,13 +487,14 @@ class MainActivity : Activity() {
                 intArrayOf(accentSoftStrongColor, trackStrongColor),
             )
             contentDescription = title
-            setOnCheckedChangeListener { _, value -> onChange(value) }
+            setOnCheckedChangeListener { v, value -> if (v.tag !== SYNCING) onChange(value) }
         }
         val texts = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(titleText(title))
             if (hint != null) addView(hintText(hint))
         }
+        bind?.invoke(sw)
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -509,7 +546,7 @@ class MainActivity : Activity() {
                 setOnClickListener {
                     set(color)
                     reload()
-                    recreate()
+                    recreateKeepingScroll()
                 }
             }
             row.addView(swatch, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
@@ -609,7 +646,7 @@ class MainActivity : Activity() {
             list[index] = picked
             prefs.buttons = list
             reload()
-            recreate()
+            recreateKeepingScroll()
         }.show()
     }
 
@@ -659,6 +696,22 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * 换主题、换颜色、换按钮动作后需要重建界面。recreate() 会把页面滚回顶部，
+     * 这里先记下滚动位置，重建后再滚回去。
+     */
+    private fun recreateKeepingScroll() {
+        pendingScrollY = scroller.scrollY
+        recreate()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt(KEY_SCROLL_Y, if (pendingScrollY >= 0) pendingScrollY else scroller.scrollY)
+    }
+
+    private var pendingScrollY = -1
+
     private fun reload() {
         TouchpadService.instance?.reload()
     }
@@ -673,9 +726,12 @@ class MainActivity : Activity() {
         if (density > 0f) (v / density).roundToInt() else v
 
     private companion object {
-        /** 和设置页同一套暖色：象牙白、暖黑、陶土、珊瑚、沙色、橄榄绿、雾蓝。 */
+        const val KEY_SCROLL_Y = "settings_scroll_y"
+        val SYNCING = Any()
+
+        /** 和设置页同一套暖色：暖黑（默认）、象牙白、陶土、珊瑚、沙色、橄榄绿、雾蓝。 */
         val CURSOR_COLORS = listOf(
-            0xFFFAF9F5.toInt(), 0xFF141413.toInt(), 0xFFC96442.toInt(), 0xFFD97757.toInt(),
+            0xFF141413.toInt(), 0xFFFAF9F5.toInt(), 0xFFC96442.toInt(), 0xFFD97757.toInt(),
             0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(),
         )
         /** 0 = 跟随主题的默认陶土色。 */

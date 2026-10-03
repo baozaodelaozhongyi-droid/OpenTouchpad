@@ -163,6 +163,7 @@ class TouchpadService : AccessibilityService() {
         cancelDwell()
         instance = null
         cancelDrag()
+        removeTouchRing()
         cancelTransitions()
         removePanel()
         cursorView?.let { runCatching { wm.removeView(it) } }
@@ -206,6 +207,7 @@ class TouchpadService : AccessibilityService() {
     /** 设置界面改完之后调用：重建所有视图。 */
     fun reload() {
         prefs = Prefs(this)
+        removeTouchRing()
         buildCursor()
         buildPanel()
         updateCursor()
@@ -1014,6 +1016,7 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun tapAt(x: Float, y: Float, ms: Long = 50) {
+        showTouchRing(x, y, ms)
         val path = Path().apply { moveTo(x, y) }
         dispatchPassThrough(
             GestureDescription.Builder()
@@ -1085,6 +1088,7 @@ class TouchpadService : AccessibilityService() {
         if (trailLength(trail) < dp(8)) return
         val hold = prefs.cursorHoldMs.toLong()
         val moveMs = dragMoveDurationMs(trailLength(trail))
+        showTouchRing(start.x, start.y, hold)
         val holdPath = Path().apply { moveTo(start.x, start.y) }
         val holdStroke = GestureDescription.StrokeDescription(holdPath, 0, hold, true)
         val movePath = Path().apply {
@@ -1117,6 +1121,72 @@ class TouchpadService : AccessibilityService() {
             }.getOrDefault(false)
             if (!ok) endPassThrough()
         }, OVERLAY_PASS_THROUGH_DELAY_MS)
+    }
+
+    // ───────────────────────── 点击反馈 ─────────────────────────
+
+    private var touchRing: View? = null
+    private var touchRingParams: WindowManager.LayoutParams? = null
+
+    /**
+     * 每次在光标处点击 / 长按，显示一个陶土色圆环：
+     * 点击时快速放大并淡出；长按时在按住的这段时间里慢慢收紧，松开时再淡出。
+     * 圆环窗口不接收触摸，也不会被注入的手势点到。
+     */
+    private fun showTouchRing(x: Float, y: Float, holdMs: Long) {
+        val size = dp(44)
+        val v = touchRing ?: View(this).also { ring ->
+            val accent = if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+            ring.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor((accent and 0x00FFFFFF) or 0x2E000000)
+                setStroke(dp(2), accent)
+            }
+            ring.alpha = 0f
+            val lp = WindowManager.LayoutParams(
+                size, size,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                windowAnimations = 0
+            }
+            runCatching { wm.addView(ring, lp) }
+            touchRing = ring
+            touchRingParams = lp
+        }
+        val lp = touchRingParams ?: return
+        lp.x = (x - size / 2f).roundToInt()
+        lp.y = (y - size / 2f).roundToInt()
+        v.animate().cancel()
+        // 重新 add 一次，让圆环始终叠在面板和光标之上
+        runCatching { wm.removeViewImmediate(v) }
+        runCatching { wm.addView(v, lp) }
+        val longPress = holdMs >= 250
+        if (longPress) {
+            v.alpha = 0.95f; v.scaleX = 1.25f; v.scaleY = 1.25f
+            v.animate().scaleX(0.75f).scaleY(0.75f).setDuration(holdMs)
+                .setInterpolator(android.view.animation.LinearInterpolator())
+                .withEndAction {
+                    v.animate().alpha(0f).scaleX(1.1f).scaleY(1.1f).setDuration(180)
+                        .setInterpolator(transitionInterpolator).start()
+                }
+                .start()
+        } else {
+            v.alpha = 0.95f; v.scaleX = 0.45f; v.scaleY = 0.45f
+            v.animate().alpha(0f).scaleX(1.15f).scaleY(1.15f).setDuration(360)
+                .setInterpolator(transitionInterpolator).start()
+        }
+    }
+
+    private fun removeTouchRing() {
+        touchRing?.let { it.animate().cancel(); runCatching { wm.removeView(it) } }
+        touchRing = null
+        touchRingParams = null
     }
 
     /** 起点标记：一个陶土色小圆环，告诉用户拖拽从哪里开始。不接收触摸。 */

@@ -83,8 +83,6 @@
     <string name="switch_haptics">Vibration feedback</string>
     <string name="switch_autohide_landscape">Hide touchpad in landscape</string>
     <string name="switch_minimize_keyboard">Minimize when keyboard opens</string>
-
-    <string name="btn_toggle_panel">Show / hide touchpad</string>
     <string name="btn_reset_position">Reset touchpad position</string>
     <string name="btn_reset_all">Reset all settings</string>
     <string name="btn_tutorial">Test checklist</string>
@@ -98,7 +96,7 @@
     <string name="reset_done">Settings reset</string>
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
     <string name="switch_hide_ball">Hide floating ball</string>
-    <string name="hide_ball_hint">When on, collapsing leaves no floating ball. Use “Show / hide touchpad” here to expand again.</string>
+    <string name="hide_ball_hint">When on, collapsing leaves no floating ball. Turn on "Show touchpad" here to expand again.</string>
     <string name="set_cursor_opacity">Cursor opacity</string>
     <string name="set_ball_color">Floating ball colour</string>
     <string name="color_default">Theme default</string>
@@ -124,4 +122,6 @@
     <string name="set_cursor_hold">Long press at cursor: hold time</string>
     <string name="cursor_hold_hint">How long "Long press at cursor" holds. Drag lock also holds this long at the start point before moving. Up to 3 s.</string>
     <string name="drag_lock_hint">Drag lock: tap once to mark the start (a terracotta ring appears), move the cursor, tap again to drag. Tap again without moving to cancel.</string>
+    <string name="switch_show_panel">Show touchpad</string>
+    <string name="switch_show_panel_hint">Off collapses it to the floating ball; tap the ball to expand again.</string>
 </resources>
