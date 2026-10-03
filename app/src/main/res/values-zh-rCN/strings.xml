@@ -12,8 +12,6 @@
     <string name="cannot_open_settings">无法打开无障碍设置</string>
     <string name="steps_title">开启步骤</string>
     <string name="steps_body">1. 设置 → 无障碍 → OpenTouchpad，打开开关。\n2. 如果被系统拦下（"受限设置"），去 应用信息 → 右上角 ⋮ → 允许受限设置，再试一次。\n3. 回到本页调大小、速度和按钮，调到使用者顺手为止。</string>
-    <string name="tutorial_title">测试清单</string>
-    <string name="tutorial_body">这三个界面是别的触控板 App 会失效的地方（Android 16 会拦掉"未声明为无障碍工具"的应用注入的手势）：\n\n1. 权限弹窗 —— 例如打开 Telegram 点麦克风，然后用触控板按"允许"。\n2. 开发者选项 —— 滚动列表、开关某一项。\n3. Google Play 账号页 —— 滚动、点击。\n\n三个都能用，说明这块触控板干对了它该干的事。</string>
 
     <!-- 面板把手 -->
     <string name="handle_move">⣿ 移动</string>
@@ -78,14 +76,12 @@
     <string name="set_swipe_distance">长滑动距离</string>
     <string name="set_button_radius">按钮圆角</string>
     <string name="set_button_spacing">按钮间距</string>
-    <string name="set_button_text_size">按钮图标大小</string>
 
     <string name="switch_haptics">震动反馈</string>
     <string name="switch_autohide_landscape">横屏时隐藏触控板</string>
     <string name="switch_minimize_keyboard">键盘弹出时最小化</string>
     <string name="btn_reset_position">重置触控板位置</string>
     <string name="btn_reset_all">恢复默认设置</string>
-    <string name="btn_tutorial">测试清单</string>
     <string name="btn_setup">开启步骤</string>
     <string name="btn_github">GitHub 源码</string>
     <string name="btn_edit_buttons">点按钮可改动作（长按面板上的按钮也行）</string>

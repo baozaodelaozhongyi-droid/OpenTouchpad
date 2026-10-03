@@ -174,7 +174,6 @@ class MainActivity : Activity() {
                 addView(hintText(getString(R.string.drag_lock_hint)))
             },
             slider(getString(R.string.set_button_spacing), 0, BUTTON_SPACING_MAX_DP, prefs.buttonSpacingDp, unit = "dp", onChange = { prefs.buttonSpacingDp = it; reload() }),
-            slider(getString(R.string.set_button_text_size), 10, 34, prefs.buttonTextSizeSp, unit = "sp", onChange = { prefs.buttonTextSizeSp = it; reload() }),
         ))
 
         // ── 悬浮球 ──
@@ -215,7 +214,6 @@ class MainActivity : Activity() {
         col.addView(sectionHeader(getString(R.string.sec_about)))
         col.addView(card(
             actionRow(getString(R.string.btn_setup)) { showDialog(getString(R.string.steps_title), getString(R.string.steps_body)) },
-            actionRow(getString(R.string.btn_tutorial)) { showDialog(getString(R.string.tutorial_title), getString(R.string.tutorial_body)) },
             actionRow(getString(R.string.btn_github)) {
                 runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.project_url)))) }
             },

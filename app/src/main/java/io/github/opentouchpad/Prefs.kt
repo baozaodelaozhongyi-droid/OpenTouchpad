@@ -187,10 +187,6 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("buttonSpacing", DEFAULT_BUTTON_SPACING_DP)
         set(v) = sp.edit().putInt("buttonSpacing", v).apply()
 
-    var buttonTextSizeSp: Int
-        get() = sp.getInt("buttonTextSize", 16)
-        set(v) = sp.edit().putInt("buttonTextSize", v).apply()
-
     /** 按键位置，逗号分隔的 PadAction.id；共 [BUTTON_SLOT_COUNT] 个（含四角、移动键、缩放键）。 */
     var buttons: List<PadAction>
         get() = decodeButtonSlots(sp.getString("buttons", null))

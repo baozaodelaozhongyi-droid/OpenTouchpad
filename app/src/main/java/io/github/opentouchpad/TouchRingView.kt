@@ -7,7 +7,6 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.view.View
-import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 
 /**
@@ -151,7 +150,8 @@ class TouchRingView(context: Context) : View(context) {
         phase = Phase.COLLAPSING
         animator = ValueAnimator.ofFloat(from, 0f).apply {
             duration = (COLLAPSE_MS * from).toLong().coerceAtLeast(MIN_COLLAPSE_MS)
-            interpolator = AccelerateInterpolator(1.2f)
+            // 先快后慢：一开始就明显缩小，不会在原地停着不动
+            interpolator = DecelerateInterpolator(1.5f)
             addUpdateListener { progress = it.animatedValue as Float; invalidate() }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
@@ -201,7 +201,7 @@ class TouchRingView(context: Context) : View(context) {
     companion object {
         const val EXPAND_MS = 280L
         const val TAP_HOLD_MS = 120L
-        const val COLLAPSE_MS = 260L
+        const val COLLAPSE_MS = 180L
         private const val MIN_COLLAPSE_MS = 80L
         private const val FILL_ALPHA = 0.18f
     }

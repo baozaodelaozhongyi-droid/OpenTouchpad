@@ -529,8 +529,8 @@ class TouchpadService : AccessibilityService() {
         padArea?.layoutParams = rectParams(layout.pad)
         // 触控板圆角随按钮大小变化，保持和圆形按钮的视觉比例
         (padArea?.background as? GradientDrawable)?.cornerRadius = layout.button * 0.42f
-        // 「按钮图标大小」= 线条图标的边长（dp），最多占按钮直径的 56%
-        val iconPx = minOf(dp(prefs.buttonTextSizeSp), (layout.button * 0.56f).roundToInt()).coerceAtLeast(dp(8))
+        // 图标边长 = 按钮直径的 56%，随按钮大小缩放（原「按钮图标大小」设置被这个上限卡住，基本不起作用，已移除）
+        val iconPx = (layout.button * 0.56f).roundToInt().coerceAtLeast(dp(8))
         val iconInset = ((layout.button - iconPx) / 2).coerceAtLeast(0)
         actionViews.forEachIndexed { index, view ->
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed

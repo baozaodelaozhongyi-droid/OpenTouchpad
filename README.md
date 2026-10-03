@@ -48,7 +48,7 @@ Reference: [Android Developers blog](https://developer.android.com/blog/posts/en
   notification panel · power menu · volume ± · screenshot · keyboard (focus input field) ·
   back · home · recents · settings · hide
 - Auto-hide in landscape, auto-minimise when the keyboard opens
-- Panel opacity, button corner radius, spacing and icon size — all adjustable
+- Panel opacity and button spacing are adjustable; icons scale with the button size
 - Haptic feedback
 - Chinese + English UI
 
@@ -120,7 +120,7 @@ Android 16 引入的 `accessibilityDataSensitive` 与旧的 `setFilterTouchesWhe
   通知栏 · 电源菜单 · 音量± · 截图 · 键盘（聚焦输入框）·
   返回 · 主屏 · 最近任务 · 设置 · 收起
 - 横屏自动隐藏，键盘弹出时自动最小化
-- 透明度、按钮圆角、间距、图标大小全部可调
+- 透明度、按钮间距可调，图标随按钮大小自动缩放
 - 震动反馈
 - 中英双语界面
 
