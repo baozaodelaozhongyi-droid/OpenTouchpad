@@ -41,6 +41,11 @@ enum class PadAction(
     HOME("home", R.string.act_home, "⌂", R.drawable.ic_lu_house),
     RECENTS("recents", R.string.act_recents, "▢", R.drawable.ic_lu_layers_2),
 
+    /** 按住拖动这个键移动整个触控板（不是点一下触发）。至少要保留一个。 */
+    MOVE_PANEL("movepanel", R.string.act_move_panel, "✥", R.drawable.ic_lu_move),
+    /** 按住拖动这个键缩放触控板。 */
+    RESIZE_PANEL("resizepanel", R.string.act_resize_panel, "⤡", R.drawable.ic_lu_move_diagonal_2),
+
     SETTINGS("settings", R.string.act_settings, "⚙", R.drawable.ic_lu_settings),
     MINIMIZE("minimize", R.string.act_minimize, "✕", R.drawable.ic_lu_chevrons_down_up),
     NONE("none", R.string.act_none, "·", R.drawable.ic_lu_plus),
@@ -49,13 +54,17 @@ enum class PadAction(
     companion object {
         fun fromId(id: String?): PadAction? = entries.firstOrNull { it.id == id }
 
-        /** 默认按钮布局，顺序见 [BUTTON_SLOT_COUNT]：上 4、下 4、左 2、右 2、四角。 */
+        /** 默认按钮布局，顺序见 [BUTTON_SLOT_COUNT]：上 4、下 4、左 2、右 2、四角、移动键、缩放键。 */
         val DEFAULT: List<PadAction> = listOf(
             CLICK, LONG_PRESS, DRAG_LOCK, SCROLL_UP, SCROLL_DOWN, NOTIFICATIONS,
             BACK, HOME, RECENTS, KEYBOARD, SCREENSHOT, MINIMIZE,
             SCROLL_LEFT, SCROLL_RIGHT, SWIPE_LEFT, SWIPE_RIGHT,
+            MOVE_PANEL, RESIZE_PANEL,
         )
 
         val ALL: List<PadAction> = entries.toList()
+
+        /** 拖动型按键：按下后跟手拖动，而不是点击触发。 */
+        fun isGrip(a: PadAction) = a == MOVE_PANEL || a == RESIZE_PANEL
     }
 }

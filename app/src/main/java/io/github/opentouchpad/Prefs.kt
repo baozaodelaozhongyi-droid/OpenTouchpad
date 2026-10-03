@@ -191,7 +191,7 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("buttonTextSize", 16)
         set(v) = sp.edit().putInt("buttonTextSize", v).apply()
 
-    /** 按钮槽位，逗号分隔的 PadAction.id；默认 16 个（含四角）。 */
+    /** 按键位置，逗号分隔的 PadAction.id；共 [BUTTON_SLOT_COUNT] 个（含四角、移动键、缩放键）。 */
     var buttons: List<PadAction>
         get() = decodeButtonSlots(sp.getString("buttons", null))
         set(v) = sp.edit().putString("buttons", v.joinToString(",") { it.id }).apply()
@@ -205,6 +205,11 @@ class Prefs(ctx: Context) {
     var cursorHoldMs: Int
         get() = sp.getInt("cursorHoldMs", CURSOR_HOLD_DEFAULT_MS).coerceIn(CURSOR_HOLD_MIN_MS, CURSOR_HOLD_MAX_MS)
         set(v) = sp.edit().putInt("cursorHoldMs", v.coerceIn(CURSOR_HOLD_MIN_MS, CURSOR_HOLD_MAX_MS)).apply()
+
+    /** 边缘触发宽度（dp）：从触控板边缘这一圈（含圆角外侧）开始的触摸整段忽略。0 = 关闭。 */
+    var padEdgeDeadZoneDp: Int
+        get() = sp.getInt("padEdgeDeadZone", PAD_EDGE_DEAD_ZONE_DEFAULT_DP).coerceIn(0, PAD_EDGE_DEAD_ZONE_MAX_DP)
+        set(v) = sp.edit().putInt("padEdgeDeadZone", v.coerceIn(0, PAD_EDGE_DEAD_ZONE_MAX_DP)).apply()
 
     /** 0 = 关闭停留点击；否则为"手指静止这么久就自动点一下"的毫秒数。 */
     var dwellMs: Int

@@ -36,14 +36,14 @@ Reference: [Android Developers blog](https://developer.android.com/blog/posts/en
 ### Features (v0.3)
 
 - Desktop-style arrow cursor with its tip aligned to the actual click coordinate; size and colour adjustable
-- Floating touchpad panel — drag the **move** handle to place it anywhere, drag **resize** to change the overall width and height down to a compact 180dp width, and minimise it to a draggable floating ball
+- Floating touchpad panel — drag any button set to **move touchpad** to place it anywhere, drag any **resize touchpad** button to change the overall width and height down to a compact 180dp width, and minimise it to a draggable floating ball
 - Floating ball size and opacity are adjustable; tap the ball to restore the touchpad
 - Screenshot-style control surface: a large rounded touch area surrounded by circular action buttons; width and height are independently adjustable up to the screen bounds
 - Custom swipe: hold on the touchpad until the long-press vibration, move the cursor, then release to execute one swipe from start to end
 - Single tap / double tap / **long press** / **drag & drop with a lock button** (real "hold", not a fake long press)
 - **Dwell click** (auto click after the finger rests for N ms) — for very limited dexterity
 - Scroll in 4 directions + long swipes in 4 directions
-- **12 configurable buttons**, each bound to any action — long-press a button to re-bind it:
+- **18 configurable button positions**, each bound to any action — long-press a button to re-bind it:
   left click · long press · drag lock · 4 scroll directions · 4 long swipes ·
   notification panel · power menu · volume ± · screenshot · keyboard (focus input field) ·
   back · home · recents · settings · hide
@@ -108,14 +108,14 @@ Android 16 引入的 `accessibilityDataSensitive` 与旧的 `setFilterTouchesWhe
 ### 功能（v0.3）
 
 - 电脑风格箭头光标，箭头尖端与实际点击坐标对齐，可调大小并可选择颜色
-- 悬浮触控板 —— 拖「移动」把手可放到屏幕任何位置，拖「调整大小」可同时改变整体宽高，最窄可调至 180dp，收起后变成可拖动悬浮球
+- 悬浮触控板 —— 拖任意设成「移动触控板」的按钮可放到屏幕任何位置，拖任意「缩放触控板」按钮可同时改变整体宽高，最窄可调至 180dp，收起后变成可拖动悬浮球
 - 悬浮球大小与透明度可调，点击悬浮球即可恢复触控板
 - 截图式控制面板：中央为大号圆角触控区，四周为圆形动作按钮；宽度和高度可独立调节，最大不超过屏幕边界
 - 自定义滑动：在触控板上长按到震动，移动光标，松手后执行从起点到终点的一次滑动
 - 单击 / 双击 / **长按** / **拖拽（带锁定按钮，真正的"按住不放"）**
 - **停留点击**（手指静止 N 毫秒自动点击）—— 适合手部动作非常有限的人
 - 四方向滚动 + 四方向长滑动
-- **12 个可自定义按钮**（长按面板上的按钮即可改绑）：
+- **18 个可自定义按键位置**（长按面板上的按钮即可改绑）：
   左键 · 长按 · 拖拽锁定 · 四方向滚动 · 四方向长滑 ·
   通知栏 · 电源菜单 · 音量± · 截图 · 键盘（聚焦输入框）·
   返回 · 主屏 · 最近任务 · 设置 · 收起

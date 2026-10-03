@@ -198,6 +198,9 @@ class MainActivity : Activity() {
         col.addView(sectionHeader(getString(R.string.sec_feel)))
         col.addView(card(
             slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt(), format = { String.format(java.util.Locale.US, "%.1f×", it / 10f) }) { prefs.sensitivity = it / 10f },
+            slider(getString(R.string.set_pad_dead_zone), 0, PAD_EDGE_DEAD_ZONE_MAX_DP, prefs.padEdgeDeadZoneDp, unit = "dp",
+                offLabel = getString(R.string.dwell_off), hint = getString(R.string.pad_dead_zone_hint),
+                onChange = { prefs.padEdgeDeadZoneDp = it }),
             slider(getString(R.string.set_long_press), 200, 1500, prefs.longPressMs, unit = "ms", onChange = { prefs.longPressMs = it }),
             slider(getString(R.string.set_cursor_hold), CURSOR_HOLD_MIN_MS, CURSOR_HOLD_MAX_MS, prefs.cursorHoldMs, unit = "ms",
                 hint = getString(R.string.cursor_hold_hint), onChange = { prefs.cursorHoldMs = it }),
@@ -566,16 +569,14 @@ class MainActivity : Activity() {
 
     /**
      * 按钮槽位编辑：画一张和真实面板同布局的缩略图（6 列 × 5 行），
-     * 中间是触控板，左列顶部是移动键、右列底部是缩放键，点任意按钮改动作。
+     * 中间是触控板；移动键、缩放键（陶土色）也是普通槽位，点任意按钮都能改动作。
      */
     private fun buttonSlotMap(): View {
         val slots = prefs.buttons.toMutableList()
         while (slots.size < BUTTON_SLOT_COUNT) slots.add(PadAction.NONE)
         val positions = resources.getStringArray(R.array.slot_positions)
-        // 槽位 → (列, 行)，和 computeControlLayout 的顺序一致
-        val cells = (1..4).map { it to 0 } + (1..4).map { it to 4 } +
-            listOf(0 to 2, 0 to 3, 5 to 1, 5 to 2) +
-            listOf(0 to 0, 5 to 0, 0 to 4, 5 to 4)
+        // 槽位 → (列, 行)，和 computeControlLayout 的顺序一致（单元测试里核对）
+        val cells = BUTTON_SLOT_CELLS
         val gap = dp(6)
         val available = resources.displayMetrics.widthPixels - dp(16) * 2 - dp(16) * 2
         val cell = ((available - 5 * gap) / 6).coerceAtMost(dp(52))
@@ -591,35 +592,38 @@ class MainActivity : Activity() {
             background = borderedSurface(trackColor, borderColor, 16)
         }, 1, 1, 4 * cell + 3 * gap, 3 * cell + 2 * gap)
         val iconPad = (cell * 0.26f).roundToInt()
-        fun grip(iconRes: Int, c: Int, r: Int, desc: String) = place(ImageView(this).apply {
-            setImageResource(iconRes)
-            imageTintList = ColorStateList.valueOf(accentColor)
-            setPadding(iconPad, iconPad, iconPad, iconPad)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(accentSoftColor)
-                setStroke(maxOf(1, dp(1)), accentSoftStrongColor)
-            }
-            contentDescription = desc
-        }, c, r)
-        grip(R.drawable.ic_lu_move, 0, 1, getString(R.string.handle_move))
-        grip(R.drawable.ic_lu_move_diagonal_2, 5, 3, getString(R.string.handle_resize))
         slots.take(BUTTON_SLOT_COUNT).forEachIndexed { index, action ->
             val (c, r) = cells[index]
             val empty = action == PadAction.NONE
+            val grip = PadAction.isGrip(action)
             place(ImageView(this).apply {
                 setImageResource(action.iconRes)
-                imageTintList = ColorStateList.valueOf(if (empty) tertiaryTextColor else textColor)
+                imageTintList = ColorStateList.valueOf(when {
+                    empty -> tertiaryTextColor
+                    grip -> accentColor
+                    else -> textColor
+                })
                 setPadding(iconPad, iconPad, iconPad, iconPad)
                 val face = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(if (empty) Color.TRANSPARENT else elevatedColor)
-                    setStroke(maxOf(1, dp(1) / 2), if (empty) tertiaryTextColor else borderColor)
-                    if (empty) setStroke(maxOf(1, dp(1) / 2), tertiaryTextColor, dp(3).toFloat(), dp(3).toFloat())
+                    when {
+                        empty -> {
+                            setColor(Color.TRANSPARENT)
+                            setStroke(maxOf(1, dp(1) / 2), tertiaryTextColor, dp(3).toFloat(), dp(3).toFloat())
+                        }
+                        grip -> {
+                            setColor(accentSoftColor)
+                            setStroke(maxOf(1, dp(1)), accentSoftStrongColor)
+                        }
+                        else -> {
+                            setColor(elevatedColor)
+                            setStroke(maxOf(1, dp(1) / 2), borderColor)
+                        }
+                    }
                 }
                 background = RippleDrawable(ColorStateList.valueOf(rippleColor), face,
                     GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) })
-                if (!empty) elevation = dp(1).toFloat()
+                if (!empty && !grip) elevation = dp(1).toFloat()
                 isClickable = true
                 contentDescription = "${positions.getOrElse(index) { "${index + 1}" }}: ${getString(action.labelRes)}"
                 setOnClickListener { pickAction(index, action) }
@@ -641,9 +645,11 @@ class MainActivity : Activity() {
 
     private fun pickAction(index: Int, current: PadAction) {
         ActionPicker.build(this, darkUi, current) { picked ->
-            val list = prefs.buttons.toMutableList()
-            while (list.size <= index) list.add(PadAction.NONE)
-            list[index] = picked
+            val list = replaceSlot(prefs.buttons, index, picked)
+            if (list == null) {
+                toast(getString(R.string.need_move_key))
+                return@build
+            }
             prefs.buttons = list
             reload()
             recreateKeepingScroll()

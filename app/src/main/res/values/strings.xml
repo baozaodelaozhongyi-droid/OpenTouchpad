@@ -117,11 +117,18 @@
         <item>Top-right corner</item>
         <item>Bottom-left corner</item>
         <item>Bottom-right corner</item>
+        <item>Left column, upper (default: move)</item>
+        <item>Right column, lower (default: resize)</item>
     </string-array>
     <string name="pad_height_hint">Width sets the button size. At 0 extra height the panel is a compact grid with equal gaps everywhere; more height only makes the touchpad taller.</string>
     <string name="set_cursor_hold">Long press at cursor: hold time</string>
     <string name="cursor_hold_hint">How long "Long press at cursor" holds. Drag lock also holds this long at the start point before moving. Up to 3 s.</string>
-    <string name="drag_lock_hint">Drag lock: tap once to mark the start (a terracotta ring appears), move the cursor, tap again to drag. Tap again without moving to cancel.</string>
+    <string name="drag_lock_hint">Drag lock: tap once to mark the start; a terracotta ring appears at the cursor and follows it. Move to the end point and tap again to drag; the ring shrinks there. Tap again without moving to cancel.</string>
     <string name="switch_show_panel">Show touchpad</string>
     <string name="switch_show_panel_hint">Off collapses it to the floating ball; tap the ball to expand again.</string>
+    <string name="act_move_panel">Move touchpad</string>
+    <string name="act_resize_panel">Resize touchpad</string>
+    <string name="need_move_key">This is the last move key and can\'t be changed. Set another position to “Move touchpad” first.</string>
+    <string name="set_pad_dead_zone">Edge trigger width</string>
+    <string name="pad_dead_zone_hint">A touch that starts in this band along the touchpad edge (including outside the rounded corners) is ignored entirely, so pressing a nearby button doesn\'t hit the pad. 0 = off.</string>
 </resources>

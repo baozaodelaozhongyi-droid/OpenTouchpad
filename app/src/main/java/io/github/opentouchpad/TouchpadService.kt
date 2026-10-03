@@ -45,6 +45,8 @@ class TouchpadService : AccessibilityService() {
 
     companion object {
         private const val OVERLAY_PASS_THROUGH_DELAY_MS = 40L
+        /** 反馈圆环最大半径（dp）：规格要求直径约 22dp，所以半径 11dp。 */
+        private const val TOUCH_RING_RADIUS_DP = 11
 
         @Volatile
         var instance: TouchpadService? = null
@@ -61,8 +63,6 @@ class TouchpadService : AccessibilityService() {
     private var miniBallView: View? = null
     private val actionViews = mutableListOf<View>()
     private val actionSlots = mutableListOf<Int>()
-    private var moveGripView: View? = null
-    private var resizeGripView: View? = null
 
     private var cursorView: View? = null
     private var cursorParams: WindowManager.LayoutParams? = null
@@ -93,7 +93,6 @@ class TouchpadService : AccessibilityService() {
     // 结果只剩一次点击（旧版本的问题）。
     private var dragging = false
     private val dragTrail = mutableListOf<TrailPoint>()
-    private var dragMarker: View? = null
 
     // 面板拖动 / 缩放
     private var movingPanel = false
@@ -127,6 +126,8 @@ class TouchpadService : AccessibilityService() {
             customSwipeEndX = cursorX
             customSwipeEndY = cursorY
             cancelDwell()
+            moveTouchRing(cursorX, cursorY)
+            touchRing?.pressUntilRelease()
             haptic()
         }
     }
@@ -278,6 +279,7 @@ class TouchpadService : AccessibilityService() {
             addFullPanel()
         }
         enteringWithTransition = false
+        raiseTouchRing()
         if (outgoing != null) playTransition(outgoing)
     }
 
@@ -381,7 +383,7 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun removePanel() {
-        // 拖拽锁定状态（起点标记）跨面板重建保留，不在这里结束
+        // 拖拽锁定状态（以及跟随光标的圆环）跨面板重建保留，不在这里结束
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
         panelParams = null
@@ -389,8 +391,6 @@ class TouchpadService : AccessibilityService() {
         padArea = null
         actionViews.clear()
         actionSlots.clear()
-        moveGripView = null
-        resizeGripView = null
         main.removeCallbacks(restoreTouchRunnable)
         passThroughCount = 0
         movingPanel = false
@@ -455,7 +455,7 @@ class TouchpadService : AccessibilityService() {
         }.coerceIn(widthRange.first, widthRange.last)
         val heightPx = panelHeightFor(widthPx)
 
-        // 根容器本身不处理触摸：只有左侧列顶部的移动键可以拖动面板。
+        // 根容器本身不处理触摸：只有设成「移动触控板」的按键可以拖动面板。
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
             contentDescription = getString(R.string.control_surface_content_description)
@@ -470,22 +470,20 @@ class TouchpadService : AccessibilityService() {
         root.addView(pad)
 
         // 槽位与布局一一对应；设为「无」的槽位留空，不会让后面的按钮挪位。
+        // 移动键、缩放键也是普通槽位里的一种动作，可以放到 18 个位置里的任意一个。
         prefs.buttons.take(BUTTON_SLOT_COUNT).forEachIndexed { slot, action ->
-            if (action == PadAction.NONE) return@forEachIndexed
-            val button = makeActionButton(slot, action, dark)
+            val button = when (action) {
+                PadAction.NONE -> return@forEachIndexed
+                PadAction.MOVE_PANEL -> makeHandle(action.iconRes, dark) { v, e -> handleMoveTouch(v, e) }
+                    .also { it.contentDescription = getString(R.string.act_move_panel) }
+                PadAction.RESIZE_PANEL -> makeHandle(action.iconRes, dark) { v, e -> handleResizeTouch(v, e) }
+                    .also { it.contentDescription = getString(R.string.act_resize_panel) }
+                else -> makeActionButton(slot, action, dark)
+            }
             actionViews += button
             actionSlots += slot
             root.addView(button)
         }
-
-        val moveGrip = makeHandle(R.drawable.ic_lu_move, dark) { v, e -> handleMoveTouch(v, e) }
-        moveGrip.contentDescription = getString(R.string.handle_move)
-        root.addView(moveGrip)
-        moveGripView = moveGrip
-        val resizeGrip = makeHandle(R.drawable.ic_lu_move_diagonal_2, dark) { v, e -> handleResizeTouch(v, e) }
-        resizeGrip.contentDescription = getString(R.string.handle_resize)
-        root.addView(resizeGrip)
-        resizeGripView = resizeGrip
         layoutControlChildren(root, widthPx, heightPx)
         refreshDragButtons()
 
@@ -539,8 +537,7 @@ class TouchpadService : AccessibilityService() {
             view.layoutParams = rectParams(layout.slots[slot])
             view.setPadding(iconInset, iconInset, iconInset, iconInset)
         }
-        moveGripView?.let { it.layoutParams = rectParams(layout.moveGrip); it.setPadding(iconInset, iconInset, iconInset, iconInset) }
-        resizeGripView?.let { it.layoutParams = rectParams(layout.resizeGrip); it.setPadding(iconInset, iconInset, iconInset, iconInset) }
+        padCornerRadius = layout.button * 0.42f
         root.requestLayout()
     }
 
@@ -708,9 +705,11 @@ class TouchpadService : AccessibilityService() {
 
     private fun showActionPicker(slot: Int, current: PadAction) {
         val dialog = ActionPicker.build(this, isDarkTheme(), current) { picked ->
-            val list = prefs.buttons.toMutableList()
-            while (list.size <= slot) list.add(PadAction.NONE)
-            list[slot] = picked
+            val list = replaceSlot(prefs.buttons, slot, picked)
+            if (list == null) {
+                toast(getString(R.string.need_move_key))
+                return@build
+            }
             prefs.buttons = list
             buildPanel()
         }
@@ -720,8 +719,26 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 触控板手势 ─────────────────────────
 
+    private var padCornerRadius = 0f
+    /**
+     * 这次触摸是从触控板边缘那一圈（含圆角外侧）开始的：整段忽略，防止按旁边按钮时误碰。
+     * v0.5.3 及以前，触控板 View 的整个矩形（包括圆角外侧的四个小角）都响应，紧挨着按钮只隔一个按钮间距。
+     */
+    private var padTouchIgnored = false
+
     private fun handlePadTouch(e: MotionEvent) {
         val slop = dp(6).toFloat()
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+            val pad = padArea
+            padTouchIgnored = pad != null && !insideTouchArea(
+                e.x, e.y, pad.width.toFloat(), pad.height.toFloat(), padCornerRadius,
+                dp(prefs.padEdgeDeadZoneDp).toFloat(),
+            )
+        }
+        if (padTouchIgnored) {
+            if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) padTouchIgnored = false
+            return
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downRawX = e.rawX; downRawY = e.rawY
@@ -759,8 +776,12 @@ class TouchpadService : AccessibilityService() {
                 if (customSwipeArmed) {
                     customSwipeEndX = cursorX
                     customSwipeEndY = cursorY
+                    moveTouchRing(cursorX, cursorY)
                 }
-                if (dragging) appendTrailPoint(dragTrail, cursorX, cursorY, dp(4).toFloat())
+                if (dragging) {
+                    appendTrailPoint(dragTrail, cursorX, cursorY, dp(4).toFloat())
+                    moveTouchRing(cursorX, cursorY)
+                }
                 scheduleDwell()
             }
 
@@ -769,10 +790,15 @@ class TouchpadService : AccessibilityService() {
                 cancelDwell()
                 val distance = kotlin.math.hypot(customSwipeEndX - customSwipeStartX, customSwipeEndY - customSwipeStartY)
                 if (dragging) {
+                    // 拖拽锁定期间圆环继续跟着光标，等第二次按拖拽锁定再收缩
                     customSwipeArmed = false
                     return
                 }
-                when (resolvePadTouchOutcome(longPressFired, dwellFired, moved, distance, dp(12).toFloat())) {
+                val outcome = resolvePadTouchOutcome(longPressFired, dwellFired, moved, distance, dp(12).toFloat())
+                // 原地长按：圆环从当前大小接着走完注入的长按再收缩（longPressAt），不先收起再长出来；
+                // 其他情况（自定义滑动、移动太短）在终点收缩
+                if (customSwipeArmed && outcome != PadTouchOutcome.LONG_PRESS) touchRing?.release()
+                when (outcome) {
                     PadTouchOutcome.CUSTOM_SWIPE -> customSwipeAt(customSwipeStartX, customSwipeStartY, customSwipeEndX, customSwipeEndY)
                     PadTouchOutcome.LONG_PRESS -> longPressAt(cursorX, cursorY)
                     PadTouchOutcome.CLICK -> tapOrDouble()
@@ -784,6 +810,7 @@ class TouchpadService : AccessibilityService() {
             MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(longPressRunnable)
                 cancelDwell()
+                if (customSwipeArmed) touchRing?.release()
                 customSwipeArmed = false
             }
         }
@@ -1063,32 +1090,35 @@ class TouchpadService : AccessibilityService() {
         dragging = true
         dragTrail.clear()
         dragTrail += TrailPoint(cursorX, cursorY)
-        showDragMarker(cursorX, cursorY)
+        // 起点显示长按圆环，之后跟着光标走（handlePadTouch 的 ACTION_MOVE）
+        moveTouchRing(cursorX, cursorY)
+        touchRing?.pressUntilRelease()
         refreshDragButtons()
     }
 
-    /** 放弃拖拽（不注入任何手势）。 */
+    /** 结束拖拽状态（不注入任何手势），圆环在当前位置收缩。 */
     private fun cancelDrag() {
         dragging = false
         dragTrail.clear()
-        hideDragMarker()
+        touchRing?.release()
         refreshDragButtons()
     }
 
     /**
      * 第二次按下拖拽锁定：在起点按住 [Prefs.cursorHoldMs]，再沿记录的轨迹拖到当前光标，松开。
      * 两段用 continueStroke 连成同一根手指，目标应用看到的是「长按后拖动」。
+     * 跟随光标的圆环在终点收缩。
      */
     private fun endDrag() {
         appendTrailPoint(dragTrail, cursorX, cursorY, 0.5f)
         val trail = dragTrail.toList()
+        touchRing?.let { moveTouchRing(cursorX, cursorY) }
         cancelDrag()
         val start = trail.firstOrNull() ?: return
         // 没移动就再按一次 = 取消
         if (trailLength(trail) < dp(8)) return
         val hold = prefs.cursorHoldMs.toLong()
         val moveMs = dragMoveDurationMs(trailLength(trail))
-        showTouchRing(start.x, start.y, hold)
         val holdPath = Path().apply { moveTo(start.x, start.y) }
         val holdStroke = GestureDescription.StrokeDescription(holdPath, 0, hold, true)
         val movePath = Path().apply {
@@ -1125,81 +1155,19 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 点击反馈 ─────────────────────────
 
-    private var touchRing: View? = null
+    private var touchRing: TouchRingView? = null
     private var touchRingParams: WindowManager.LayoutParams? = null
 
-    /**
-     * 每次在光标处点击 / 长按，显示一个陶土色圆环：
-     * 点击时快速放大并淡出；长按时在按住的这段时间里慢慢收紧，松开时再淡出。
-     * 圆环窗口不接收触摸，也不会被注入的手势点到。
-     */
-    private fun showTouchRing(x: Float, y: Float, holdMs: Long) {
-        val size = dp(44)
-        val v = touchRing ?: View(this).also { ring ->
-            val accent = if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
-            ring.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor((accent and 0x00FFFFFF) or 0x2E000000)
-                setStroke(dp(2), accent)
-            }
-            ring.alpha = 0f
-            val lp = WindowManager.LayoutParams(
-                size, size,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT,
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                windowAnimations = 0
-            }
-            runCatching { wm.addView(ring, lp) }
-            touchRing = ring
-            touchRingParams = lp
-        }
-        val lp = touchRingParams ?: return
-        lp.x = (x - size / 2f).roundToInt()
-        lp.y = (y - size / 2f).roundToInt()
-        v.animate().cancel()
-        // 重新 add 一次，让圆环始终叠在面板和光标之上
-        runCatching { wm.removeViewImmediate(v) }
-        runCatching { wm.addView(v, lp) }
-        val longPress = holdMs >= 250
-        if (longPress) {
-            v.alpha = 0.95f; v.scaleX = 1.25f; v.scaleY = 1.25f
-            v.animate().scaleX(0.75f).scaleY(0.75f).setDuration(holdMs)
-                .setInterpolator(android.view.animation.LinearInterpolator())
-                .withEndAction {
-                    v.animate().alpha(0f).scaleX(1.1f).scaleY(1.1f).setDuration(180)
-                        .setInterpolator(transitionInterpolator).start()
-                }
-                .start()
-        } else {
-            v.alpha = 0.95f; v.scaleX = 0.45f; v.scaleY = 0.45f
-            v.animate().alpha(0f).scaleX(1.15f).scaleY(1.15f).setDuration(360)
-                .setInterpolator(transitionInterpolator).start()
-        }
-    }
-
-    private fun removeTouchRing() {
-        touchRing?.let { it.animate().cancel(); runCatching { wm.removeView(it) } }
-        touchRing = null
-        touchRingParams = null
-    }
-
-    /** 起点标记：一个陶土色小圆环，告诉用户拖拽从哪里开始。不接收触摸。 */
-    private fun showDragMarker(x: Float, y: Float) {
-        hideDragMarker()
-        val size = dp(22)
-        val accent = if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
-        val v = View(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor((accent and 0x00FFFFFF) or 0x33000000)
-                setStroke(dp(2), accent)
-            }
+    /** 常驻的反馈圆环窗口（透明、不可触摸），只移动位置，不反复 add/remove。 */
+    private fun ensureTouchRing(): Pair<TouchRingView, WindowManager.LayoutParams>? {
+        touchRing?.let { v -> touchRingParams?.let { return v to it } }
+        val radius = dp(TOUCH_RING_RADIUS_DP).toFloat()
+        val stroke = (2.5f * resources.displayMetrics.density)
+        val size = ((radius + stroke) * 2).roundToInt() + dp(4)
+        val v = TouchRingView(this).apply {
+            accent = if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+            maxRadius = radius
+            strokeWidthPx = stroke
         }
         val lp = WindowManager.LayoutParams(
             size, size,
@@ -1211,17 +1179,56 @@ class TouchpadService : AccessibilityService() {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            this.x = (x - size / 2f).roundToInt()
-            this.y = (y - size / 2f).roundToInt()
             windowAnimations = 0
+            x = -size; y = -size
         }
-        runCatching { wm.addView(v, lp) }
-        dragMarker = v
+        if (runCatching { wm.addView(v, lp) }.isFailure) return null
+        touchRing = v
+        touchRingParams = lp
+        return v to lp
     }
 
-    private fun hideDragMarker() {
-        dragMarker?.let { runCatching { wm.removeView(it) } }
-        dragMarker = null
+    private fun moveTouchRing(x: Float, y: Float) {
+        val (v, lp) = ensureTouchRing() ?: return
+        lp.x = (x - lp.width / 2f).roundToInt()
+        lp.y = (y - lp.height / 2f).roundToInt()
+        runCatching { wm.updateViewLayout(v, lp) }
+    }
+
+    /**
+     * 光标处点击 / 长按的视觉反馈：陶土色圆环从内向外展开，结束时从外向内收缩消失。
+     * [holdMs] < 250 视为点击，否则圆环保持展开直到按住结束。
+     */
+    private fun showTouchRing(x: Float, y: Float, holdMs: Long) {
+        // 拖拽锁定进行中，圆环正跟着光标标记拖拽；别的点击不抢走它
+        if (dragging) return
+        moveTouchRing(x, y)
+        val v = touchRing ?: return
+        if (holdMs >= 250) v.press(holdMs) else v.tap()
+    }
+
+    /**
+     * 面板重建后把圆环窗口重新放到最上层（只在重建时做，平时不动它）。
+     * 拖拽锁定进行中时，圆环直接恢复成展开状态并留在光标处。
+     */
+    private fun raiseTouchRing() {
+        val v = touchRing
+        val lp = touchRingParams
+        if (v != null && lp != null) {
+            v.clear()
+            runCatching { wm.removeViewImmediate(v) }
+            runCatching { wm.addView(v, lp) }
+        }
+        if (dragging) {
+            moveTouchRing(cursorX, cursorY)
+            touchRing?.holdExpanded()
+        }
+    }
+
+    private fun removeTouchRing() {
+        touchRing?.let { it.clear(); runCatching { wm.removeView(it) } }
+        touchRing = null
+        touchRingParams = null
     }
 
     /** 拖拽进行中，面板上的「拖拽锁定」按钮改成陶土色，提示再按一次结束。 */
@@ -1277,6 +1284,7 @@ class TouchpadService : AccessibilityService() {
             PadAction.KEYBOARD -> focusEditable()
             PadAction.SETTINGS -> openSettings()
             PadAction.MINIMIZE -> toggleMinimize()
+            PadAction.MOVE_PANEL, PadAction.RESIZE_PANEL -> Unit
             PadAction.NONE -> Unit
         }
         haptic()

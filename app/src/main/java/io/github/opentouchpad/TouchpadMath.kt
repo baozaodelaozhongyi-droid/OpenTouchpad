@@ -18,6 +18,8 @@ internal const val CURSOR_HOLD_MIN_MS = 300
 internal const val CURSOR_HOLD_MAX_MS = 3000
 internal const val CURSOR_HOLD_DEFAULT_MS = 800
 internal const val DRAG_TRAIL_MAX_POINTS = 120
+internal const val PAD_EDGE_DEAD_ZONE_DEFAULT_DP = 10
+internal const val PAD_EDGE_DEAD_ZONE_MAX_DP = 32
 
 internal data class PanelPosition(val x: Int, val y: Int)
 
@@ -92,15 +94,15 @@ internal data class ControlRect(val x: Int, val y: Int, val w: Int, val h: Int) 
 
 /**
  * Geometry of the full control surface.
- * [slots] order: TOP 1-4, BOTTOM 1-4, LEFT 1-2, RIGHT 1-2, corners TL, TR, BL, BR.
+ * [slots] has [BUTTON_SLOT_COUNT] entries in the order of [BUTTON_SLOT_CELLS]: TOP 1-4, BOTTOM 1-4,
+ * LEFT 1-2, RIGHT 1-2, corners TL, TR, BL, BR, left column upper cell (default move key),
+ * right column lower cell (default resize key).
  * Button size and the touchpad rectangle depend only on the panel size; [spacingPx]
  * only changes the distance between neighbouring buttons inside each row/column.
  */
 internal data class ControlLayout(
     val button: Int,
     val pad: ControlRect,
-    val moveGrip: ControlRect,
-    val resizeGrip: ControlRect,
     val slots: List<ControlRect>,
 )
 
@@ -126,7 +128,8 @@ internal fun controlGridHeight(width: Int, density: Float, gapPx: Int): Int {
  * exactly [spacingPx], in rows, side columns and corners alike.
  *
  * Columns: corner/left | top 1..4 | corner/right. Rows: corner/top | left/right ×3 | corner/bottom.
- * Left column = move grip, LEFT 1, LEFT 2. Right column = RIGHT 1, RIGHT 2, resize grip.
+ * Left column = slot 16 (default move key), LEFT 1, LEFT 2.
+ * Right column = RIGHT 1, RIGHT 2, slot 17 (default resize key).
  * Height above [controlGridHeight] only makes the touchpad taller; side-column buttons stay
  * packed with the same gap and are centred vertically.
  */
@@ -154,14 +157,9 @@ internal fun computeControlLayout(width: Int, height: Int, density: Float, spaci
         (1..4).map { at(colX[it], bottomY) } +
         listOf(at(leftX, sideY[1]), at(leftX, sideY[2])) +
         listOf(at(rightX, sideY[0]), at(rightX, sideY[1])) +
-        listOf(at(leftX, topY), at(rightX, topY), at(leftX, bottomY), at(rightX, bottomY))
-    return ControlLayout(
-        button = b,
-        pad = pad,
-        moveGrip = at(leftX, sideY[0]),
-        resizeGrip = at(rightX, sideY[2]),
-        slots = slots,
-    )
+        listOf(at(leftX, topY), at(rightX, topY), at(leftX, bottomY), at(rightX, bottomY)) +
+        listOf(at(leftX, sideY[0]), at(rightX, sideY[2]))
+    return ControlLayout(button = b, pad = pad, slots = slots)
 }
 
 internal fun controlHeightRange(screenHeight: Int, density: Float): IntRange {
@@ -190,3 +188,25 @@ internal fun trailLength(trail: List<TrailPoint>): Float =
 /** 拖拽移动段时长：按路径长度 ≈ 1.2 px/ms，限制在 250–1500 ms。 */
 internal fun dragMoveDurationMs(lengthPx: Float): Long =
     (lengthPx * 5f / 6f).roundToLong().coerceIn(250L, 1500L)
+
+/**
+ * 触控板边缘防误触。坐标相对触控板自身：触控板是 (0,0)-(w,h)、圆角半径 [radius] 的圆角矩形。
+ * 把它整体向内缩 [edge] 得到「有效区」（圆角半径同步缩成 radius - edge）。
+ * 按下点不在有效区里——落在宽 [edge] 的边缘带里，或者在圆角外侧——返回 false，这一整次触摸都忽略。
+ *
+ * - [edge] <= 0：关闭，整个矩形都响应（和 v0.5.3 及以前一样，连圆角外侧的小角也算）。
+ * - 触控板很小时，边缘带每边最多占短边的 1/3，中间至少留 1/3，不会整块失灵。
+ */
+internal fun insideTouchArea(x: Float, y: Float, w: Float, h: Float, radius: Float, edge: Float): Boolean {
+    if (edge <= 0f) return true
+    val d = minOf(edge, minOf(w, h) / 3f)
+    val l = d
+    val t = d
+    val r = w - d
+    val b = h - d
+    if (x < l || x > r || y < t || y > b) return false
+    val rr = (radius - d).coerceIn(0f, minOf(r - l, b - t) / 2f)
+    val cx = x.coerceIn(l + rr, r - rr)
+    val cy = y.coerceIn(t + rr, b - rr)
+    return kotlin.math.hypot(x - cx, y - cy) <= rr
+}

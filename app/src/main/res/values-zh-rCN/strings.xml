@@ -117,11 +117,18 @@
         <item>右上角</item>
         <item>左下角</item>
         <item>右下角</item>
+        <item>左列上方（默认移动键）</item>
+        <item>右列下方（默认缩放键）</item>
     </string-array>
     <string name="pad_height_hint">宽度决定按钮大小。加高为 0 时是最紧凑的等间距网格；加高只让中间触控板变高，按钮间距不变。</string>
     <string name="set_cursor_hold">光标处长按时长</string>
     <string name="cursor_hold_hint">「光标处长按」按住的时间；拖拽锁定也会先在起点按住这么久再拖动。最长 3 秒。</string>
-    <string name="drag_lock_hint">拖拽锁定：按一次记下起点（出现陶土色圆环），移动光标到终点，再按一次执行拖动；没移动就再按一次 = 取消。</string>
+    <string name="drag_lock_hint">拖拽锁定：按一次记下起点，光标处出现陶土色圆环并跟着光标走；移动到终点再按一次执行拖动，圆环在终点收缩。没移动就再按一次 = 取消。</string>
     <string name="switch_show_panel">显示触控板</string>
     <string name="switch_show_panel_hint">关闭后收起成悬浮球；点悬浮球也能重新展开。</string>
+    <string name="act_move_panel">移动触控板</string>
+    <string name="act_resize_panel">缩放触控板</string>
+    <string name="need_move_key">这是最后一个移动键，不能换成其他动作。先把别的位置设成「移动触控板」再改这里。</string>
+    <string name="set_pad_dead_zone">边缘触发宽度</string>
+    <string name="pad_dead_zone_hint">手指落在触控板边缘这一圈（包括圆角外侧）里，这一整次触摸都忽略，按旁边的按钮时不会误碰。0 = 关闭。</string>
 </resources>

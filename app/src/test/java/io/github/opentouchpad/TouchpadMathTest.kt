@@ -103,7 +103,7 @@ class TouchpadMathTest {
     }
 
     private fun assertNoOverlap(l: ControlLayout) {
-        val all = l.slots + l.moveGrip + l.resizeGrip + l.pad
+        val all = l.slots + l.pad
         for (i in all.indices) for (j in i + 1 until all.size) {
             val p = all[i]; val q = all[j]
             val overlap = p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h
@@ -123,8 +123,8 @@ class TouchpadMathTest {
                 assertEquals("row gap", gap, row[i].x - (row[i - 1].x + b))
                 assertEquals(row[0].y, row[i].y)
             }
-            val left = listOf(tl, l.moveGrip, l.slots[8], l.slots[9], bl)
-            val right = listOf(tr, l.slots[10], l.slots[11], l.resizeGrip, br)
+            val left = listOf(tl, l.slots[16], l.slots[8], l.slots[9], bl)
+            val right = listOf(tr, l.slots[10], l.slots[11], l.slots[17], br)
             for (col in listOf(left, right)) for (i in 1 until col.size) {
                 assertEquals("column gap", gap, col[i].y - (col[i - 1].y + b))
                 assertEquals(col[0].x, col[i].x)
@@ -146,8 +146,8 @@ class TouchpadMathTest {
         assertEquals(a.pad.w, b.pad.w)
         assertEquals(a.pad.h + 60, b.pad.h)
         // side buttons stay packed with the same gap
-        assertEquals(3, b.slots[8].y - (b.moveGrip.y + b.button))
-        assertEquals(3, b.resizeGrip.y - (b.slots[11].y + b.button))
+        assertEquals(3, b.slots[8].y - (b.slots[16].y + b.button))
+        assertEquals(3, b.slots[17].y - (b.slots[11].y + b.button))
         assertNoOverlap(b)
     }
 
@@ -160,7 +160,7 @@ class TouchpadMathTest {
         // densities other than 1 also keep equal gaps
         val hi = gridOf(168 * 3, 9, density = 3f)
         assertEquals(9, hi.slots[1].x - (hi.slots[0].x + hi.button))
-        assertEquals(9, hi.slots[8].y - (hi.moveGrip.y + hi.button))
+        assertEquals(9, hi.slots[8].y - (hi.slots[16].y + hi.button))
     }
 
     @Test
@@ -181,5 +181,44 @@ class TouchpadMathTest {
         assertEquals(500L, dragMoveDurationMs(600f))
         assertEquals(1500L, dragMoveDurationMs(100000f))
         assertEquals(10f, trailLength(listOf(TrailPoint(0f, 0f), TrailPoint(6f, 8f))), 0.001f)
+    }
+
+    @Test
+    fun touchAreaIgnoresEdgeBandAndRoundedCorners() {
+        // 100x60 pad, corner radius 20, edge 8 → valid area (8,8)-(92,52), inner radius 12
+        assertTrue(insideTouchArea(50f, 30f, 100f, 60f, 20f, 8f))   // centre
+        assertFalse(insideTouchArea(4f, 30f, 100f, 60f, 20f, 8f))   // left band
+        assertFalse(insideTouchArea(96f, 30f, 100f, 60f, 20f, 8f))  // right band
+        assertFalse(insideTouchArea(50f, 3f, 100f, 60f, 20f, 8f))   // top band
+        assertFalse(insideTouchArea(50f, 56f, 100f, 60f, 20f, 8f))  // bottom band
+        assertTrue(insideTouchArea(8f, 30f, 100f, 60f, 20f, 8f))    // exactly on the inner edge counts
+        assertFalse(insideTouchArea(10f, 10f, 100f, 60f, 20f, 8f))  // past the edge band but outside the rounded corner
+        assertFalse(insideTouchArea(90f, 50f, 100f, 60f, 20f, 8f))  // same, bottom-right corner
+        assertTrue(insideTouchArea(20f, 20f, 100f, 60f, 20f, 8f))   // inside the inner rounded corner
+        // outside the outer rounded corner (the old tappable square corner) is ignored too
+        assertFalse(insideTouchArea(1f, 1f, 100f, 60f, 20f, 8f))
+    }
+
+    @Test
+    fun touchAreaEdgeZeroMeansOff() {
+        assertTrue(insideTouchArea(0f, 0f, 100f, 60f, 20f, 0f))
+        assertTrue(insideTouchArea(100f, 60f, 100f, 60f, 20f, 0f))
+        assertTrue(insideTouchArea(1f, 30f, 100f, 60f, 0f, 0f))
+    }
+
+    @Test
+    fun touchAreaEdgeBandIsCappedOnSmallPads() {
+        // 32dp band on a 60px-tall pad would swallow it; the band is capped at a third of the short side
+        assertTrue(insideTouchArea(50f, 30f, 100f, 60f, 20f, 32f))
+        assertFalse(insideTouchArea(50f, 15f, 100f, 60f, 20f, 32f))
+        // square-corner pad (radius smaller than the band): corners are plain rectangles
+        assertTrue(insideTouchArea(10f, 10f, 100f, 60f, 4f, 10f))
+        assertFalse(insideTouchArea(9f, 30f, 100f, 60f, 4f, 10f))
+    }
+
+    @Test
+    fun edgeWidthSettingRange() {
+        assertEquals(0 to 32, 0 to PAD_EDGE_DEAD_ZONE_MAX_DP)
+        assertEquals(10, PAD_EDGE_DEAD_ZONE_DEFAULT_DP)
     }
 }
