@@ -78,6 +78,7 @@
     <string name="set_button_spacing">按钮间距</string>
 
     <string name="switch_haptics">震动反馈</string>
+    <string name="switch_press_feedback">按压下沉反馈</string>
     <string name="switch_autohide_landscape">横屏时隐藏触控板</string>
     <string name="switch_minimize_keyboard">键盘弹出时最小化</string>
     <string name="btn_reset_position">重置触控板位置</string>

@@ -205,6 +205,7 @@ class MainActivity : Activity() {
                 hint = getString(R.string.cursor_hold_hint), onChange = { prefs.cursorHoldMs = it }),
             slider(getString(R.string.set_dwell), 0, 2000, prefs.dwellMs, unit = "ms", offLabel = getString(R.string.dwell_off), onChange = { prefs.dwellMs = it }),
             slider(getString(R.string.set_scroll_distance), 60, 500, prefs.scrollDistanceDp, unit = "dp", hint = getString(R.string.custom_swipe_hint), onChange = { prefs.scrollDistanceDp = it }),
+            switchRow(getString(R.string.switch_press_feedback), prefs.pressFeedback, onChange = { prefs.pressFeedback = it; reload() }),
             switchRow(getString(R.string.switch_haptics), prefs.haptics, onChange = { prefs.haptics = it }),
             switchRow(getString(R.string.switch_autohide_landscape), prefs.autoHideLandscape, onChange = { prefs.autoHideLandscape = it; reload() }),
             switchRow(getString(R.string.switch_minimize_keyboard), prefs.minimizeOnKeyboard, onChange = { prefs.minimizeOnKeyboard = it }),
@@ -281,6 +282,7 @@ class MainActivity : Activity() {
             setTextColor(onAccentColor)
             background = ripple(roundedSurface(accentColor, 12), 0x33FAF9F5, 12)
             isClickable = true
+            PressFeedback.attach(this, isEnabled = { prefs.pressFeedback })
             setOnClickListener { openAccessibilitySettings() }
         }
         box.addView(primary, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply {
@@ -623,6 +625,7 @@ class MainActivity : Activity() {
                     GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) })
                 if (!empty && !grip) elevation = dp(1).toFloat()
                 isClickable = true
+                PressFeedback.attach(this, maxTiltX = 6f, maxTiltY = 6f, pressScale = 0.92f, sinkDp = 1.5f, isEnabled = { prefs.pressFeedback })
                 contentDescription = "${positions.getOrElse(index) { "${index + 1}" }}: ${getString(action.labelRes)}"
                 setOnClickListener { pickAction(index, action) }
             }, c, r)

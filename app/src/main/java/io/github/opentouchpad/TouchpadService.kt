@@ -383,6 +383,7 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun removePanel() {
+        padArea?.animate()?.cancel()
         // 拖拽锁定状态（以及跟随光标的圆环）跨面板重建保留，不在这里结束
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
@@ -458,12 +459,15 @@ class TouchpadService : AccessibilityService() {
         // 根容器本身不处理触摸：只有设成「移动触控板」的按键可以拖动面板。
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
+            clipChildren = false
+            clipToPadding = false
             contentDescription = getString(R.string.control_surface_content_description)
         }
 
         val pad = View(this).apply {
             background = padBackground(dark, dp(22).toFloat())
             contentDescription = getString(R.string.touchpad_content_description)
+            cameraDistance = 8000f * resources.displayMetrics.density
             setOnTouchListener { _, e -> handlePadTouch(e); true }
         }
         padArea = pad
@@ -674,6 +678,15 @@ class TouchpadService : AccessibilityService() {
         background = circleBackground(p.buttonBg, p.buttonStroke, p.ripple)
         isClickable = true
         contentDescription = getString(action.labelRes)
+        PressFeedback.attach(
+            this,
+            maxTiltX = 8f,
+            maxTiltY = 12f,
+            pressScale = 0.92f,
+            sinkDp = 2f,
+            isEnabled = { prefs.pressFeedback },
+            onHaptic = { haptic(this) },
+        )
         setOnClickListener { performAction(action) }
         setOnLongClickListener { showActionPicker(slot, action); true }
     }
@@ -734,6 +747,12 @@ class TouchpadService : AccessibilityService() {
         }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (prefs.pressFeedback) {
+                    padArea?.let { pad ->
+                        PressFeedback.applyPadDown(pad, e.x, e.y, resources.displayMetrics.density)
+                    }
+                    haptic()
+                }
                 downRawX = e.rawX; downRawY = e.rawY
                 lastRawX = e.rawX; lastRawY = e.rawY
                 downTime = System.currentTimeMillis()
@@ -754,6 +773,11 @@ class TouchpadService : AccessibilityService() {
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (prefs.pressFeedback) {
+                    padArea?.let { pad ->
+                        PressFeedback.applyPadMove(pad, e.x, e.y, resources.displayMetrics.density)
+                    }
+                }
                 val dx = e.rawX - lastRawX
                 val dy = e.rawY - lastRawY
                 lastRawX = e.rawX; lastRawY = e.rawY
@@ -779,6 +803,11 @@ class TouchpadService : AccessibilityService() {
             }
 
             MotionEvent.ACTION_UP -> {
+                if (prefs.pressFeedback) {
+                    padArea?.let { pad ->
+                        PressFeedback.applyPadRelease(pad)
+                    }
+                }
                 main.removeCallbacks(longPressRunnable)
                 cancelDwell()
                 val distance = kotlin.math.hypot(customSwipeEndX - customSwipeStartX, customSwipeEndY - customSwipeStartY)
@@ -801,6 +830,11 @@ class TouchpadService : AccessibilityService() {
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                if (prefs.pressFeedback) {
+                    padArea?.let { pad ->
+                        PressFeedback.applyPadRelease(pad)
+                    }
+                }
                 main.removeCallbacks(longPressRunnable)
                 cancelDwell()
                 if (customSwipeArmed) touchRing?.release()
@@ -1345,10 +1379,10 @@ class TouchpadService : AccessibilityService() {
         cursorView?.let { runCatching { wm.updateViewLayout(it, p) } }
     }
 
-    private fun haptic() {
+    private fun haptic(view: View? = null) {
         if (!prefs.haptics) return
         runCatching {
-            padArea?.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+            (view ?: padArea ?: panel)?.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
         }
     }
 

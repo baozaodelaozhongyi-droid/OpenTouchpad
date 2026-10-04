@@ -78,6 +78,7 @@
     <string name="set_button_spacing">Space between buttons</string>
 
     <string name="switch_haptics">Vibration feedback</string>
+    <string name="switch_press_feedback">Press sink feedback</string>
     <string name="switch_autohide_landscape">Hide touchpad in landscape</string>
     <string name="switch_minimize_keyboard">Minimize when keyboard opens</string>
     <string name="btn_reset_position">Reset touchpad position</string>
