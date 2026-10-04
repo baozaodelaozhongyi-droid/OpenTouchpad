@@ -880,7 +880,6 @@ class MainActivity : Activity() {
         prefs.themeMode = mode
         darkUi = mode.resolvesToDark(systemIsDark())
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
-        reload()
 
         // 3. 构建新主题视图并绑定滚动同步
         val newScroller = buildUi().apply {

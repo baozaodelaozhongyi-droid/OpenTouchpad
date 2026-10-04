@@ -208,9 +208,6 @@ class TouchpadService : AccessibilityService() {
         refreshScreenMetrics()
         cursorX = cursorX.coerceIn(0f, screenW.toFloat())
         cursorY = cursorY.coerceIn(0f, screenH.toFloat())
-        if (this::prefs.isInitialized && prefs.themeMode == ThemeMode.SYSTEM) {
-            buildCursor()
-        }
         buildPanel()
         updateCursor()
     }
@@ -242,9 +239,7 @@ class TouchpadService : AccessibilityService() {
     private fun isLandscape(): Boolean =
         resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    private fun isDarkTheme(): Boolean = prefs.themeMode.resolvesToDark(
-        resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES,
-    )
+    private fun isDarkTheme(): Boolean = true
 
     private fun buildCursor() {
         cursorView?.let { runCatching { wm.removeView(it) } }
