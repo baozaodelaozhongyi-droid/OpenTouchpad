@@ -46,6 +46,8 @@ class TouchpadService : AccessibilityService() {
     companion object {
         /** 反馈圆环最大半径（dp）：规格要求直径约 22dp，所以半径 11dp。 */
         private const val TOUCH_RING_RADIUS_DP = 11
+        /** 穿透点击前等待 FLAG_NOT_TOUCHABLE 真正同步到系统 InputDispatcher 的安全延时（毫秒）。 */
+        private const val OVERLAY_PASS_THROUGH_DELAY_MS = 50L
 
         @Volatile
         var instance: TouchpadService? = null
@@ -56,6 +58,7 @@ class TouchpadService : AccessibilityService() {
     private lateinit var prefs: Prefs
     private val main = Handler(Looper.getMainLooper())
 
+    private var isPassThroughActive = false
     private var panel: View? = null
     private var panelParams: WindowManager.LayoutParams? = null
     private var padArea: View? = null
@@ -163,6 +166,7 @@ class TouchpadService : AccessibilityService() {
         cancelDwell()
         gestureQueue.clear()
         isDispatching = false
+        isPassThroughActive = false
         setOverlayTouchable(true)
         instance = null
         cancelDrag()
@@ -215,6 +219,7 @@ class TouchpadService : AccessibilityService() {
     fun reload() {
         prefs = Prefs(this)
         removeTouchRing()
+        isPassThroughActive = false
         buildCursor()
         buildPanel()
         updateCursor()
@@ -666,6 +671,7 @@ class TouchpadService : AccessibilityService() {
             background = circleBackground(p.buttonBg, p.buttonStroke, p.ripple)
             isClickable = true
             setOnTouchListener { v, e ->
+                if (isPassThroughActive) return@setOnTouchListener false
                 // 自己处理拖动，同时让水波纹跟随按下/抬起
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> { v.isPressed = true; haptic() }
@@ -689,12 +695,19 @@ class TouchpadService : AccessibilityService() {
             maxTiltY = 12f,
             pressScale = 0.92f,
             sinkDp = 2f,
-            isEnabled = { prefs.pressFeedback },
+            isEnabled = { prefs.pressFeedback && !isPassThroughActive },
             onHaptic = { haptic(this) },
         )
-        setOnClickListener { performAction(action) }
+        setOnClickListener {
+            if (isPassThroughActive) return@setOnClickListener
+            performAction(action)
+        }
         if (prefs.longPressButtonToCustomize) {
-            setOnLongClickListener { showActionPicker(slot, action); true }
+            setOnLongClickListener {
+                if (isPassThroughActive) return@setOnLongClickListener true
+                showActionPicker(slot, action)
+                true
+            }
         }
     }
 
@@ -740,6 +753,7 @@ class TouchpadService : AccessibilityService() {
     private var padTouchIgnored = false
 
     private fun handlePadTouch(e: MotionEvent) {
+        if (isPassThroughActive) return
         val slop = dp(6).toFloat()
         if (e.actionMasked == MotionEvent.ACTION_DOWN) {
             val pad = padArea
@@ -951,6 +965,7 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun handleBallTouch(v: View, e: MotionEvent): Boolean {
+        if (isPassThroughActive) return false
         val slop = dp(8).toFloat()
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -1021,6 +1036,8 @@ class TouchpadService : AccessibilityService() {
     private data class QueuedGesture(
         val gesture: GestureDescription,
         val needsPassThrough: Boolean,
+        val expectedMs: Long = 500L,
+        val keepPassThroughAfterComplete: Boolean = false,
         val onComplete: (() -> Unit)? = null,
     )
 
@@ -1028,6 +1045,7 @@ class TouchpadService : AccessibilityService() {
     private val gestureQueue = ArrayDeque<QueuedGesture>()
 
     private val restoreTouchRunnable = Runnable {
+        isPassThroughActive = false
         setOverlayTouchable(true)
     }
 
@@ -1036,6 +1054,7 @@ class TouchpadService : AccessibilityService() {
         val lp = panelParams ?: return
         val flag = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         val next = if (touchable) lp.flags and flag.inv() else lp.flags or flag
+        isPassThroughActive = !touchable
         if (next == lp.flags) return
         lp.flags = next
         runCatching { wm.updateViewLayout(v, lp) }
@@ -1052,11 +1071,18 @@ class TouchpadService : AccessibilityService() {
     /**
      * 顺序派发注入手势：
      * 1. 仅当光标位于触控板面板范围内时才短暂切换 FLAG_NOT_TOUCHABLE，让光标能精准点击触控板下层内容；
-     * 2. 光标在面板外部（绝大多数常规操作场景）时，面板始终保持可触摸状态，快速连续点击绝不会击穿面板触发底层内容；
-     * 3. 使用手势队列串行化派发，避免快速连续点击因前一笔手势未结束而导致后续点击被系统拒绝或丢失。
+     * 2. 穿透期间锁定 isPassThroughActive 状态，触控板按钮、把手与触控板自身全面拦截任何点击与触摸反馈，彻底杜绝误触；
+     * 3. 光标在面板外部（绝大多数常规操作场景）时，面板始终保持可触摸状态，快速连续点击绝不会击穿面板触发底层内容；
+     * 4. 使用手势队列串行化派发，避免快速连续点击因前一笔手势未结束而导致后续点击被系统拒绝或丢失。
      */
-    private fun dispatch(gesture: GestureDescription, needsPassThrough: Boolean = false, onComplete: (() -> Unit)? = null) {
-        gestureQueue.addLast(QueuedGesture(gesture, needsPassThrough, onComplete))
+    private fun dispatch(
+        gesture: GestureDescription,
+        needsPassThrough: Boolean = false,
+        expectedMs: Long = 500L,
+        keepPassThroughAfterComplete: Boolean = false,
+        onComplete: (() -> Unit)? = null,
+    ) {
+        gestureQueue.addLast(QueuedGesture(gesture, needsPassThrough, expectedMs, keepPassThroughAfterComplete, onComplete))
         drainGestureQueue()
     }
 
@@ -1069,15 +1095,22 @@ class TouchpadService : AccessibilityService() {
             // 光标位于触控板面板内，需要穿透面板点击下层内容
             setOverlayTouchable(false)
             main.removeCallbacks(restoreTouchRunnable)
-            // 兜底保护：200ms 后强制恢复面板可触摸，防止异常时卡在不可触摸状态
-            main.postDelayed(restoreTouchRunnable, 200L)
+            // 兜底保护：手势预期耗时 + 1.5 秒后无论如何恢复面板可触摸，防止异常时卡在不可触摸状态
+            val fallbackTimeout = maxOf(3000L, item.expectedMs + 1500L)
+            main.postDelayed(restoreTouchRunnable, fallbackTimeout)
 
             main.postDelayed({
                 val ok = runCatching {
                     dispatchGesture(item.gesture, object : GestureResultCallback() {
                         override fun onCompleted(gestureDescription: GestureDescription?) {
                             main.removeCallbacks(restoreTouchRunnable)
-                            setOverlayTouchable(true)
+                            if (!item.keepPassThroughAfterComplete) {
+                                // 延迟 20ms 恢复可触摸，确保注入手势的 UP 事件在底层应用中完全处理完毕，
+                                // 避免面板瞬间切回可触摸而误抓到残余事件或按钮触发
+                                main.postDelayed({
+                                    setOverlayTouchable(true)
+                                }, 20L)
+                            }
                             isDispatching = false
                             runCatching { item.onComplete?.invoke() }
                             drainGestureQueue()
@@ -1097,7 +1130,7 @@ class TouchpadService : AccessibilityService() {
                     isDispatching = false
                     drainGestureQueue()
                 }
-            }, 15L)
+            }, OVERLAY_PASS_THROUGH_DELAY_MS)
         } else {
             // 光标在触控板外部，直接派发手势。面板始终保持可触摸，绝不设置 FLAG_NOT_TOUCHABLE，
             // 彻底杜绝快速连续点击时物理手指穿透面板触发底层内容。
@@ -1131,6 +1164,7 @@ class TouchpadService : AccessibilityService() {
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
                 .build(),
             needsPassThrough = overPanel,
+            expectedMs = ms,
         )
     }
 
@@ -1149,6 +1183,7 @@ class TouchpadService : AccessibilityService() {
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
                 .build(),
             needsPassThrough = overPanel,
+            expectedMs = ms,
         )
         haptic()
     }
@@ -1168,6 +1203,7 @@ class TouchpadService : AccessibilityService() {
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
                 .build(),
             needsPassThrough = overPanel,
+            expectedMs = ms,
         )
     }
 
@@ -1218,11 +1254,21 @@ class TouchpadService : AccessibilityService() {
                 GestureDescription.Builder()
                     .addStroke(GestureDescription.StrokeDescription(movePath, 0, hold + moveMs)).build(),
                 needsPassThrough = overPanel,
+                expectedMs = hold + moveMs,
             )
             return
         }
-        dispatch(GestureDescription.Builder().addStroke(holdStroke).build(), needsPassThrough = overPanel) {
-            dispatch(GestureDescription.Builder().addStroke(moveStroke).build(), needsPassThrough = overPanel)
+        dispatch(
+            GestureDescription.Builder().addStroke(holdStroke).build(),
+            needsPassThrough = overPanel,
+            expectedMs = hold,
+            keepPassThroughAfterComplete = true,
+        ) {
+            dispatch(
+                GestureDescription.Builder().addStroke(moveStroke).build(),
+                needsPassThrough = overPanel,
+                expectedMs = moveMs,
+            )
         }
     }
 
