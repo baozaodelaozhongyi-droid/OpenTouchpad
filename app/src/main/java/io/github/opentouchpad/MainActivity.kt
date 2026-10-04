@@ -2,14 +2,15 @@ package io.github.opentouchpad
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.content.res.Configuration
-import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -23,7 +24,6 @@ import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewAnimationUtils
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.WindowInsets
@@ -52,10 +52,10 @@ class MainActivity : Activity() {
     private lateinit var rootContainer: FrameLayout
     private var showPanelSwitch: Switch? = null
     private var darkUi = false
-    private var isThemeSwitching = false
     private var lastInsetsTop = 0
     private var lastInsetsBottom = 0
-    private var currentSnapshotBmp: Bitmap? = null
+    private var activeAnimator: ValueAnimator? = null
+    private var isSyncingScroll = false
 
     // 暖色调配色（参考 Claude 官网）：羊皮纸底色 + 象牙白卡片 + 陶土橙强调色；所有灰色都带暖黄底调。
     private val pageColor get() = if (darkUi) 0xFF1F1E1D.toInt() else 0xFFF5F4ED.toInt()
@@ -88,11 +88,8 @@ class MainActivity : Activity() {
         updateSystemBars()
 
         val root = buildUi()
-        rootContainer = object : FrameLayout(this) {
-            override fun onInterceptTouchEvent(ev: MotionEvent?): Boolean {
-                return isThemeSwitching || super.onInterceptTouchEvent(ev)
-            }
-        }.apply {
+        attachScrollSync(root)
+        rootContainer = FrameLayout(this).apply {
             setBackgroundColor(pageColor)
             addView(root, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -113,7 +110,15 @@ class MainActivity : Activity() {
                 }
                 lastInsetsTop = top
                 lastInsetsBottom = bottom
-                scroller.setPadding(0, top, 0, bottom)
+                for (i in 0 until childCount) {
+                    val c = getChildAt(i)
+                    val s = when (c) {
+                        is ScrollView -> c
+                        is RevealLayout -> c.scroller
+                        else -> null
+                    }
+                    s?.setPadding(0, top, 0, bottom)
+                }
                 insets
             }
         }
@@ -133,8 +138,9 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        currentSnapshotBmp?.let { if (!it.isRecycled) it.recycle() }
-        currentSnapshotBmp = null
+        val oldAnim = activeAnimator
+        activeAnimator = null
+        oldAnim?.cancel()
     }
 
     override fun onResume() {
@@ -763,10 +769,74 @@ class MainActivity : Activity() {
     }
 
     /**
-     * 外观主题改变时，以点击的选项为圆心向外执行全屏颜色扩散 reveal 动效。
+     * 以 (cx, cy) 为圆心进行圆形遮罩裁剪的容器，实现无缝可打断、可交互的扩散动效。
+     */
+    private class RevealLayout(context: android.content.Context, val scroller: ScrollView) : FrameLayout(context) {
+        init {
+            addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        }
+
+        var cx = 0f
+        var cy = 0f
+        var radius = 0f
+            set(value) {
+                field = value
+                invalidate()
+            }
+        var maxRadius = 0f
+
+        private val path = Path()
+
+        override fun dispatchDraw(canvas: Canvas) {
+            if (radius <= 0f) return
+            if (radius >= maxRadius && maxRadius > 0f) {
+                super.dispatchDraw(canvas)
+                return
+            }
+            val save = canvas.save()
+            path.reset()
+            path.addCircle(cx, cy, radius, Path.Direction.CW)
+            canvas.clipPath(path)
+            super.dispatchDraw(canvas)
+            canvas.restoreToCount(save)
+        }
+
+        override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+            if (radius <= 0f) return false
+            if (radius < maxRadius && maxRadius > 0f) {
+                val dx = ev.x - cx
+                val dy = ev.y - cy
+                if ((dx * dx + dy * dy) > (radius * radius)) {
+                    return false
+                }
+            }
+            return super.dispatchTouchEvent(ev)
+        }
+    }
+
+    private fun attachScrollSync(scrollView: ScrollView) {
+        scrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+            if (isSyncingScroll) return@setOnScrollChangeListener
+            isSyncingScroll = true
+            for (i in 0 until rootContainer.childCount) {
+                val child = rootContainer.getChildAt(i)
+                val target = when (child) {
+                    is ScrollView -> child
+                    is RevealLayout -> child.scroller
+                    else -> null
+                }
+                if (target != null && target !== scrollView) {
+                    target.scrollTo(0, scrollY)
+                }
+            }
+            isSyncingScroll = false
+        }
+    }
+
+    /**
+     * 外观主题改变时，以点击的选项为圆心向外执行无缝可打断的全屏颜色扩散动效。
      */
     private fun switchThemeWithReveal(mode: ThemeMode, originView: View) {
-        if (isThemeSwitching) return
         if (prefs.themeMode == mode) return
 
         val w = rootContainer.width
@@ -778,117 +848,106 @@ class MainActivity : Activity() {
             return
         }
 
-        isThemeSwitching = true
-        val scrollY = scroller.scrollY
+        // 取消前一个动画的监听，支持随时打断与连续切换
+        val oldAnim = activeAnimator
+        activeAnimator = null
+        oldAnim?.cancel()
 
-        // 1. 记录起点坐标（相对 rootContainer 的中心点）
+        // 限制过渡层堆叠数量，保持最多 2 层正在过渡
+        while (rootContainer.childCount > 2) {
+            rootContainer.removeViewAt(0)
+        }
+
+        // 1. 记录点击按钮的中心坐标（相对 rootContainer）
         val originLoc = IntArray(2)
         originView.getLocationInWindow(originLoc)
         val containerLoc = IntArray(2)
         rootContainer.getLocationInWindow(containerLoc)
         val cx = if (originView.width > 0) {
-            (originLoc[0] - containerLoc[0]) + originView.width / 2
+            (originLoc[0] - containerLoc[0]) + originView.width / 2f
         } else {
-            w / 2
+            w / 2f
         }
         val cy = if (originView.height > 0) {
-            (originLoc[1] - containerLoc[1]) + originView.height / 2
+            (originLoc[1] - containerLoc[1]) + originView.height / 2f
         } else {
-            h / 2
+            h / 2f
         }
 
-        // 2. 截取当前界面快照
-        val oldBmp = try {
-            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bmp)
-            rootContainer.draw(canvas)
-            bmp
-        } catch (_: Throwable) {
-            null
-        }
+        val scrollY = scroller.scrollY
 
-        if (oldBmp == null) {
-            isThemeSwitching = false
-            prefs.themeMode = mode
-            reload()
-            recreateKeepingScroll()
-            return
-        }
-
-        currentSnapshotBmp?.let { if (!it.isRecycled) it.recycle() }
-        currentSnapshotBmp = oldBmp
-
-        val oldImageView = ImageView(this).apply {
-            setImageBitmap(oldBmp)
-            scaleType = ImageView.ScaleType.FIT_XY
-        }
-
-        // 3. 移除旧视图，加入旧视图快照作为扩散底层
-        rootContainer.removeAllViews()
-        rootContainer.addView(
-            oldImageView,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-        )
-
-        // 4. 更新偏好与新主题配置
+        // 2. 更新偏好与新主题配置
         prefs.themeMode = mode
         darkUi = mode.resolvesToDark(systemIsDark())
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
         reload()
 
-        // 5. 构建新主题视图并加上对应状态栏内边距
+        // 3. 构建新主题视图并绑定滚动同步
         val newScroller = buildUi().apply {
             setPadding(0, lastInsetsTop, 0, lastInsetsBottom)
-            clipToPadding = false
         }
+        attachScrollSync(newScroller)
         updateStatus()
 
+        // 4. 计算扩散至全屏所需的最大半径并包装入 RevealLayout
+        val dx = maxOf(cx, w - cx).toDouble()
+        val dy = maxOf(cy, h - cy).toDouble()
+        val maxRadius = kotlin.math.hypot(dx, dy).toFloat() + dp(4).toFloat()
+
+        val revealLayout = RevealLayout(this, newScroller).apply {
+            this.cx = cx
+            this.cy = cy
+            this.radius = 0f
+            this.maxRadius = maxRadius
+        }
         rootContainer.addView(
-            newScroller,
+            revealLayout,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         )
 
-        // 6. 预绘制时同步滚动高度并启动圆形揭示动画
+        // 5. 待新视图完成布局后同步滚动高度并启动扩散动画
         newScroller.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
                 newScroller.viewTreeObserver.removeOnPreDrawListener(this)
                 newScroller.scrollTo(0, scrollY)
 
-                val dx = maxOf(cx, w - cx).toDouble()
-                val dy = maxOf(cy, h - cy).toDouble()
-                val maxRadius = kotlin.math.hypot(dx, dy).toFloat() + dp(4).toFloat()
-
-                val anim = runCatching {
-                    ViewAnimationUtils.createCircularReveal(newScroller, cx, cy, 0f, maxRadius)
-                }.getOrNull()
-
-                if (anim != null) {
-                    anim.duration = 380L
-                    anim.interpolator = AccelerateDecelerateInterpolator()
-                    val cleanup = {
-                        rootContainer.removeView(oldImageView)
-                        if (!oldBmp.isRecycled) oldBmp.recycle()
-                        if (currentSnapshotBmp === oldBmp) currentSnapshotBmp = null
-                        rootContainer.setBackgroundColor(pageColor)
-                        updateSystemBars()
-                        isThemeSwitching = false
+                val anim = ValueAnimator.ofFloat(0f, maxRadius).apply {
+                    duration = 380L
+                    interpolator = AccelerateDecelerateInterpolator()
+                    addUpdateListener { va ->
+                        revealLayout.radius = va.animatedValue as Float
                     }
-                    anim.addListener(object : AnimatorListenerAdapter() {
-                        override fun onAnimationEnd(animation: Animator) = cleanup()
-                        override fun onAnimationCancel(animation: Animator) = cleanup()
+                    addListener(object : AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(animation: Animator) {
+                            if (activeAnimator === animation) {
+                                finishThemeTransition(revealLayout)
+                            }
+                        }
                     })
-                    anim.start()
-                } else {
-                    rootContainer.removeView(oldImageView)
-                    if (!oldBmp.isRecycled) oldBmp.recycle()
-                    if (currentSnapshotBmp === oldBmp) currentSnapshotBmp = null
-                    rootContainer.setBackgroundColor(pageColor)
-                    updateSystemBars()
-                    isThemeSwitching = false
                 }
+                activeAnimator = anim
+                anim.start()
                 return true
             }
         })
+    }
+
+    private fun finishThemeTransition(winnerReveal: RevealLayout) {
+        activeAnimator = null
+        val winnerScroller = winnerReveal.scroller
+        val currentScroll = winnerScroller.scrollY
+
+        rootContainer.removeAllViews()
+        winnerReveal.removeView(winnerScroller)
+        rootContainer.addView(
+            winnerScroller,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        )
+        winnerScroller.scrollTo(0, currentScroll)
+        scroller = winnerScroller
+
+        rootContainer.setBackgroundColor(pageColor)
+        updateSystemBars()
     }
 
     /**
