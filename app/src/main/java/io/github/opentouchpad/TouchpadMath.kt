@@ -210,3 +210,6 @@ internal fun insideTouchArea(x: Float, y: Float, w: Float, h: Float, radius: Flo
     val cy = y.coerceIn(t + rr, b - rr)
     return kotlin.math.hypot(x - cx, y - cy) <= rr
 }
+
+internal fun isPointInsideRect(px: Float, py: Float, x: Int, y: Int, w: Int, h: Int): Boolean =
+    w > 0 && h > 0 && px >= x && px <= x + w && py >= y && py <= y + h

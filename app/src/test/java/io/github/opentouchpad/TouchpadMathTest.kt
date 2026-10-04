@@ -221,4 +221,17 @@ class TouchpadMathTest {
         assertEquals(0 to 32, 0 to PAD_EDGE_DEAD_ZONE_MAX_DP)
         assertEquals(10, PAD_EDGE_DEAD_ZONE_DEFAULT_DP)
     }
+
+    @Test
+    fun isPointInsideRectMatchesBounds() {
+        assertTrue(isPointInsideRect(100f, 200f, 50, 100, 200, 300))
+        assertTrue(isPointInsideRect(50f, 100f, 50, 100, 200, 300))
+        assertTrue(isPointInsideRect(250f, 400f, 50, 100, 200, 300))
+        assertFalse(isPointInsideRect(49f, 200f, 50, 100, 200, 300))
+        assertFalse(isPointInsideRect(251f, 200f, 50, 100, 200, 300))
+        assertFalse(isPointInsideRect(100f, 99f, 50, 100, 200, 300))
+        assertFalse(isPointInsideRect(100f, 401f, 50, 100, 200, 300))
+        assertFalse(isPointInsideRect(100f, 200f, 50, 100, 0, 300))
+        assertFalse(isPointInsideRect(100f, 200f, 50, 100, 200, -10))
+    }
 }
