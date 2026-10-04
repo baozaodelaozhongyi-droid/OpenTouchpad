@@ -609,59 +609,52 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 外观 ─────────────────────────
 
-    /** 面板配色：按钮/触控板用轻微竖向渐变 + 细描边，移动/缩放键用强调色区分。 */
+    /** 面板配色：Material 3 风格，纯色 + 细描边。 */
     private class Palette(
-        val buttonTop: Int, val buttonBottom: Int, val buttonStroke: Int, val buttonText: Int,
-        val padTop: Int, val padBottom: Int, val padStroke: Int,
-        val gripTop: Int, val gripBottom: Int, val gripStroke: Int, val gripText: Int,
+        val buttonBg: Int, val buttonStroke: Int, val buttonText: Int,
+        val padBg: Int, val padStroke: Int,
         val ripple: Int,
     )
 
     private fun palette(dark: Boolean): Palette = if (dark) {
-        // 暖深色：炭灰按钮 + 陶土色移动/缩放键
+        // M3 暗色：surface-variant
         Palette(
-            buttonTop = 0xFF3A3936.toInt(), buttonBottom = 0xFF2E2D2B.toInt(),
-            buttonStroke = 0x26FAF9F5, buttonText = 0xFFFAF9F5.toInt(),
-            padTop = 0xFF30302E.toInt(), padBottom = 0xFF262624.toInt(), padStroke = 0x1FFAF9F5,
-            gripTop = 0xFF5A3A2E.toInt(), gripBottom = 0xFF4A3026.toInt(),
-            gripStroke = 0x66D97757, gripText = 0xFFF0B9A3.toInt(),
+            buttonBg = 0xFF3A3936.toInt(),
+            buttonStroke = 0x33FAF9F5, buttonText = 0xFFFAF9F5.toInt(),
+            padBg = 0xFF2A2A28.toInt(), padStroke = 0x26FAF9F5,
             ripple = 0x33FAF9F5,
         )
     } else {
-        // 暖浅色：象牙白按钮 + 羊皮纸触控板
+        // M3 浅色：surface
         Palette(
-            buttonTop = 0xFFFFFFFF.toInt(), buttonBottom = 0xFFF5F4ED.toInt(),
-            buttonStroke = 0x33B0AEA5, buttonText = 0xFF141413.toInt(),
-            padTop = 0xFFF0EEE6.toInt(), padBottom = 0xFFE8E6DC.toInt(), padStroke = 0x33B0AEA5,
-            gripTop = 0xFFF6E3DA.toInt(), gripBottom = 0xFFEFD2C5.toInt(),
-            gripStroke = 0x66C96442, gripText = 0xFFC96442.toInt(),
+            buttonBg = 0xFFF5F4ED.toInt(),
+            buttonStroke = 0x40141413, buttonText = 0xFF141413.toInt(),
+            padBg = 0xFFE8E6DC.toInt(), padStroke = 0x40141413,
             ripple = 0x26141413,
         )
     }
 
-    private fun gradient(shape: Int, top: Int, bottom: Int, stroke: Int, radiusPx: Float = 0f): GradientDrawable =
-        GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(withAlpha(top, prefs.opacityPercent), withAlpha(bottom, prefs.opacityPercent)),
-        ).apply {
+    private fun solidBackground(shape: Int, color: Int, stroke: Int, radiusPx: Float = 0f): GradientDrawable =
+        GradientDrawable().apply {
             this.shape = shape
             if (shape == GradientDrawable.RECTANGLE) cornerRadius = radiusPx
+            setColor(withAlpha(color, prefs.opacityPercent))
             setStroke(dp(1), scaleAlpha(stroke, prefs.opacityPercent))
         }
 
     /** 圆形按钮背景，带按压水波纹反馈。 */
-    private fun circleBackground(top: Int, bottom: Int, stroke: Int, ripple: Int): Drawable {
+    private fun circleBackground(color: Int, stroke: Int, ripple: Int): Drawable {
         val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
-        return RippleDrawable(ColorStateList.valueOf(ripple), gradient(GradientDrawable.OVAL, top, bottom, stroke), mask)
+        return RippleDrawable(ColorStateList.valueOf(ripple), solidBackground(GradientDrawable.OVAL, color, stroke), mask)
     }
 
     private fun makeHandle(iconRes: Int, dark: Boolean, onTouch: (View, MotionEvent) -> Boolean): View =
         ImageView(this).apply {
             val p = palette(dark)
             setImageResource(iconRes)
-            imageTintList = ColorStateList.valueOf(p.gripText)
+            setColorFilter(p.buttonText)
             scaleType = ImageView.ScaleType.FIT_CENTER
-            background = circleBackground(p.gripTop, p.gripBottom, p.gripStroke, p.ripple)
+            background = circleBackground(p.buttonBg, p.buttonStroke, p.ripple)
             isClickable = true
             setOnTouchListener { v, e ->
                 // 自己处理拖动，同时让水波纹跟随按下/抬起
@@ -676,9 +669,9 @@ class TouchpadService : AccessibilityService() {
     private fun makeActionButton(slot: Int, action: PadAction, dark: Boolean): View = ImageView(this).apply {
         val p = palette(dark)
         setImageResource(action.iconRes)
-        imageTintList = ColorStateList.valueOf(p.buttonText)
+        setColorFilter(p.buttonText)
         scaleType = ImageView.ScaleType.FIT_CENTER
-        background = circleBackground(p.buttonTop, p.buttonBottom, p.buttonStroke, p.ripple)
+        background = circleBackground(p.buttonBg, p.buttonStroke, p.ripple)
         isClickable = true
         contentDescription = getString(action.labelRes)
         setOnClickListener { performAction(action) }
@@ -687,7 +680,7 @@ class TouchpadService : AccessibilityService() {
 
     private fun padBackground(dark: Boolean, radiusPx: Float): GradientDrawable {
         val p = palette(dark)
-        return gradient(GradientDrawable.RECTANGLE, p.padTop, p.padBottom, p.padStroke, radiusPx)
+        return solidBackground(GradientDrawable.RECTANGLE, p.padBg, p.padStroke, radiusPx)
     }
 
     /** 按面板不透明度缩放一个已带 alpha 的颜色。 */
@@ -1233,18 +1226,21 @@ class TouchpadService : AccessibilityService() {
 
     /** 拖拽进行中，面板上的「拖拽锁定」按钮改成陶土色，提示再按一次结束。 */
     private fun refreshDragButtons() {
-        val dark = if (this::prefs.isInitialized) isDarkTheme() else false
+        val dark = isDarkTheme()
         val p = palette(dark)
+        val accentBg = if (dark) 0xFF5A3A2E.toInt() else 0xFFF6E3DA.toInt()
+        val accentStroke = if (dark) 0x66D97757 else 0x66C96442
+        val accentText = if (dark) 0xFFF0B9A3.toInt() else 0xFFC96442.toInt()
         actionViews.forEachIndexed { index, view ->
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
             if (prefs.buttons.getOrNull(slot) != PadAction.DRAG_LOCK) return@forEachIndexed
             val iv = view as? ImageView ?: return@forEachIndexed
             if (dragging) {
-                iv.background = circleBackground(p.gripTop, p.gripBottom, p.gripStroke, p.ripple)
-                iv.imageTintList = ColorStateList.valueOf(p.gripText)
+                iv.background = circleBackground(accentBg, accentStroke, p.ripple)
+                iv.setColorFilter(accentText)
             } else {
-                iv.background = circleBackground(p.buttonTop, p.buttonBottom, p.buttonStroke, p.ripple)
-                iv.imageTintList = ColorStateList.valueOf(p.buttonText)
+                iv.background = circleBackground(p.buttonBg, p.buttonStroke, p.ripple)
+                iv.setColorFilter(p.buttonText)
             }
         }
     }
