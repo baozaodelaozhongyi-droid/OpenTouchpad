@@ -1,10 +1,14 @@
 package io.github.opentouchpad
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
@@ -16,9 +20,15 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewAnimationUtils
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -39,8 +49,13 @@ class MainActivity : Activity() {
     private lateinit var statusView: TextView
     private lateinit var content: LinearLayout
     private lateinit var scroller: ScrollView
+    private lateinit var rootContainer: FrameLayout
     private var showPanelSwitch: Switch? = null
     private var darkUi = false
+    private var isThemeSwitching = false
+    private var lastInsetsTop = 0
+    private var lastInsetsBottom = 0
+    private var currentSnapshotBmp: Bitmap? = null
 
     // 暖色调配色（参考 Claude 官网）：羊皮纸底色 + 象牙白卡片 + 陶土橙强调色；所有灰色都带暖黄底调。
     private val pageColor get() = if (darkUi) 0xFF1F1E1D.toInt() else 0xFFF5F4ED.toInt()
@@ -70,30 +85,40 @@ class MainActivity : Activity() {
         darkUi = prefs.themeMode.resolvesToDark(systemIsDark())
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
         super.onCreate(savedInstanceState)
-        window.statusBarColor = pageColor
-        window.navigationBarColor = pageColor
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = if (darkUi) 0 else {
-            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        }
+        updateSystemBars()
+
         val root = buildUi()
-        // Android 15 起强制全面屏：内容会画到状态栏下面，这里按系统栏高度补内边距。
-        root.setOnApplyWindowInsetsListener { v, insets ->
-            val top: Int
-            val bottom: Int
-            if (Build.VERSION.SDK_INT >= 30) {
-                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-                top = bars.top; bottom = bars.bottom
-            } else {
-                @Suppress("DEPRECATION")
-                top = insets.systemWindowInsetTop
-                @Suppress("DEPRECATION")
-                bottom = insets.systemWindowInsetBottom
+        rootContainer = object : FrameLayout(this) {
+            override fun onInterceptTouchEvent(ev: MotionEvent?): Boolean {
+                return isThemeSwitching || super.onInterceptTouchEvent(ev)
             }
-            v.setPadding(0, top, 0, bottom)
-            insets
+        }.apply {
+            setBackgroundColor(pageColor)
+            addView(root, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+            // Android 15 起强制全面屏：内容会画到状态栏下面，这里按系统栏高度补内边距。
+            setOnApplyWindowInsetsListener { _, insets ->
+                val top: Int
+                val bottom: Int
+                if (Build.VERSION.SDK_INT >= 30) {
+                    val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                    top = bars.top; bottom = bars.bottom
+                } else {
+                    @Suppress("DEPRECATION")
+                    top = insets.systemWindowInsetTop
+                    @Suppress("DEPRECATION")
+                    bottom = insets.systemWindowInsetBottom
+                }
+                lastInsetsTop = top
+                lastInsetsBottom = bottom
+                scroller.setPadding(0, top, 0, bottom)
+                insets
+            }
         }
-        setContentView(root)
+        setContentView(rootContainer)
+
         val savedScroll = savedInstanceState?.getInt(KEY_SCROLL_Y, 0) ?: 0
         if (savedScroll > 0) {
             // 等内容测量完再滚动，否则 ScrollView 还没有可滚动高度
@@ -104,6 +129,12 @@ class MainActivity : Activity() {
                 }
             })
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        currentSnapshotBmp?.let { if (!it.isRecycled) it.recycle() }
+        currentSnapshotBmp = null
     }
 
     override fun onResume() {
@@ -122,7 +153,7 @@ class MainActivity : Activity() {
 
     // ───────────────────────── 界面骨架 ─────────────────────────
 
-    private fun buildUi(): View {
+    private fun buildUi(): ScrollView {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(40))
@@ -242,6 +273,7 @@ class MainActivity : Activity() {
             setBackgroundColor(pageColor)
             isFillViewport = true
             isVerticalScrollBarEnabled = false
+            clipToPadding = false
             addView(col)
         }
     }
@@ -403,9 +435,15 @@ class MainActivity : Activity() {
                 contentDescription = getString(labelRes)
                 setOnClickListener {
                     if (prefs.themeMode != mode) {
-                        prefs.themeMode = mode
-                        reload()
-                        recreateKeepingScroll()
+                        if (prefs.haptics) {
+                            runCatching {
+                                performHapticFeedback(
+                                    HapticFeedbackConstants.VIRTUAL_KEY,
+                                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
+                                )
+                            }
+                        }
+                        switchThemeWithReveal(mode, this)
                     }
                 }
             }, LinearLayout.LayoutParams(0, dp(42), 1f))
@@ -702,6 +740,155 @@ class MainActivity : Activity() {
             it == "$packageName/.TouchpadService" ||
                 it == "$packageName/$packageName.TouchpadService"
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun updateSystemBars() {
+        window.statusBarColor = pageColor
+        window.navigationBarColor = pageColor
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = if (darkUi) 0 else {
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            val controller = window.insetsController
+            val flags = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            if (darkUi) {
+                controller?.setSystemBarsAppearance(0, flags)
+            } else {
+                controller?.setSystemBarsAppearance(flags, flags)
+            }
+        }
+    }
+
+    /**
+     * 外观主题改变时，以点击的选项为圆心向外执行全屏颜色扩散 reveal 动效。
+     */
+    private fun switchThemeWithReveal(mode: ThemeMode, originView: View) {
+        if (isThemeSwitching) return
+        if (prefs.themeMode == mode) return
+
+        val w = rootContainer.width
+        val h = rootContainer.height
+        if (w <= 0 || h <= 0) {
+            prefs.themeMode = mode
+            reload()
+            recreateKeepingScroll()
+            return
+        }
+
+        isThemeSwitching = true
+        val scrollY = scroller.scrollY
+
+        // 1. 记录起点坐标（相对 rootContainer 的中心点）
+        val originLoc = IntArray(2)
+        originView.getLocationInWindow(originLoc)
+        val containerLoc = IntArray(2)
+        rootContainer.getLocationInWindow(containerLoc)
+        val cx = if (originView.width > 0) {
+            (originLoc[0] - containerLoc[0]) + originView.width / 2
+        } else {
+            w / 2
+        }
+        val cy = if (originView.height > 0) {
+            (originLoc[1] - containerLoc[1]) + originView.height / 2
+        } else {
+            h / 2
+        }
+
+        // 2. 截取当前界面快照
+        val oldBmp = try {
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            rootContainer.draw(canvas)
+            bmp
+        } catch (_: Throwable) {
+            null
+        }
+
+        if (oldBmp == null) {
+            isThemeSwitching = false
+            prefs.themeMode = mode
+            reload()
+            recreateKeepingScroll()
+            return
+        }
+
+        currentSnapshotBmp?.let { if (!it.isRecycled) it.recycle() }
+        currentSnapshotBmp = oldBmp
+
+        val oldImageView = ImageView(this).apply {
+            setImageBitmap(oldBmp)
+            scaleType = ImageView.ScaleType.FIT_XY
+        }
+
+        // 3. 移除旧视图，加入旧视图快照作为扩散底层
+        rootContainer.removeAllViews()
+        rootContainer.addView(
+            oldImageView,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        )
+
+        // 4. 更新偏好与新主题配置
+        prefs.themeMode = mode
+        darkUi = mode.resolvesToDark(systemIsDark())
+        setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
+        reload()
+
+        // 5. 构建新主题视图并加上对应状态栏内边距
+        val newScroller = buildUi().apply {
+            setPadding(0, lastInsetsTop, 0, lastInsetsBottom)
+            clipToPadding = false
+        }
+        updateStatus()
+
+        rootContainer.addView(
+            newScroller,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        )
+
+        // 6. 预绘制时同步滚动高度并启动圆形揭示动画
+        newScroller.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                newScroller.viewTreeObserver.removeOnPreDrawListener(this)
+                newScroller.scrollTo(0, scrollY)
+
+                val dx = maxOf(cx, w - cx).toDouble()
+                val dy = maxOf(cy, h - cy).toDouble()
+                val maxRadius = kotlin.math.hypot(dx, dy).toFloat() + dp(4).toFloat()
+
+                val anim = runCatching {
+                    ViewAnimationUtils.createCircularReveal(newScroller, cx, cy, 0f, maxRadius)
+                }.getOrNull()
+
+                if (anim != null) {
+                    anim.duration = 380L
+                    anim.interpolator = AccelerateDecelerateInterpolator()
+                    val cleanup = {
+                        rootContainer.removeView(oldImageView)
+                        if (!oldBmp.isRecycled) oldBmp.recycle()
+                        if (currentSnapshotBmp === oldBmp) currentSnapshotBmp = null
+                        rootContainer.setBackgroundColor(pageColor)
+                        updateSystemBars()
+                        isThemeSwitching = false
+                    }
+                    anim.addListener(object : AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(animation: Animator) = cleanup()
+                        override fun onAnimationCancel(animation: Animator) = cleanup()
+                    })
+                    anim.start()
+                } else {
+                    rootContainer.removeView(oldImageView)
+                    if (!oldBmp.isRecycled) oldBmp.recycle()
+                    if (currentSnapshotBmp === oldBmp) currentSnapshotBmp = null
+                    rootContainer.setBackgroundColor(pageColor)
+                    updateSystemBars()
+                    isThemeSwitching = false
+                }
+                return true
+            }
+        })
     }
 
     /**
