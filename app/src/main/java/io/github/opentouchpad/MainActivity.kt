@@ -174,6 +174,7 @@ class MainActivity : Activity() {
                 addView(hintText(getString(R.string.drag_lock_hint)))
             },
             slider(getString(R.string.set_button_spacing), 0, BUTTON_SPACING_MAX_DP, prefs.buttonSpacingDp, unit = "dp", onChange = { prefs.buttonSpacingDp = it; reload() }),
+            switchRow(getString(R.string.switch_long_press_customize), prefs.longPressButtonToCustomize, hint = getString(R.string.switch_long_press_customize_hint), onChange = { prefs.longPressButtonToCustomize = it; reload() }),
         ))
 
         // ── 悬浮球 ──

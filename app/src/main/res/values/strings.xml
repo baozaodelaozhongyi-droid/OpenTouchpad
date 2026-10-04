@@ -128,4 +128,6 @@
     <string name="need_move_key">This is the last move key and can\'t be changed. Set another position to “Move touchpad” first.</string>
     <string name="set_pad_dead_zone">Edge trigger width</string>
     <string name="pad_dead_zone_hint">A touch that starts in this band along the touchpad edge (including outside the rounded corners) is ignored entirely, so pressing a nearby button doesn\'t hit the pad. 0 = off.</string>
+    <string name="switch_long_press_customize">Long press button to customize action</string>
+    <string name="switch_long_press_customize_hint">When enabled, long-pressing panel buttons opens the action picker to reassign their actions.</string>
 </resources>

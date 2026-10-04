@@ -187,6 +187,10 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("buttonSpacing", DEFAULT_BUTTON_SPACING_DP)
         set(v) = sp.edit().putInt("buttonSpacing", v).apply()
 
+    var longPressButtonToCustomize: Boolean
+        get() = sp.getBoolean("longPressButtonToCustomize", true)
+        set(v) = sp.edit().putBoolean("longPressButtonToCustomize", v).apply()
+
     /** 按键位置，逗号分隔的 PadAction.id；共 [BUTTON_SLOT_COUNT] 个（含四角、移动键、缩放键）。 */
     var buttons: List<PadAction>
         get() = decodeButtonSlots(sp.getString("buttons", null))

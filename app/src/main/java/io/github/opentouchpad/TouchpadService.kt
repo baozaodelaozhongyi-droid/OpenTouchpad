@@ -693,7 +693,9 @@ class TouchpadService : AccessibilityService() {
             onHaptic = { haptic(this) },
         )
         setOnClickListener { performAction(action) }
-        setOnLongClickListener { showActionPicker(slot, action); true }
+        if (prefs.longPressButtonToCustomize) {
+            setOnLongClickListener { showActionPicker(slot, action); true }
+        }
     }
 
     private fun padBackground(dark: Boolean, radiusPx: Float): GradientDrawable {

@@ -128,4 +128,6 @@
     <string name="need_move_key">这是最后一个移动键，不能换成其他动作。先把别的位置设成「移动触控板」再改这里。</string>
     <string name="set_pad_dead_zone">边缘触发宽度</string>
     <string name="pad_dead_zone_hint">手指落在触控板边缘这一圈（包括圆角外侧）里，这一整次触摸都忽略，按旁边的按钮时不会误碰。0 = 关闭。</string>
+    <string name="switch_long_press_customize">长按按钮自定义动作</string>
+    <string name="switch_long_press_customize_hint">开启后长按触控板按钮可弹出动作选择器，自由更换按钮功能。</string>
 </resources>
