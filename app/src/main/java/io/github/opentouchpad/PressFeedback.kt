@@ -36,6 +36,7 @@ object PressFeedback {
     ) {
         val density = view.resources.displayMetrics.density
         view.cameraDistance = 6000f * density
+        view.isHapticFeedbackEnabled = false
 
         view.setOnTouchListener { v, event ->
             if (!isEnabled()) {
@@ -62,9 +63,7 @@ object PressFeedback {
                         .setInterpolator(decelerate)
                         .start()
 
-                    onHaptic?.invoke() ?: runCatching {
-                        v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    }
+                    onHaptic?.invoke()
                 }
 
                 MotionEvent.ACTION_MOVE -> {

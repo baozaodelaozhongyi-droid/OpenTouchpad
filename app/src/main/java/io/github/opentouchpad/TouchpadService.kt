@@ -478,6 +478,7 @@ class TouchpadService : AccessibilityService() {
             background = padBackground(dark, dp(22).toFloat())
             contentDescription = getString(R.string.touchpad_content_description)
             cameraDistance = 8000f * resources.displayMetrics.density
+            isHapticFeedbackEnabled = false
             setOnTouchListener { _, e -> handlePadTouch(e); true }
         }
         padArea = pad
@@ -670,11 +671,12 @@ class TouchpadService : AccessibilityService() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             background = circleBackground(p.buttonBg, p.buttonStroke, p.ripple)
             isClickable = true
+            isHapticFeedbackEnabled = false
             setOnTouchListener { v, e ->
                 if (isPassThroughActive) return@setOnTouchListener false
                 // 自己处理拖动，同时让水波纹跟随按下/抬起
                 when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { v.isPressed = true; haptic() }
+                    MotionEvent.ACTION_DOWN -> { v.isPressed = true; haptic(v) }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.isPressed = false
                 }
                 onTouch(v, e)
@@ -688,6 +690,7 @@ class TouchpadService : AccessibilityService() {
         scaleType = ImageView.ScaleType.FIT_CENTER
         background = circleBackground(p.buttonBg, p.buttonStroke, p.ripple)
         isClickable = true
+        isHapticFeedbackEnabled = false
         contentDescription = getString(action.labelRes)
         PressFeedback.attach(
             this,
@@ -696,7 +699,6 @@ class TouchpadService : AccessibilityService() {
             pressScale = 0.92f,
             sinkDp = 2f,
             isEnabled = { prefs.pressFeedback && !isPassThroughActive },
-            onHaptic = { haptic(this) },
         )
         setOnClickListener {
             if (isPassThroughActive) return@setOnClickListener
@@ -772,7 +774,6 @@ class TouchpadService : AccessibilityService() {
                     padArea?.let { pad ->
                         PressFeedback.applyPadDown(pad, e.x, e.y, resources.displayMetrics.density)
                     }
-                    haptic()
                 }
                 downRawX = e.rawX; downRawY = e.rawY
                 lastRawX = e.rawX; lastRawY = e.rawY
@@ -1474,7 +1475,10 @@ class TouchpadService : AccessibilityService() {
     private fun haptic(view: View? = null) {
         if (!prefs.haptics) return
         runCatching {
-            (view ?: padArea ?: panel)?.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+            (view ?: padArea ?: panel)?.performHapticFeedback(
+                android.view.HapticFeedbackConstants.VIRTUAL_KEY,
+                android.view.HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
+            )
         }
     }
 
