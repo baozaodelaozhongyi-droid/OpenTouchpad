@@ -90,6 +90,32 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun themeTransitionResolvesReversibleActionsCorrectly() {
+        // 初始暗色，无进行中的扩散波
+        assertEquals(ThemeTransitionAction.NO_OP, resolveThemeTransitionAction(baseDark = true, currentRevealDark = null, targetDark = true))
+        assertEquals(ThemeTransitionAction.START_REVEAL, resolveThemeTransitionAction(baseDark = true, currentRevealDark = null, targetDark = false))
+
+        // 初始暗色，亮色波正在扩散中
+        // 用户再次点击亮色：继续扩散
+        assertEquals(ThemeTransitionAction.EXPAND_REVEAL, resolveThemeTransitionAction(baseDark = true, currentRevealDark = false, targetDark = false))
+        // 用户点击暗色（系统或深色）：反转收缩回底层
+        assertEquals(ThemeTransitionAction.REVERSE_TO_BASE, resolveThemeTransitionAction(baseDark = true, currentRevealDark = false, targetDark = true))
+
+        // 初始亮色，暗色波正在扩散中
+        assertEquals(ThemeTransitionAction.EXPAND_REVEAL, resolveThemeTransitionAction(baseDark = false, currentRevealDark = true, targetDark = true))
+        assertEquals(ThemeTransitionAction.REVERSE_TO_BASE, resolveThemeTransitionAction(baseDark = false, currentRevealDark = true, targetDark = false))
+    }
+
+    @Test
+    fun revealDurationScalesWithDistanceAndClamps() {
+        assertEquals(380L, computeRevealDuration(fromRadius = 0f, toRadius = 1000f, maxRadius = 1000f))
+        assertEquals(114L, computeRevealDuration(fromRadius = 300f, toRadius = 0f, maxRadius = 1000f))
+        assertEquals(100L, computeRevealDuration(fromRadius = 50f, toRadius = 0f, maxRadius = 1000f))
+        assertEquals(380L, computeRevealDuration(fromRadius = 0f, toRadius = 2000f, maxRadius = 1000f))
+    }
+
+
+    @Test
     fun floatingBallPositionIsKeptInsideScreen() {
         assertEquals(
             PanelPosition(900, 1740),

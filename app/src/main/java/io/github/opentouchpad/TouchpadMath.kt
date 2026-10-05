@@ -213,3 +213,35 @@ internal fun insideTouchArea(x: Float, y: Float, w: Float, h: Float, radius: Flo
 
 internal fun isPointInsideRect(px: Float, py: Float, x: Int, y: Int, w: Int, h: Int): Boolean =
     w > 0 && h > 0 && px >= x && px <= x + w && py >= y && py <= y + h
+
+internal enum class ThemeTransitionAction {
+    NO_OP,
+    START_REVEAL,
+    REVERSE_TO_BASE,
+    EXPAND_REVEAL,
+}
+
+internal fun resolveThemeTransitionAction(
+    baseDark: Boolean,
+    currentRevealDark: Boolean?,
+    targetDark: Boolean,
+): ThemeTransitionAction = when {
+    currentRevealDark != null -> {
+        if (targetDark == currentRevealDark) ThemeTransitionAction.EXPAND_REVEAL
+        else ThemeTransitionAction.REVERSE_TO_BASE
+    }
+    targetDark == baseDark -> ThemeTransitionAction.NO_OP
+    else -> ThemeTransitionAction.START_REVEAL
+}
+
+internal fun computeRevealDuration(
+    fromRadius: Float,
+    toRadius: Float,
+    maxRadius: Float,
+    baseDurationMs: Long = 380L,
+): Long {
+    val distance = kotlin.math.abs(toRadius - fromRadius)
+    val maxDist = maxRadius.coerceAtLeast(1f)
+    return (baseDurationMs * (distance / maxDist)).roundToLong().coerceIn(100L, baseDurationMs)
+}
+

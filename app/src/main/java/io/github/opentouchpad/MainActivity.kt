@@ -49,9 +49,15 @@ class MainActivity : Activity() {
     private lateinit var statusView: TextView
     private lateinit var content: LinearLayout
     private lateinit var scroller: ScrollView
+    private lateinit var baseScroller: ScrollView
     private lateinit var rootContainer: FrameLayout
     private var showPanelSwitch: Switch? = null
+    private var baseStatusView: TextView? = null
+    private var baseShowPanelSwitch: Switch? = null
     private var darkUi = false
+    private var baseThemeDark = false
+    private var currentReveal: RevealLayout? = null
+    private var currentRevealDark = false
     private var lastInsetsTop = 0
     private var lastInsetsBottom = 0
     private var activeAnimator: ValueAnimator? = null
@@ -82,16 +88,20 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         prefs = Prefs(this)
-        darkUi = prefs.themeMode.resolvesToDark(systemIsDark())
+        baseThemeDark = prefs.themeMode.resolvesToDark(systemIsDark())
+        darkUi = baseThemeDark
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
         super.onCreate(savedInstanceState)
         updateSystemBars()
 
-        val root = buildUi()
-        attachScrollSync(root)
+        baseScroller = buildUi()
+        scroller = baseScroller
+        baseStatusView = statusView
+        baseShowPanelSwitch = showPanelSwitch
+        attachScrollSync(baseScroller)
         rootContainer = FrameLayout(this).apply {
             setBackgroundColor(pageColor)
-            addView(root, FrameLayout.LayoutParams(
+            addView(baseScroller, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
@@ -415,6 +425,7 @@ class MainActivity : Activity() {
     /** 外观：三段式分段选择器。 */
     private fun themeModeRow(): View {
         val track = LinearLayout(this).apply {
+            tag = THEME_SELECTOR_TRACK_TAG
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
             background = roundedSurface(trackColor, 12)
@@ -426,6 +437,7 @@ class MainActivity : Activity() {
         ).forEach { (mode, labelRes) ->
             val selected = prefs.themeMode == mode
             track.addView(TextView(this).apply {
+                tag = mode
                 text = getString(labelRes)
                 textSize = 14f
                 gravity = Gravity.CENTER
@@ -440,23 +452,43 @@ class MainActivity : Activity() {
                 isClickable = true
                 contentDescription = getString(labelRes)
                 setOnClickListener {
-                    if (prefs.themeMode != mode) {
-                        if (prefs.haptics) {
-                            runCatching {
-                                performHapticFeedback(
-                                    HapticFeedbackConstants.VIRTUAL_KEY,
-                                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
-                                )
-                            }
+                    if (prefs.haptics) {
+                        runCatching {
+                            performHapticFeedback(
+                                HapticFeedbackConstants.VIRTUAL_KEY,
+                                HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
+                            )
                         }
-                        switchThemeWithReveal(mode, this)
                     }
+                    switchThemeWithReveal(mode, this)
                 }
             }, LinearLayout.LayoutParams(0, dp(42), 1f))
         }
         return FrameLayout(this).apply {
             setPadding(dp(12), dp(12), dp(12), dp(12))
             addView(track)
+        }
+    }
+
+    private fun updateThemeSelector(track: LinearLayout, selectedMode: ThemeMode, isDark: Boolean) {
+        val elevated = if (isDark) 0xFF30302E.toInt() else 0xFFFFFFFF.toInt()
+        val border = if (isDark) 0xFF3D3D3A.toInt() else 0xFFE8E6DC.toInt()
+        val text = if (isDark) 0xFFFAF9F5.toInt() else 0xFF141413.toInt()
+        val secondaryText = if (isDark) 0xFFB0AEA5.toInt() else 0xFF5E5D59.toInt()
+        val ripple = if (isDark) 0x1FFAF9F5 else 0x14141413
+
+        for (i in 0 until track.childCount) {
+            val tv = track.getChildAt(i) as? TextView ?: continue
+            val mode = tv.tag as? ThemeMode ?: continue
+            val selected = mode == selectedMode
+            tv.typeface = if (selected) sansMedium else Typeface.DEFAULT
+            tv.setTextColor(if (selected) text else secondaryText)
+            tv.background = if (selected) {
+                roundedSurface(elevated, 9).apply { setStroke(maxOf(1, dp(1)), border) }
+            } else {
+                ripple(null, ripple, 9)
+            }
+            tv.elevation = if (selected) dp(1).toFloat() else 0f
         }
     }
 
@@ -818,120 +850,165 @@ class MainActivity : Activity() {
         scrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             if (isSyncingScroll) return@setOnScrollChangeListener
             isSyncingScroll = true
-            for (i in 0 until rootContainer.childCount) {
-                val child = rootContainer.getChildAt(i)
-                val target = when (child) {
-                    is ScrollView -> child
-                    is RevealLayout -> child.scroller
-                    else -> null
-                }
-                if (target != null && target !== scrollView) {
-                    target.scrollTo(0, scrollY)
-                }
-            }
+            val other = if (scrollView === baseScroller) currentReveal?.scroller else baseScroller
+            other?.scrollTo(0, scrollY)
             isSyncingScroll = false
         }
     }
 
+    private fun startRevealAnimation(
+        reveal: RevealLayout,
+        fromRadius: Float,
+        toRadius: Float,
+        toBase: Boolean,
+    ) {
+        val oldAnim = activeAnimator
+        activeAnimator = null
+        oldAnim?.cancel()
+
+        val animDuration = computeRevealDuration(fromRadius, toRadius, reveal.maxRadius)
+
+        val anim = ValueAnimator.ofFloat(fromRadius, toRadius).apply {
+            duration = animDuration
+            interpolator = AccelerateDecelerateInterpolator()
+            addUpdateListener { va ->
+                reveal.radius = va.animatedValue as Float
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                private var isCanceled = false
+
+                override fun onAnimationCancel(animation: Animator) {
+                    isCanceled = true
+                }
+
+                override fun onAnimationEnd(animation: Animator) {
+                    if (isCanceled) return
+                    if (activeAnimator === animation) {
+                        activeAnimator = null
+                        if (toBase) {
+                            rootContainer.removeView(reveal)
+                            currentReveal = null
+                            baseStatusView?.let { statusView = it }
+                            baseShowPanelSwitch?.let { showPanelSwitch = it }
+                            scroller = baseScroller
+                        } else {
+                            finishThemeTransition(reveal, currentRevealDark)
+                        }
+                    }
+                }
+            })
+        }
+        activeAnimator = anim
+        anim.start()
+    }
+
     /**
-     * 外观主题改变时，以点击的选项为圆心向外执行无缝可打断的全屏颜色扩散动效。
+     * 外观主题改变时，以点击的选项为圆心向外执行无缝可打断、可逆向的全屏颜色扩散动效。
+     * 当在两个或三个主题间快速连续点击时，通过单一 RevealLayout 的正向/反向半径平滑插值，
+     * 杜绝多动画竞争与残留圆圈卡住问题，并保证在动效进行中始终保持屏幕全功能可交互。
      */
     private fun switchThemeWithReveal(mode: ThemeMode, originView: View) {
-        if (prefs.themeMode == mode) return
+        val targetDark = mode.resolvesToDark(systemIsDark())
+        prefs.themeMode = mode
+
+        // 无论动效如何，立即更新两个层级上的分段选择器高亮状态
+        baseScroller.findViewWithTag<LinearLayout>(THEME_SELECTOR_TRACK_TAG)?.let {
+            updateThemeSelector(it, mode, baseThemeDark)
+        }
+        currentReveal?.scroller?.findViewWithTag<LinearLayout>(THEME_SELECTOR_TRACK_TAG)?.let {
+            updateThemeSelector(it, mode, currentRevealDark)
+        }
 
         val w = rootContainer.width
         val h = rootContainer.height
         if (w <= 0 || h <= 0) {
-            prefs.themeMode = mode
+            darkUi = targetDark
+            baseThemeDark = targetDark
             reload()
             recreateKeepingScroll()
             return
         }
 
-        // 取消前一个动画的监听，支持随时打断与连续切换
-        val oldAnim = activeAnimator
-        activeAnimator = null
-        oldAnim?.cancel()
-
-        // 限制过渡层堆叠数量，保持最多 2 层正在过渡
-        while (rootContainer.childCount > 2) {
-            rootContainer.removeViewAt(0)
-        }
-
-        // 1. 记录点击按钮的中心坐标（相对 rootContainer）
-        val originLoc = IntArray(2)
-        originView.getLocationInWindow(originLoc)
-        val containerLoc = IntArray(2)
-        rootContainer.getLocationInWindow(containerLoc)
-        val cx = if (originView.width > 0) {
-            (originLoc[0] - containerLoc[0]) + originView.width / 2f
-        } else {
-            w / 2f
-        }
-        val cy = if (originView.height > 0) {
-            (originLoc[1] - containerLoc[1]) + originView.height / 2f
-        } else {
-            h / 2f
-        }
-
-        val scrollY = scroller.scrollY
-
-        // 2. 更新偏好与新主题配置
-        prefs.themeMode = mode
-        darkUi = mode.resolvesToDark(systemIsDark())
-        setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
-
-        // 3. 构建新主题视图并绑定滚动同步
-        val newScroller = buildUi().apply {
-            setPadding(0, lastInsetsTop, 0, lastInsetsBottom)
-        }
-        attachScrollSync(newScroller)
-        updateStatus()
-
-        // 4. 计算扩散至全屏所需的最大半径并包装入 RevealLayout
-        val dx = maxOf(cx, w - cx).toDouble()
-        val dy = maxOf(cy, h - cy).toDouble()
-        val maxRadius = kotlin.math.hypot(dx, dy).toFloat() + dp(4).toFloat()
-
-        val revealLayout = RevealLayout(this, newScroller).apply {
-            this.cx = cx
-            this.cy = cy
-            this.radius = 0f
-            this.maxRadius = maxRadius
-        }
-        rootContainer.addView(
-            revealLayout,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        val action = resolveThemeTransitionAction(
+            baseDark = baseThemeDark,
+            currentRevealDark = currentReveal?.let { currentRevealDark },
+            targetDark = targetDark,
         )
 
-        // 5. 待新视图完成布局后同步滚动高度并启动扩散动画
-        newScroller.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
-            override fun onPreDraw(): Boolean {
-                newScroller.viewTreeObserver.removeOnPreDrawListener(this)
-                newScroller.scrollTo(0, scrollY)
-
-                val anim = ValueAnimator.ofFloat(0f, maxRadius).apply {
-                    duration = 380L
-                    interpolator = AccelerateDecelerateInterpolator()
-                    addUpdateListener { va ->
-                        revealLayout.radius = va.animatedValue as Float
-                    }
-                    addListener(object : AnimatorListenerAdapter() {
-                        override fun onAnimationEnd(animation: Animator) {
-                            if (activeAnimator === animation) {
-                                finishThemeTransition(revealLayout)
-                            }
-                        }
-                    })
-                }
-                activeAnimator = anim
-                anim.start()
-                return true
+        when (action) {
+            ThemeTransitionAction.NO_OP -> {
+                // 目标主题与底层主题外观一致（例如深色系统下在跟随系统与深色模式间切换），仅按钮高亮变化，无需动画
+                return
             }
-        })
+            ThemeTransitionAction.EXPAND_REVEAL -> {
+                // 目标主题与当前正在扩散的主题一致，确保向外平滑展开至全屏
+                val reveal = currentReveal ?: return
+                startRevealAnimation(reveal, fromRadius = reveal.radius, toRadius = reveal.maxRadius, toBase = false)
+            }
+            ThemeTransitionAction.REVERSE_TO_BASE -> {
+                // 目标主题回到了底层主题，当前扩散波平滑收缩回圆心并清理，杜绝残留卡死
+                val reveal = currentReveal ?: return
+                startRevealAnimation(reveal, fromRadius = reveal.radius, toRadius = 0f, toBase = true)
+            }
+            ThemeTransitionAction.START_REVEAL -> {
+                // 当前没有扩散波，启动新的圆形扩散动画
+                val originLoc = IntArray(2)
+                originView.getLocationInWindow(originLoc)
+                val containerLoc = IntArray(2)
+                rootContainer.getLocationInWindow(containerLoc)
+                val cx = if (originView.width > 0) {
+                    (originLoc[0] - containerLoc[0]) + originView.width / 2f
+                } else {
+                    w / 2f
+                }
+                val cy = if (originView.height > 0) {
+                    (originLoc[1] - containerLoc[1]) + originView.height / 2f
+                } else {
+                    h / 2f
+                }
+
+                val dx = maxOf(cx, w - cx).toDouble()
+                val dy = maxOf(cy, h - cy).toDouble()
+                val maxRadius = kotlin.math.hypot(dx, dy).toFloat() + dp(4).toFloat()
+
+                // 临时切换 darkUi 以构建新主题视图
+                darkUi = targetDark
+                val newScroller = buildUi().apply {
+                    setPadding(0, lastInsetsTop, 0, lastInsetsBottom)
+                }
+                darkUi = baseThemeDark // 恢复底层 baseThemeDark
+
+                attachScrollSync(newScroller)
+                updateStatus()
+
+                val newReveal = RevealLayout(this, newScroller).apply {
+                    this.cx = cx
+                    this.cy = cy
+                    this.radius = 0f
+                    this.maxRadius = maxRadius
+                }
+                currentReveal = newReveal
+                currentRevealDark = targetDark
+
+                rootContainer.addView(
+                    newReveal,
+                    FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                )
+
+                newScroller.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+                    override fun onPreDraw(): Boolean {
+                        newScroller.viewTreeObserver.removeOnPreDrawListener(this)
+                        newScroller.scrollTo(0, baseScroller.scrollY)
+                        return true
+                    }
+                })
+
+                startRevealAnimation(newReveal, fromRadius = 0f, toRadius = maxRadius, toBase = false)
+            }
+        }
     }
 
-    private fun finishThemeTransition(winnerReveal: RevealLayout) {
+    private fun finishThemeTransition(winnerReveal: RevealLayout, newDark: Boolean) {
         activeAnimator = null
         val winnerScroller = winnerReveal.scroller
         val currentScroll = winnerScroller.scrollY
@@ -943,8 +1020,15 @@ class MainActivity : Activity() {
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         )
         winnerScroller.scrollTo(0, currentScroll)
+        baseScroller = winnerScroller
+        baseThemeDark = newDark
         scroller = winnerScroller
+        darkUi = newDark
+        currentReveal = null
+        baseStatusView = statusView
+        baseShowPanelSwitch = showPanelSwitch
 
+        setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
         rootContainer.setBackgroundColor(pageColor)
         updateSystemBars()
     }
@@ -980,6 +1064,7 @@ class MainActivity : Activity() {
 
     private companion object {
         const val KEY_SCROLL_Y = "settings_scroll_y"
+        const val THEME_SELECTOR_TRACK_TAG = "theme_selector_track"
         val SYNCING = Any()
 
         /** 和设置页同一套暖色：暖黑（默认）、象牙白、陶土、珊瑚、沙色、橄榄绿、雾蓝。 */
