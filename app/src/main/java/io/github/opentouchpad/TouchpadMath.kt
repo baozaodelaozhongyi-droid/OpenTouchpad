@@ -245,3 +245,31 @@ internal fun computeRevealDuration(
     return (baseDurationMs * (distance / maxDist)).roundToLong().coerceIn(100L, baseDurationMs)
 }
 
+internal enum class SwipeDirection { UP, DOWN, LEFT, RIGHT }
+
+internal fun resolveSwipeDirection(dx: Float, dy: Float): SwipeDirection {
+    return if (kotlin.math.abs(dx) >= kotlin.math.abs(dy)) {
+        if (dx < 0) SwipeDirection.LEFT else SwipeDirection.RIGHT
+    } else {
+        if (dy < 0) SwipeDirection.UP else SwipeDirection.DOWN
+    }
+}
+
+internal fun isSwipeGesture(dx: Float, dy: Float, thresholdPx: Float): Boolean {
+    return kotlin.math.hypot(dx, dy) >= thresholdPx
+}
+
+internal fun resolveBallSwipeAction(
+    direction: SwipeDirection,
+    upAction: PadAction,
+    downAction: PadAction,
+    leftAction: PadAction,
+    rightAction: PadAction,
+): PadAction = when (direction) {
+    SwipeDirection.UP -> upAction
+    SwipeDirection.DOWN -> downAction
+    SwipeDirection.LEFT -> leftAction
+    SwipeDirection.RIGHT -> rightAction
+}
+
+

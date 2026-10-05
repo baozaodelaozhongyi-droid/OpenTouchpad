@@ -178,6 +178,48 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("minimizeOnKeyboard", true)
         set(v) = sp.edit().putBoolean("minimizeOnKeyboard", v).apply()
 
+    // ── 悬浮球手势动作 ──
+    var ballActionSingleTap: PadAction
+        get() = PadAction.fromId(sp.getString("ballActionSingleTap", null)) ?: PadAction.BACK
+        set(v) = sp.edit().putString("ballActionSingleTap", v.id).apply()
+
+    var ballActionDoubleTap: PadAction
+        get() = PadAction.fromId(sp.getString("ballActionDoubleTap", null)) ?: PadAction.MINIMIZE
+        set(v) = sp.edit().putString("ballActionDoubleTap", v.id).apply()
+
+    var ballActionLongPress: PadAction
+        get() = PadAction.fromId(sp.getString("ballActionLongPress", null)) ?: PadAction.MOVE_BALL
+        set(v) = sp.edit().putString("ballActionLongPress", v.id).apply()
+
+    var ballActionSwipeUp: PadAction
+        get() = PadAction.fromId(sp.getString("ballActionSwipeUp", null)) ?: PadAction.HOME
+        set(v) = sp.edit().putString("ballActionSwipeUp", v.id).apply()
+
+    var ballActionSwipeDown: PadAction
+        get() = PadAction.fromId(sp.getString("ballActionSwipeDown", null)) ?: PadAction.NOTIFICATIONS
+        set(v) = sp.edit().putString("ballActionSwipeDown", v.id).apply()
+
+    var ballActionSwipeLeft: PadAction
+        get() = PadAction.fromId(sp.getString("ballActionSwipeLeft", null)) ?: PadAction.RECENTS
+        set(v) = sp.edit().putString("ballActionSwipeLeft", v.id).apply()
+
+    var ballActionSwipeRight: PadAction
+        get() = PadAction.fromId(sp.getString("ballActionSwipeRight", null)) ?: PadAction.RECENTS
+        set(v) = sp.edit().putString("ballActionSwipeRight", v.id).apply()
+
+    fun resetBallActions() {
+        sp.edit()
+            .remove("ballActionSingleTap")
+            .remove("ballActionDoubleTap")
+            .remove("ballActionLongPress")
+            .remove("ballActionSwipeUp")
+            .remove("ballActionSwipeDown")
+            .remove("ballActionSwipeLeft")
+            .remove("ballActionSwipeRight")
+            .apply()
+    }
+
+
     // ── 按钮 ──
     var buttonRadiusDp: Int
         get() = sp.getInt("buttonRadius", 14)

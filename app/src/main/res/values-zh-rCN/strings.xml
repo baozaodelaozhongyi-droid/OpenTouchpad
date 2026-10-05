@@ -46,8 +46,10 @@
     <string name="act_home">主屏</string>
     <string name="act_recents">最近任务</string>
     <string name="act_settings">打开 OpenTouchpad 设置</string>
-    <string name="act_minimize">收起触控板</string>
+    <string name="act_minimize">展开/收起触控板</string>
+    <string name="act_move_ball">拖动悬浮球</string>
     <string name="act_none">空槽位</string>
+
 
     <!-- 设置项 -->
     <string name="sec_appearance">外观</string>
@@ -94,6 +96,15 @@
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
     <string name="switch_hide_ball">隐藏悬浮球</string>
     <string name="hide_ball_hint">开启后收起触控板不显示悬浮球，可在本页打开「显示触控板」重新展开。</string>
+    <string name="sec_ball_gestures">悬浮球手势动作</string>
+    <string name="gesture_single_tap">单击</string>
+    <string name="gesture_double_tap">双击</string>
+    <string name="gesture_long_press">长按</string>
+    <string name="gesture_swipe_up">上滑</string>
+    <string name="gesture_swipe_down">下滑</string>
+    <string name="gesture_swipe_left">左滑</string>
+    <string name="gesture_swipe_right">右滑</string>
+    <string name="btn_reset_ball_gestures">恢复悬浮球默认手势</string>
     <string name="set_cursor_opacity">光标透明度</string>
     <string name="set_ball_color">悬浮球颜色</string>
     <string name="color_default">跟随主题</string>

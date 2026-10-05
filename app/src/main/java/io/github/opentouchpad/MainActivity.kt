@@ -232,6 +232,21 @@ class MainActivity : Activity() {
             slider(getString(R.string.set_ball_opacity), 20, 100, prefs.floatingBallOpacityPercent, unit = "%", onChange = { prefs.floatingBallOpacityPercent = it; reload() }),
             switchRow(getString(R.string.switch_hide_ball), prefs.hideFloatingBall, hint = getString(R.string.hide_ball_hint), onChange = { prefs.hideFloatingBall = it; reload() }),
         ))
+        col.addView(sectionHeader(getString(R.string.sec_ball_gestures)))
+        col.addView(card(
+            actionPickerRow(getString(R.string.gesture_single_tap), prefs.ballActionSingleTap) { prefs.ballActionSingleTap = it },
+            actionPickerRow(getString(R.string.gesture_double_tap), prefs.ballActionDoubleTap) { prefs.ballActionDoubleTap = it },
+            actionPickerRow(getString(R.string.gesture_long_press), prefs.ballActionLongPress) { prefs.ballActionLongPress = it },
+            actionPickerRow(getString(R.string.gesture_swipe_up), prefs.ballActionSwipeUp) { prefs.ballActionSwipeUp = it },
+            actionPickerRow(getString(R.string.gesture_swipe_down), prefs.ballActionSwipeDown) { prefs.ballActionSwipeDown = it },
+            actionPickerRow(getString(R.string.gesture_swipe_left), prefs.ballActionSwipeLeft) { prefs.ballActionSwipeLeft = it },
+            actionPickerRow(getString(R.string.gesture_swipe_right), prefs.ballActionSwipeRight) { prefs.ballActionSwipeRight = it },
+            actionRow(getString(R.string.btn_reset_ball_gestures)) {
+                prefs.resetBallActions()
+                reload()
+                recreateKeepingScroll()
+            },
+        ))
 
         // ── 光标 ──
         col.addView(sectionHeader(getString(R.string.sec_cursor)))
@@ -399,6 +414,45 @@ class MainActivity : Activity() {
                 textSize = 22f
                 setTextColor(tertiaryTextColor)
             })
+        }
+
+    private fun actionPickerRow(gestureTitle: String, currentAction: PadAction, onPicked: (PadAction) -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(54)
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            background = ripple(null, rippleColor, 0)
+            isClickable = true
+            setOnClickListener {
+                ActionPicker.build(this@MainActivity, darkUi, currentAction) { picked ->
+                    onPicked(picked)
+                    reload()
+                    recreateKeepingScroll()
+                }.show()
+            }
+            addView(titleText(gestureTitle), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+            val chip = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(4), dp(12), dp(4))
+                background = roundedSurface(trackColor, 999).apply {
+                    setStroke(maxOf(1, dp(1)), borderColor)
+                }
+                addView(ImageView(this@MainActivity).apply {
+                    setImageResource(currentAction.iconRes)
+                    imageTintList = ColorStateList.valueOf(accentColor)
+                    setPadding(0, 0, dp(6), 0)
+                }, LinearLayout.LayoutParams(dp(18), dp(18)))
+                addView(TextView(this@MainActivity).apply {
+                    text = getString(currentAction.labelRes)
+                    textSize = 13f
+                    typeface = sansMedium
+                    setTextColor(textColor)
+                })
+            }
+            addView(chip)
         }
 
     private fun roundedSurface(color: Int, radiusDp: Int): GradientDrawable = GradientDrawable().apply {

@@ -114,6 +114,31 @@ class TouchpadMathTest {
         assertEquals(380L, computeRevealDuration(fromRadius = 0f, toRadius = 2000f, maxRadius = 1000f))
     }
 
+    @Test
+    fun swipeDirectionResolvesCorrectly() {
+        assertEquals(SwipeDirection.LEFT, resolveSwipeDirection(dx = -50f, dy = 10f))
+        assertEquals(SwipeDirection.RIGHT, resolveSwipeDirection(dx = 50f, dy = -10f))
+        assertEquals(SwipeDirection.UP, resolveSwipeDirection(dx = 10f, dy = -60f))
+        assertEquals(SwipeDirection.DOWN, resolveSwipeDirection(dx = -10f, dy = 60f))
+        // 对角线等值偏向水平
+        assertEquals(SwipeDirection.LEFT, resolveSwipeDirection(dx = -40f, dy = 40f))
+    }
+
+    @Test
+    fun swipeGestureThresholdDetection() {
+        assertTrue(isSwipeGesture(dx = 15f, dy = 20f, thresholdPx = 20f))
+        assertFalse(isSwipeGesture(dx = 5f, dy = 5f, thresholdPx = 20f))
+    }
+
+    @Test
+    fun ballSwipeActionResolvesConfiguredAction() {
+        assertEquals(PadAction.HOME, resolveBallSwipeAction(SwipeDirection.UP, PadAction.HOME, PadAction.NOTIFICATIONS, PadAction.RECENTS, PadAction.RECENTS))
+        assertEquals(PadAction.NOTIFICATIONS, resolveBallSwipeAction(SwipeDirection.DOWN, PadAction.HOME, PadAction.NOTIFICATIONS, PadAction.RECENTS, PadAction.RECENTS))
+        assertEquals(PadAction.RECENTS, resolveBallSwipeAction(SwipeDirection.LEFT, PadAction.HOME, PadAction.NOTIFICATIONS, PadAction.RECENTS, PadAction.RECENTS))
+        assertEquals(PadAction.RECENTS, resolveBallSwipeAction(SwipeDirection.RIGHT, PadAction.HOME, PadAction.NOTIFICATIONS, PadAction.RECENTS, PadAction.RECENTS))
+    }
+
+
 
     @Test
     fun floatingBallPositionIsKeptInsideScreen() {

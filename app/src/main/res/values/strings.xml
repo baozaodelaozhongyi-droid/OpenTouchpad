@@ -46,8 +46,10 @@
     <string name="act_home">Home</string>
     <string name="act_recents">Recent apps</string>
     <string name="act_settings">OpenTouchpad settings</string>
-    <string name="act_minimize">Hide touchpad</string>
+    <string name="act_minimize">Toggle touchpad</string>
+    <string name="act_move_ball">Drag floating ball</string>
     <string name="act_none">Empty slot</string>
+
 
     <!-- 设置项 -->
     <string name="sec_appearance">Appearance</string>
@@ -94,6 +96,15 @@
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
     <string name="switch_hide_ball">Hide floating ball</string>
     <string name="hide_ball_hint">When on, collapsing leaves no floating ball. Turn on "Show touchpad" here to expand again.</string>
+    <string name="sec_ball_gestures">Floating ball gestures</string>
+    <string name="gesture_single_tap">Single tap</string>
+    <string name="gesture_double_tap">Double tap</string>
+    <string name="gesture_long_press">Long press</string>
+    <string name="gesture_swipe_up">Swipe up</string>
+    <string name="gesture_swipe_down">Swipe down</string>
+    <string name="gesture_swipe_left">Swipe left</string>
+    <string name="gesture_swipe_right">Swipe right</string>
+    <string name="btn_reset_ball_gestures">Reset gestures to default</string>
     <string name="set_cursor_opacity">Cursor opacity</string>
     <string name="set_ball_color">Floating ball colour</string>
     <string name="color_default">Theme default</string>

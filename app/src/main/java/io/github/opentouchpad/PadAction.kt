@@ -45,6 +45,8 @@ enum class PadAction(
     MOVE_PANEL("movepanel", R.string.act_move_panel, "✥", R.drawable.ic_lu_move),
     /** 按住拖动这个键缩放触控板。 */
     RESIZE_PANEL("resizepanel", R.string.act_resize_panel, "⤡", R.drawable.ic_lu_move_diagonal_2),
+    /** 拖动悬浮球。 */
+    MOVE_BALL("moveball", R.string.act_move_ball, "⊙", R.drawable.ic_lu_circle_dot),
 
     SETTINGS("settings", R.string.act_settings, "⚙", R.drawable.ic_lu_settings),
     MINIMIZE("minimize", R.string.act_minimize, "✕", R.drawable.ic_lu_chevrons_down_up),
@@ -65,6 +67,6 @@ enum class PadAction(
         val ALL: List<PadAction> = entries.toList()
 
         /** 拖动型按键：按下后跟手拖动，而不是点击触发。 */
-        fun isGrip(a: PadAction) = a == MOVE_PANEL || a == RESIZE_PANEL
+        fun isGrip(a: PadAction) = a == MOVE_PANEL || a == RESIZE_PANEL || a == MOVE_BALL
     }
 }
