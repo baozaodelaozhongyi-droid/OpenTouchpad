@@ -129,6 +129,10 @@ class TouchpadService : AccessibilityService() {
     private var ballDragStartY = 0
     private var ballSnapAnimator: ValueAnimator? = null
     private var ballSwipeTracker = BallSwipeTracker(0f, 0f)
+    private var ballBgView: View? = null
+    private var ballIconView: ImageView? = null
+    private var lastDragRawX = 0f
+    private var lastDragRawY = 0f
 
     private val ballSingleTapRunnable = Runnable {
         if (isWaitingForBallDoubleTap) {
@@ -148,7 +152,8 @@ class TouchpadService : AccessibilityService() {
         ballHapticLongPress()
         if (act == PadAction.MOVE_BALL) {
             isDraggingBall = true
-            miniBallView?.animate()?.scaleX(1.15f)?.scaleY(1.15f)?.setDuration(120)?.start()
+            ballBgView?.animate()?.scaleX(1.12f)?.scaleY(1.12f)?.setDuration(120)?.start()
+            ballIconView?.animate()?.scaleX(1.06f)?.scaleY(1.06f)?.setDuration(120)?.start()
         } else if (act != PadAction.NONE) {
             performAction(act)
         }
@@ -176,6 +181,46 @@ class TouchpadService : AccessibilityService() {
                 feedbackConstant,
                 android.view.HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
             )
+        }
+    }
+
+    private fun applyBallDeformation(dx: Float, dy: Float, maxOffset: Float) {
+        val deform = computeBallDeformation(dx, dy, maxOffset)
+        ballBgView?.rotation = deform.rotationDeg
+        ballBgView?.scaleX = deform.stretch
+        ballBgView?.scaleY = deform.squash
+        ballIconView?.translationX = deform.iconTranslationX
+        ballIconView?.translationY = deform.iconTranslationY
+    }
+
+    private fun resetBallDeformation(animated: Boolean = true, duration: Long = 220L) {
+        if (animated) {
+            ballBgView?.animate()
+                ?.rotation(0f)
+                ?.scaleX(1f)
+                ?.scaleY(1f)
+                ?.setDuration(duration)
+                ?.setInterpolator(OvershootInterpolator(1.4f))
+                ?.start()
+
+            ballIconView?.animate()
+                ?.translationX(0f)
+                ?.translationY(0f)
+                ?.scaleX(1f)
+                ?.scaleY(1f)
+                ?.setDuration(duration)
+                ?.setInterpolator(OvershootInterpolator(1.4f))
+                ?.start()
+        } else {
+            ballBgView?.animate()?.cancel()
+            ballIconView?.animate()?.cancel()
+            ballBgView?.rotation = 0f
+            ballBgView?.scaleX = 1f
+            ballBgView?.scaleY = 1f
+            ballIconView?.translationX = 0f
+            ballIconView?.translationY = 0f
+            ballIconView?.scaleX = 1f
+            ballIconView?.scaleY = 1f
         }
     }
 
@@ -459,6 +504,8 @@ class TouchpadService : AccessibilityService() {
         panel = null
         panelParams = null
         miniBallView = null
+        ballBgView = null
+        ballIconView = null
         padArea = null
         actionViews.clear()
         actionSlots.clear()
@@ -630,41 +677,68 @@ class TouchpadService : AccessibilityService() {
             return
         }
         val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
-        val dot = ImageView(this).apply {
-            val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
-                ?: if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
-            val light = Color.luminance(ballColor) > 0.55f
-            setImageResource(R.drawable.ic_lu_touchpad)
-            // 浅色球用暖黑图标，深色球用象牙白图标
-            imageTintList = ColorStateList.valueOf(if (light) 0xFF141413.toInt() else 0xFFFAF9F5.toInt())
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            val halo = (size * 0.06f).roundToInt().coerceAtLeast(dp(1))
-            val inset = halo + (size * 0.24f).roundToInt()
-            setPadding(inset, inset, inset, inset)
-            // 外圈一道半透明光晕，在深/浅背景上都能看清；内圈是带细描边的实色圆
-            val ring = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor((ballColor and 0x00FFFFFF) or 0x40000000)
-            }
-            val disc = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(lighten(ballColor, 0.08f), ballColor),
-            ).apply {
-                shape = GradientDrawable.OVAL
-                setStroke(maxOf(1, dp(1)), if (light) 0x26141413 else 0x33FAF9F5)
-            }
-            val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+        val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
+            ?: if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+        val light = Color.luminance(ballColor) > 0.55f
+
+        val ballSize = (size * 0.86f).roundToInt()
+        val halo = (ballSize * 0.06f).roundToInt().coerceAtLeast(dp(1))
+
+        // 外圈一道半透明光晕，在深/浅背景上都能看清；内圈是带细描边的实色圆
+        val ring = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor((ballColor and 0x00FFFFFF) or 0x40000000)
+        }
+        val disc = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(lighten(ballColor, 0.08f), ballColor),
+        ).apply {
+            shape = GradientDrawable.OVAL
+            setStroke(maxOf(1, dp(1)), if (light) 0x26141413 else 0x33FAF9F5)
+        }
+        val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+
+        val bg = View(this).apply {
             background = RippleDrawable(
                 ColorStateList.valueOf(if (light) 0x26141413 else 0x40FAF9F5),
                 LayerDrawable(arrayOf(ring, disc)).apply { setLayerInset(1, halo, halo, halo, halo) },
                 mask,
             )
+            isClickable = false
+            isFocusable = false
+        }
+        val bgLp = FrameLayout.LayoutParams(ballSize, ballSize, Gravity.CENTER)
+
+        val icon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_lu_touchpad)
+            // 浅色球用暖黑图标，深色球用象牙白图标
+            imageTintList = ColorStateList.valueOf(if (light) 0xFF141413.toInt() else 0xFFFAF9F5.toInt())
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            val iconPadding = (ballSize * 0.04f).roundToInt()
+            setPadding(iconPadding, iconPadding, iconPadding, iconPadding)
+            isClickable = false
+            isFocusable = false
+        }
+        val iconSize = (ballSize * 0.48f).roundToInt()
+        val iconLp = FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER)
+
+        val dot = FrameLayout(this).apply {
+            clipChildren = false
+            clipToPadding = false
+            addView(bg, bgLp)
+            addView(icon, iconLp)
             alpha = ballRestingAlpha()
             isClickable = true
             setOnTouchListener { v, e ->
                 when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> v.isPressed = true
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.isPressed = false
+                    MotionEvent.ACTION_DOWN -> {
+                        v.isPressed = true
+                        bg.isPressed = true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        v.isPressed = false
+                        bg.isPressed = false
+                    }
                 }
                 handleBallTouch(v, e)
             }
@@ -675,6 +749,8 @@ class TouchpadService : AccessibilityService() {
         runCatching { wm.addView(dot, lp) }
         panel = dot
         miniBallView = dot
+        ballBgView = bg
+        ballIconView = icon
         panelParams = lp
         ballX = lp.x
         ballY = lp.y
@@ -682,6 +758,7 @@ class TouchpadService : AccessibilityService() {
         ballAnchorY = lp.y
         keepBallInBounds()
     }
+
 
     private fun ballRestingAlpha(): Float = prefs.floatingBallOpacityPercent.coerceIn(20, 100) / 100f
 
@@ -1042,6 +1119,8 @@ class TouchpadService : AccessibilityService() {
         val targetX = ballAnchorX
         val targetY = ballAnchorY
 
+        resetBallDeformation(animated = true, duration = 220L)
+
         if (startX == targetX && startY == targetY) {
             miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(150)?.start()
             onComplete?.invoke()
@@ -1090,6 +1169,7 @@ class TouchpadService : AccessibilityService() {
             MotionEvent.ACTION_DOWN -> {
                 ballSnapAnimator?.cancel()
                 ballSnapAnimator = null
+                resetBallDeformation(animated = false)
                 if (ballAnchorX == 0 && ballAnchorY == 0 && (panelParams?.x ?: 0) != 0) {
                     ballAnchorX = panelParams?.x ?: prefs.ballX.coerceAtLeast(0)
                     ballAnchorY = panelParams?.y ?: prefs.ballY.coerceAtLeast(0)
@@ -1114,6 +1194,8 @@ class TouchpadService : AccessibilityService() {
                 ballMoved = false
                 ballFromX = e.rawX
                 ballFromY = e.rawY
+                lastDragRawX = e.rawX
+                lastDragRawY = e.rawY
                 ballDragStartX = ballAnchorX
                 ballDragStartY = ballAnchorY
                 ballX = ballAnchorX
@@ -1147,6 +1229,26 @@ class TouchpadService : AccessibilityService() {
                         prefs.ballX = position.x
                         prefs.ballY = position.y
                     }
+
+                    // 拖拽移动过程中的微妙惯性速度形变动效
+                    val stepDx = e.rawX - lastDragRawX
+                    val stepDy = e.rawY - lastDragRawY
+                    lastDragRawX = e.rawX
+                    lastDragRawY = e.rawY
+                    val stepDist = kotlin.math.hypot(stepDx, stepDy)
+                    if (stepDist > dp(1)) {
+                        val dragDeform = computeBallDeformation(
+                            stepDx, stepDy,
+                            maxOffsetPx = dp(24).toFloat(),
+                            maxStretch = 0.12f,
+                            maxSquash = 0.08f,
+                        )
+                        ballBgView?.rotation = dragDeform.rotationDeg
+                        ballBgView?.scaleX = 1.10f * dragDeform.stretch
+                        ballBgView?.scaleY = 1.10f * dragDeform.squash
+                        ballIconView?.translationX = dragDeform.iconTranslationX
+                        ballIconView?.translationY = dragDeform.iconTranslationY
+                    }
                 } else {
                     if (ballSwipeTracker.onMove(dist)) {
                         ballHapticCancel()
@@ -1164,6 +1266,8 @@ class TouchpadService : AccessibilityService() {
                             lp.y = clamped.y
                             panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
                         }
+                        // 悬浮球手势拖拽形变：沿滑动方向弹性拉伸、垂直方向保体积挤压，内核图标视差跟手
+                        applyBallDeformation(dx, dy, maxOffset)
                     }
                 }
             }
@@ -1176,7 +1280,7 @@ class TouchpadService : AccessibilityService() {
 
                 if (isDraggingBall) {
                     isDraggingBall = false
-                    miniBallView?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(150)?.start()
+                    resetBallDeformation(animated = true, duration = 180L)
                     miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(150)?.start()
                     keepBallInBounds()
                 } else if (ballLongPressTriggered) {
@@ -1243,9 +1347,9 @@ class TouchpadService : AccessibilityService() {
                 main.removeCallbacks(ballSingleTapRunnable)
                 isWaitingForBallDoubleTap = false
                 ballSwipeTracker.reset()
+                resetBallDeformation(animated = true, duration = 180L)
                 if (isDraggingBall) {
                     isDraggingBall = false
-                    miniBallView?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(150)?.start()
                     keepBallInBounds()
                 } else {
                     snapBallBackToAnchor()

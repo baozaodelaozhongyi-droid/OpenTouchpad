@@ -260,6 +260,49 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun ballDeformationCalculatesExpectedSquashStretchAndOrientation() {
+        // 1. Zero displacement -> neutral
+        val zero = computeBallDeformation(dx = 0f, dy = 0f, maxOffsetPx = 30f)
+        assertEquals(1f, zero.stretch, 0.001f)
+        assertEquals(1f, zero.squash, 0.001f)
+        assertEquals(0f, zero.rotationDeg, 0.001f)
+        assertEquals(0f, zero.iconTranslationX, 0.001f)
+        assertEquals(0f, zero.iconTranslationY, 0.001f)
+
+        // 2. Right drag (angle 0)
+        val right = computeBallDeformation(dx = 30f, dy = 0f, maxOffsetPx = 30f)
+        assertEquals(0f, right.rotationDeg, 0.01f)
+        assertTrue(right.stretch > 1.1f)
+        assertTrue(right.squash < 0.92f)
+        assertTrue(right.iconTranslationX > 1f)
+        assertEquals(0f, right.iconTranslationY, 0.01f)
+
+        // 3. Down drag (angle 90)
+        val down = computeBallDeformation(dx = 0f, dy = 30f, maxOffsetPx = 30f)
+        assertEquals(90f, down.rotationDeg, 0.01f)
+        assertTrue(down.stretch > 1.1f)
+        assertTrue(down.squash < 0.92f)
+        assertEquals(0f, down.iconTranslationX, 0.01f)
+        assertTrue(down.iconTranslationY > 1f)
+
+        // 4. Up-Left drag (angle -135 or 135 depending on coordinate)
+        val upLeft = computeBallDeformation(dx = -30f, dy = -30f, maxOffsetPx = 30f)
+        assertEquals(-135f, upLeft.rotationDeg, 0.01f)
+        assertTrue(upLeft.stretch > 1.1f)
+        assertTrue(upLeft.iconTranslationX < 0f)
+        assertTrue(upLeft.iconTranslationY < 0f)
+
+        // 5. Area conservation check: stretch * squash ~ 1.0
+        val area = right.stretch * right.squash
+        assertTrue("Area should be preserved near 1.0 (actual $area)", area in 0.95f..1.05f)
+
+        // 6. Extreme drag saturation: never exceeds safe bounds
+        val extreme = computeBallDeformation(dx = 500f, dy = 500f, maxOffsetPx = 30f)
+        assertTrue(extreme.stretch <= 1.25f)
+        assertTrue(extreme.squash >= 0.80f)
+    }
+
+    @Test
     fun floatingBallPositionIsKeptInsideScreen() {
         assertEquals(
             PanelPosition(900, 1740),

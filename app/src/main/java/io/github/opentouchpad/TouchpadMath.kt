@@ -344,4 +344,69 @@ internal class BallSwipeTracker(
     }
 }
 
+/**
+ * 悬浮球拖拽形变参数。
+ * stretch: 沿拖拽方向的主轴伸长比例（>= 1.0）
+ * squash: 垂直于拖拽方向的次轴压扁比例（<= 1.0，保体积保面积）
+ * rotationDeg: 形变主轴朝向角度（0..360度）
+ * iconTranslationX: 内核图标视差轻微跟手 X 偏移
+ * iconTranslationY: 内核图标视差轻微跟手 Y 偏移
+ */
+internal data class BallDeformation(
+    val stretch: Float,
+    val squash: Float,
+    val rotationDeg: Float,
+    val iconTranslationX: Float,
+    val iconTranslationY: Float,
+)
+
+/**
+ * 根据位移向量 (dx, dy) 及参考距离计算悬浮球果冻拉伸形变。
+ */
+internal fun computeBallDeformation(
+    dx: Float,
+    dy: Float,
+    maxOffsetPx: Float,
+    maxStretch: Float = 0.22f,
+    maxSquash: Float = 0.16f,
+    parallaxRatio: Float = 0.10f,
+): BallDeformation {
+    val dist = kotlin.math.hypot(dx, dy)
+    if (dist < 0.5f || maxOffsetPx <= 0f) {
+        return BallDeformation(
+            stretch = 1f,
+            squash = 1f,
+            rotationDeg = 0f,
+            iconTranslationX = 0f,
+            iconTranslationY = 0f,
+        )
+    }
+
+    val angleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+
+    // 归一化位移并使用平滑饱和曲线，确保大距离拖动时平稳柔和，不发生突变或过度形变
+    val normalized = (dist / maxOffsetPx).coerceIn(0f, 2.5f)
+    val tension = normalized / (1f + 0.6f * normalized)
+
+    val stretch = 1f + maxStretch * tension
+    // 保体积面积约束：squash 随 stretch 缩减，保证视觉面积平衡
+    val squash = (1f / (1f + maxStretch * tension * 0.9f)).coerceAtLeast(1f - maxSquash)
+
+    // 内核图标视差跟手偏移（给用户水滴液体内部核心微移的纵深立体感）
+    val maxParallax = maxOffsetPx * 0.25f
+    val currentParallax = (dist * parallaxRatio).coerceAtMost(maxParallax)
+    val dirX = dx / dist
+    val dirY = dy / dist
+    val iconTx = dirX * currentParallax
+    val iconTy = dirY * currentParallax
+
+    return BallDeformation(
+        stretch = stretch,
+        squash = squash,
+        rotationDeg = angleDeg,
+        iconTranslationX = iconTx,
+        iconTranslationY = iconTy,
+    )
+}
+
 
