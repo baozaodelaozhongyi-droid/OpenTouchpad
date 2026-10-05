@@ -139,7 +139,7 @@ class TouchpadService : AccessibilityService() {
             isWaitingForBallDoubleTap = false
             val act = prefs.ballActionSingleTap
             if (act != PadAction.NONE) {
-                performAction(act)
+                performAction(act, withHaptic = false)
             }
         }
     }
@@ -154,7 +154,7 @@ class TouchpadService : AccessibilityService() {
             ballBgView?.animate()?.scaleX(1.12f)?.scaleY(1.12f)?.setDuration(120)?.start()
             ballIconView?.animate()?.scaleX(1.06f)?.scaleY(1.06f)?.setDuration(120)?.start()
         } else if (act != PadAction.NONE) {
-            performAction(act)
+            performAction(act, withHaptic = false)
         }
     }
 
@@ -171,13 +171,8 @@ class TouchpadService : AccessibilityService() {
     private fun ballHapticCancel() {
         if (!prefs.haptics) return
         runCatching {
-            val feedbackConstant = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                android.view.HapticFeedbackConstants.REJECT
-            } else {
-                android.view.HapticFeedbackConstants.KEYBOARD_TAP
-            }
-            miniBallView?.performHapticFeedback(
-                feedbackConstant,
+            (miniBallView ?: panel)?.performHapticFeedback(
+                android.view.HapticFeedbackConstants.KEYBOARD_TAP,
                 android.view.HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
             )
         }
@@ -1308,7 +1303,7 @@ class TouchpadService : AccessibilityService() {
                     snapBallBackToAnchor()
                     if (act != PadAction.NONE) {
                         haptic()
-                        performAction(act)
+                        performAction(act, withHaptic = false)
                     }
                 } else if (!ballMoved) {
                     snapBallBackToAnchor()
@@ -1318,7 +1313,7 @@ class TouchpadService : AccessibilityService() {
                         val act = prefs.ballActionSingleTap
                         if (act != PadAction.NONE) {
                             haptic()
-                            performAction(act)
+                            performAction(act, withHaptic = false)
                         }
                     } else {
                         val now = SystemClock.uptimeMillis()
@@ -1328,7 +1323,7 @@ class TouchpadService : AccessibilityService() {
                             main.removeCallbacks(ballSingleTapRunnable)
                             isWaitingForBallDoubleTap = false
                             haptic()
-                            performAction(doubleAction)
+                            performAction(doubleAction, withHaptic = false)
                         } else {
                             // 第一次点击抬起：立即震动反馈（0ms 消除感知延迟），启动紧凑双击等待
                             haptic()
@@ -1738,7 +1733,7 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 动作派发 ─────────────────────────
 
-    fun performAction(action: PadAction) {
+    fun performAction(action: PadAction, withHaptic: Boolean = true) {
         when (action) {
             PadAction.CLICK -> tapAt(cursorX, cursorY)
             PadAction.LONG_PRESS -> longPressAt(cursorX, cursorY)
@@ -1774,7 +1769,9 @@ class TouchpadService : AccessibilityService() {
             PadAction.MOVE_PANEL, PadAction.RESIZE_PANEL, PadAction.MOVE_BALL -> Unit
             PadAction.NONE -> Unit
         }
-        haptic()
+        if (withHaptic) {
+            haptic()
+        }
     }
 
     private fun global(action: Int) {
@@ -1839,7 +1836,7 @@ class TouchpadService : AccessibilityService() {
     private fun haptic(view: View? = null) {
         if (!prefs.haptics) return
         runCatching {
-            (view ?: padArea ?: panel)?.performHapticFeedback(
+            (view ?: miniBallView ?: padArea ?: panel)?.performHapticFeedback(
                 android.view.HapticFeedbackConstants.VIRTUAL_KEY,
                 android.view.HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
             )
