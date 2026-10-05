@@ -409,4 +409,74 @@ internal fun computeBallDeformation(
     )
 }
 
+internal data class DragMotionState(
+    val stretch: Float,
+    val squash: Float,
+    val rotationDeg: Float,
+    val iconTranslationX: Float,
+    val iconTranslationY: Float,
+)
+
+/**
+ * 悬浮球长按拖拽时的速度感应果冻形变计算。
+ *
+ * @param speedPxPerSec 当前平滑移动速度（像素/秒）
+ * @param dirX 运动方向单位向量 X
+ * @param dirY 运动方向单位向量 Y
+ * @param baseScale 悬浮球按住浮起时的基础放大系数（默认 1.16f）
+ * @param maxExtraStretch 运动时的最大额外拉伸比（默认 0.22f）
+ * @param maxSquash 运动时的垂直轴最大保体积压缩比（默认 0.18f）
+ * @param maxParallaxPx 图标最大视差惯性滞后距离（默认 14f 像素）
+ */
+internal fun computeDragMotionState(
+    speedPxPerSec: Float,
+    dirX: Float,
+    dirY: Float,
+    baseScale: Float = 1.16f,
+    refSpeedPxPerSec: Float = 1200f,
+    maxExtraStretch: Float = 0.22f,
+    maxSquash: Float = 0.18f,
+    maxParallaxPx: Float = 14f,
+): DragMotionState {
+    if (speedPxPerSec < 10f || refSpeedPxPerSec <= 0f) {
+        return DragMotionState(
+            stretch = baseScale,
+            squash = baseScale,
+            rotationDeg = 0f,
+            iconTranslationX = 0f,
+            iconTranslationY = 0f,
+        )
+    }
+
+    val normalized = (speedPxPerSec / refSpeedPxPerSec).coerceIn(0f, 3f)
+    val tension = normalized / (1f + 0.6f * normalized)
+
+    val stretch = baseScale * (1f + maxExtraStretch * tension)
+    val squash = baseScale * (1f / (1f + maxSquash * tension))
+
+    val angleDeg = Math.toDegrees(kotlin.math.atan2(dirY.toDouble(), dirX.toDouble())).toFloat()
+
+    // 惯性视差：内核图标沿反方向产生滞后漂浮感（Lag behind motion）
+    val parallaxDist = maxParallaxPx * tension
+    val iconTx = -dirX * parallaxDist
+    val iconTy = -dirY * parallaxDist
+
+    return DragMotionState(
+        stretch = stretch,
+        squash = squash,
+        rotationDeg = angleDeg,
+        iconTranslationX = iconTx,
+        iconTranslationY = iconTy,
+    )
+}
+
+/** 角度平滑插值（处理 0° 与 360° 环绕过渡）。 */
+internal fun lerpAngleDeg(from: Float, to: Float, factor: Float): Float {
+    var diff = (to - from) % 360f
+    if (diff > 180f) diff -= 360f
+    if (diff < -180f) diff += 360f
+    return (from + diff * factor.coerceIn(0f, 1f)) % 360f
+}
+
+
 

@@ -133,6 +133,10 @@ class TouchpadService : AccessibilityService() {
     private var ballIconView: ImageView? = null
     private var lastDragRawX = 0f
     private var lastDragRawY = 0f
+    private var ballDragLastTimeMs = 0L
+    private var ballDragVelocityX = 0f
+    private var ballDragVelocityY = 0f
+    private var ballDragCurrentRotation = 0f
 
     private val ballSingleTapRunnable = Runnable {
         if (isWaitingForBallDoubleTap) {
@@ -151,8 +155,26 @@ class TouchpadService : AccessibilityService() {
         ballHapticLongPress()
         if (act == PadAction.MOVE_BALL) {
             isDraggingBall = true
-            ballBgView?.animate()?.scaleX(1.12f)?.scaleY(1.12f)?.setDuration(120)?.start()
-            ballIconView?.animate()?.scaleX(1.06f)?.scaleY(1.06f)?.setDuration(120)?.start()
+            ballDragVelocityX = 0f
+            ballDragVelocityY = 0f
+            ballDragCurrentRotation = 0f
+            ballDragLastTimeMs = SystemClock.uptimeMillis()
+            lastDragRawX = ballFromX
+            lastDragRawY = ballFromY
+            ballBgView?.animate()?.cancel()
+            ballIconView?.animate()?.cancel()
+            ballBgView?.animate()
+                ?.scaleX(1.18f)
+                ?.scaleY(1.18f)
+                ?.setDuration(180)
+                ?.setInterpolator(OvershootInterpolator(1.3f))
+                ?.start()
+            ballIconView?.animate()
+                ?.scaleX(1.10f)
+                ?.scaleY(1.10f)
+                ?.setDuration(180)
+                ?.start()
+            miniBallView?.animate()?.alpha(1f)?.setDuration(120)?.start()
         } else if (act != PadAction.NONE) {
             performAction(act, withHaptic = false)
         }
@@ -1190,6 +1212,10 @@ class TouchpadService : AccessibilityService() {
                 ballFromY = e.rawY
                 lastDragRawX = e.rawX
                 lastDragRawY = e.rawY
+                ballDragLastTimeMs = SystemClock.uptimeMillis()
+                ballDragVelocityX = 0f
+                ballDragVelocityY = 0f
+                ballDragCurrentRotation = 0f
                 ballDragStartX = ballAnchorX
                 ballDragStartY = ballAnchorY
                 ballX = ballAnchorX
@@ -1227,24 +1253,46 @@ class TouchpadService : AccessibilityService() {
                         prefs.ballY = position.y
                     }
 
-                    // 拖拽移动过程中的微妙惯性速度形变动效
+                    // 长按移动动效：速度感应果冻形变、跟手倾斜与内核图标视差动效
+                    val now = SystemClock.uptimeMillis()
+                    val dt = (now - ballDragLastTimeMs).coerceIn(8L, 100L) / 1000f
                     val stepDx = e.rawX - lastDragRawX
                     val stepDy = e.rawY - lastDragRawY
                     lastDragRawX = e.rawX
                     lastDragRawY = e.rawY
-                    val stepDist = kotlin.math.hypot(stepDx, stepDy)
-                    if (stepDist > dp(1)) {
-                        val dragDeform = computeBallDeformation(
-                            stepDx, stepDy,
-                            maxOffsetPx = dp(24).toFloat(),
-                            maxStretch = 0.12f,
-                            maxSquash = 0.08f,
+                    ballDragLastTimeMs = now
+
+                    val rawVx = stepDx / dt
+                    val rawVy = stepDy / dt
+                    ballDragVelocityX = ballDragVelocityX * 0.60f + rawVx * 0.40f
+                    ballDragVelocityY = ballDragVelocityY * 0.60f + rawVy * 0.40f
+
+                    val speed = kotlin.math.hypot(ballDragVelocityX, ballDragVelocityY)
+                    if (speed > dp(30)) {
+                        val dirX = ballDragVelocityX / speed
+                        val dirY = ballDragVelocityY / speed
+                        val motionState = computeDragMotionState(
+                            speedPxPerSec = speed,
+                            dirX = dirX,
+                            dirY = dirY,
+                            baseScale = 1.16f,
+                            refSpeedPxPerSec = dp(500).toFloat(),
+                            maxExtraStretch = 0.22f,
+                            maxSquash = 0.18f,
+                            maxParallaxPx = dp(5).toFloat(),
                         )
-                        ballBgView?.rotation = dragDeform.rotationDeg
-                        ballBgView?.scaleX = 1.10f * dragDeform.stretch
-                        ballBgView?.scaleY = 1.10f * dragDeform.squash
-                        ballIconView?.translationX = dragDeform.iconTranslationX
-                        ballIconView?.translationY = dragDeform.iconTranslationY
+                        ballDragCurrentRotation = lerpAngleDeg(ballDragCurrentRotation, motionState.rotationDeg, 0.45f)
+                        ballBgView?.rotation = ballDragCurrentRotation
+                        ballBgView?.scaleX = motionState.stretch
+                        ballBgView?.scaleY = motionState.squash
+                        ballIconView?.translationX = motionState.iconTranslationX
+                        ballIconView?.translationY = motionState.iconTranslationY
+                    } else {
+                        // 速度较低（悬停或微动）时，平滑回弹至饱满圆形
+                        ballBgView?.animate()?.cancel()
+                        ballBgView?.animate()?.scaleX(1.16f)?.scaleY(1.16f)?.setDuration(120)?.start()
+                        ballIconView?.animate()?.cancel()
+                        ballIconView?.animate()?.translationX(0f)?.translationY(0f)?.setDuration(120)?.start()
                     }
                 } else {
                     if (ballSwipeTracker.onMove(dist)) {
@@ -1277,9 +1325,25 @@ class TouchpadService : AccessibilityService() {
 
                 if (isDraggingBall) {
                     isDraggingBall = false
-                    resetBallDeformation(animated = true, duration = 180L)
-                    miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(150)?.start()
+                    ballBgView?.animate()?.cancel()
+                    ballIconView?.animate()?.cancel()
+                    ballBgView?.animate()
+                        ?.rotation(0f)
+                        ?.scaleX(1f)
+                        ?.scaleY(1f)
+                        ?.setDuration(220)
+                        ?.setInterpolator(OvershootInterpolator(1.35f))
+                        ?.start()
+                    ballIconView?.animate()
+                        ?.translationX(0f)
+                        ?.translationY(0f)
+                        ?.scaleX(1f)
+                        ?.scaleY(1f)
+                        ?.setDuration(200)
+                        ?.start()
+                    miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(200)?.start()
                     keepBallInBounds()
+                    ballHapticCancel()
                 } else if (ballLongPressTriggered) {
                     ballLongPressTriggered = false
                     snapBallBackToAnchor()
@@ -1348,6 +1412,11 @@ class TouchpadService : AccessibilityService() {
                 resetBallDeformation(animated = true, duration = 180L)
                 if (isDraggingBall) {
                     isDraggingBall = false
+                    ballBgView?.animate()?.cancel()
+                    ballIconView?.animate()?.cancel()
+                    ballBgView?.animate()?.rotation(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(180)?.start()
+                    ballIconView?.animate()?.translationX(0f)?.translationY(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(180)?.start()
+                    miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(180)?.start()
                     keepBallInBounds()
                 } else {
                     snapBallBackToAnchor()

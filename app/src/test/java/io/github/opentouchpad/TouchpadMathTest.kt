@@ -447,4 +447,55 @@ class TouchpadMathTest {
         assertFalse(isPointInsideRect(100f, 200f, 50, 100, 0, 300))
         assertFalse(isPointInsideRect(100f, 200f, 50, 100, 200, -10))
     }
+
+    @Test
+    fun dragMotionStateAtRestReturnsBaseScaleAndNoParallax() {
+        val state = computeDragMotionState(speedPxPerSec = 0f, dirX = 1f, dirY = 0f, baseScale = 1.16f)
+        assertEquals(1.16f, state.stretch, 0.001f)
+        assertEquals(1.16f, state.squash, 0.001f)
+        assertEquals(0f, state.rotationDeg, 0.001f)
+        assertEquals(0f, state.iconTranslationX, 0.001f)
+        assertEquals(0f, state.iconTranslationY, 0.001f)
+    }
+
+    @Test
+    fun dragMotionStateAtSpeedElongatesAndLagsIcon() {
+        val stateRight = computeDragMotionState(
+            speedPxPerSec = 1200f,
+            dirX = 1f,
+            dirY = 0f,
+            baseScale = 1.16f,
+            refSpeedPxPerSec = 1200f,
+            maxExtraStretch = 0.22f,
+            maxSquash = 0.18f,
+            maxParallaxPx = 10f,
+        )
+        assertTrue(stateRight.stretch > 1.16f)
+        assertTrue(stateRight.squash < 1.16f)
+        assertEquals(0f, stateRight.rotationDeg, 0.01f)
+        assertTrue(stateRight.iconTranslationX < 0f) // 往右移动时图标向左滞后
+        assertEquals(0f, stateRight.iconTranslationY, 0.001f)
+
+        val stateDown = computeDragMotionState(
+            speedPxPerSec = 1200f,
+            dirX = 0f,
+            dirY = 1f,
+            baseScale = 1.16f,
+            refSpeedPxPerSec = 1200f,
+            maxExtraStretch = 0.22f,
+            maxSquash = 0.18f,
+            maxParallaxPx = 10f,
+        )
+        assertEquals(90f, stateDown.rotationDeg, 0.01f)
+        assertTrue(stateDown.iconTranslationY < 0f) // 往下移动时图标向上滞后
+        assertEquals(0f, stateDown.iconTranslationX, 0.001f)
+    }
+
+    @Test
+    fun lerpAngleDegHandlesBoundarySmoothly() {
+        assertEquals(45f, lerpAngleDeg(0f, 90f, 0.5f), 0.01f)
+        // 350° 与 10° 之间经过 0°
+        assertEquals(0f, lerpAngleDeg(350f, 10f, 0.5f), 0.01f)
+        assertEquals(0f, lerpAngleDeg(10f, 350f, 0.5f), 0.01f)
+    }
 }
