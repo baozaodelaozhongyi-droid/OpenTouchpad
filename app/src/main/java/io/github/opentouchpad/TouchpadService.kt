@@ -139,7 +139,6 @@ class TouchpadService : AccessibilityService() {
             isWaitingForBallDoubleTap = false
             val act = prefs.ballActionSingleTap
             if (act != PadAction.NONE) {
-                haptic()
                 performAction(act)
             }
         }
@@ -1201,7 +1200,10 @@ class TouchpadService : AccessibilityService() {
                 ballX = ballAnchorX
                 ballY = ballAnchorY
 
-                // 若之前在等待双击的单击超时，先移除该延迟任务；在 UP 时根据时间间隔决定是否双击
+                // 若之前在等待双击的单击超时，在第二次按下时立即移除单击任务，避免双击误触发单次操作
+                if (isWaitingForBallDoubleTap) {
+                    main.removeCallbacks(ballSingleTapRunnable)
+                }
                 main.removeCallbacks(ballLongPressRunnable)
                 val holdDuration = resolveBallLongPressHoldMs(prefs.longPressMs)
                 main.postDelayed(ballLongPressRunnable, holdDuration)
@@ -1310,25 +1312,26 @@ class TouchpadService : AccessibilityService() {
                     }
                 } else if (!ballMoved) {
                     snapBallBackToAnchor()
-                    val now = SystemClock.uptimeMillis()
-                    val doubleTapTimeout = 280L
-                    if (isWaitingForBallDoubleTap && (now - lastBallTapTime < doubleTapTimeout)) {
-                        main.removeCallbacks(ballSingleTapRunnable)
-                        isWaitingForBallDoubleTap = false
-                        val act = prefs.ballActionDoubleTap
+                    val doubleAction = prefs.ballActionDoubleTap
+                    if (doubleAction == PadAction.NONE) {
+                        // 未开启双击功能：单击完全零延迟，立即震动并触发动作
+                        val act = prefs.ballActionSingleTap
                         if (act != PadAction.NONE) {
                             haptic()
                             performAction(act)
                         }
                     } else {
-                        val doubleAction = prefs.ballActionDoubleTap
-                        if (doubleAction == PadAction.NONE) {
-                            val act = prefs.ballActionSingleTap
-                            if (act != PadAction.NONE) {
-                                haptic()
-                                performAction(act)
-                            }
+                        val now = SystemClock.uptimeMillis()
+                        val doubleTapTimeout = 190L
+                        if (isWaitingForBallDoubleTap && (now - lastBallTapTime < 350L)) {
+                            // 第二次点击抬起：立即震动并触发双击动作
+                            main.removeCallbacks(ballSingleTapRunnable)
+                            isWaitingForBallDoubleTap = false
+                            haptic()
+                            performAction(doubleAction)
                         } else {
+                            // 第一次点击抬起：立即震动反馈（0ms 消除感知延迟），启动紧凑双击等待
+                            haptic()
                             lastBallTapTime = now
                             isWaitingForBallDoubleTap = true
                             main.removeCallbacks(ballSingleTapRunnable)
