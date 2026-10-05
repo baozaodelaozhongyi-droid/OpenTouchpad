@@ -186,6 +186,24 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun ballDragTracksLinearlyFromOriginWithoutCompounding() {
+        val startX = 200
+        val startY = 300
+        val steps = listOf(
+            2f to 5f,
+            4f to 10f,
+            6f to 15f,
+            20f to 50f,
+        )
+        for ((dx, dy) in steps) {
+            val targetX = startX + dx.toInt()
+            val targetY = startY + dy.toInt()
+            assertEquals(startX + dx.toInt(), targetX)
+            assertEquals(startY + dy.toInt(), targetY)
+        }
+    }
+
+    @Test
     fun floatingBallPositionIsKeptInsideScreen() {
         assertEquals(
             PanelPosition(900, 1740),

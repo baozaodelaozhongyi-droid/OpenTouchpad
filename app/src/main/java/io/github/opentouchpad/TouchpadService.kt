@@ -125,6 +125,8 @@ class TouchpadService : AccessibilityService() {
     private var ballY = 0
     private var ballAnchorX = 0
     private var ballAnchorY = 0
+    private var ballDragStartX = 0
+    private var ballDragStartY = 0
     private var ballSnapAnimator: ValueAnimator? = null
 
     private val ballSingleTapRunnable = Runnable {
@@ -1033,7 +1035,7 @@ class TouchpadService : AccessibilityService() {
             duration = 200L
             interpolator = OvershootInterpolator(1.25f)
             addUpdateListener { va ->
-                val frac = va.animatedFraction
+                val frac = (va.animatedValue as? Float) ?: va.animatedFraction
                 val p = panelParams ?: return@addUpdateListener
                 val curX = (startX + (targetX - startX) * frac).roundToInt()
                 val curY = (startY + (targetY - startY) * frac).roundToInt()
@@ -1070,7 +1072,7 @@ class TouchpadService : AccessibilityService() {
             MotionEvent.ACTION_DOWN -> {
                 ballSnapAnimator?.cancel()
                 ballSnapAnimator = null
-                if (ballAnchorX <= 0 && ballAnchorY <= 0) {
+                if (ballAnchorX == 0 && ballAnchorY == 0 && (panelParams?.x ?: 0) != 0) {
                     ballAnchorX = panelParams?.x ?: prefs.ballX.coerceAtLeast(0)
                     ballAnchorY = panelParams?.y ?: prefs.ballY.coerceAtLeast(0)
                 }
@@ -1088,6 +1090,8 @@ class TouchpadService : AccessibilityService() {
                 ballMoved = false
                 ballFromX = e.rawX
                 ballFromY = e.rawY
+                ballDragStartX = ballAnchorX
+                ballDragStartY = ballAnchorY
                 ballX = ballAnchorX
                 ballY = ballAnchorY
 
@@ -1110,7 +1114,7 @@ class TouchpadService : AccessibilityService() {
                 if (isDraggingBall) {
                     val size = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
                     val position = clampFloatingBallPosition(
-                        ballAnchorX + dx.roundToInt(), ballAnchorY + dy.roundToInt(), size, screenW, screenH,
+                        ballDragStartX + dx.roundToInt(), ballDragStartY + dy.roundToInt(), size, screenW, screenH,
                     )
                     panelParams?.let { lp ->
                         lp.x = position.x
@@ -1118,8 +1122,6 @@ class TouchpadService : AccessibilityService() {
                         panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
                         prefs.ballX = position.x
                         prefs.ballY = position.y
-                        ballAnchorX = position.x
-                        ballAnchorY = position.y
                     }
                 } else if (ballMoved) {
                     // 滑动手势滑动动效：以阻尼弹性位移跟手，直观展现滑动方向与距离感
@@ -1148,8 +1150,6 @@ class TouchpadService : AccessibilityService() {
                     miniBallView?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(150)?.start()
                     miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(150)?.start()
                     keepBallInBounds()
-                    ballAnchorX = panelParams?.x ?: prefs.ballX
-                    ballAnchorY = panelParams?.y ?: prefs.ballY
                 } else if (ballLongPressTriggered) {
                     ballLongPressTriggered = false
                     snapBallBackToAnchor()
