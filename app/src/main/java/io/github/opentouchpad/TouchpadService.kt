@@ -128,6 +128,7 @@ class TouchpadService : AccessibilityService() {
     private var ballDragStartX = 0
     private var ballDragStartY = 0
     private var ballSnapAnimator: ValueAnimator? = null
+    private var ballSwipeTracker = BallSwipeTracker(0f, 0f)
 
     private val ballSingleTapRunnable = Runnable {
         if (isWaitingForBallDoubleTap) {
@@ -162,6 +163,22 @@ class TouchpadService : AccessibilityService() {
             )
         }
     }
+
+    private fun ballHapticCancel() {
+        if (!prefs.haptics) return
+        runCatching {
+            val feedbackConstant = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                android.view.HapticFeedbackConstants.REJECT
+            } else {
+                android.view.HapticFeedbackConstants.KEYBOARD_TAP
+            }
+            miniBallView?.performHapticFeedback(
+                feedbackConstant,
+                android.view.HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
+            )
+        }
+    }
+
 
     // 键盘弹出时自动最小化（记录是不是"自动"最小化的，好自动还原）
     private var minimizedByKeyboard = false
@@ -454,6 +471,7 @@ class TouchpadService : AccessibilityService() {
         isDraggingBall = false
         ballLongPressTriggered = false
         ballMoved = false
+        ballSwipeTracker.reset()
         movingPanel = false
         resizingPanel = false
     }
@@ -1085,6 +1103,12 @@ class TouchpadService : AccessibilityService() {
                 }
                 miniBallView?.animate()?.alpha(1f)?.setDuration(100)?.start()
 
+                val ballSize = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
+                val swipeThreshold = maxOf(dp(16).toFloat(), ballSize * 0.4f)
+                val cancelThreshold = resolveBallCancelThreshold(swipeThreshold, dp(8).toFloat())
+                ballSwipeTracker = BallSwipeTracker(swipeThreshold, cancelThreshold)
+                ballSwipeTracker.reset()
+
                 isDraggingBall = false
                 ballLongPressTriggered = false
                 ballMoved = false
@@ -1123,18 +1147,23 @@ class TouchpadService : AccessibilityService() {
                         prefs.ballX = position.x
                         prefs.ballY = position.y
                     }
-                } else if (ballMoved) {
-                    // 滑动手势滑动动效：以阻尼弹性位移跟手，直观展现滑动方向与距离感
-                    val size = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
-                    val maxOffset = size * 0.45f
-                    val offset = computeDampedSwipeOffset(dx, dy, maxOffset)
-                    val targetX = (ballAnchorX + offset.x).roundToInt()
-                    val targetY = (ballAnchorY + offset.y).roundToInt()
-                    val clamped = clampFloatingBallPosition(targetX, targetY, size, screenW, screenH)
-                    panelParams?.let { lp ->
-                        lp.x = clamped.x
-                        lp.y = clamped.y
-                        panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
+                } else {
+                    if (ballSwipeTracker.onMove(dist)) {
+                        ballHapticCancel()
+                    }
+                    if (ballMoved) {
+                        // 滑动手势滑动动效：以阻尼弹性位移跟手，直观展现滑动方向与距离感
+                        val size = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
+                        val maxOffset = size * 0.45f
+                        val offset = computeDampedSwipeOffset(dx, dy, maxOffset)
+                        val targetX = (ballAnchorX + offset.x).roundToInt()
+                        val targetY = (ballAnchorY + offset.y).roundToInt()
+                        val clamped = clampFloatingBallPosition(targetX, targetY, size, screenW, screenH)
+                        panelParams?.let { lp ->
+                            lp.x = clamped.x
+                            lp.y = clamped.y
+                            panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
+                        }
                     }
                 }
             }
@@ -1143,7 +1172,7 @@ class TouchpadService : AccessibilityService() {
                 val dx = e.rawX - ballFromX
                 val dy = e.rawY - ballFromY
                 val dist = kotlin.math.hypot(dx, dy)
-                val swipeThreshold = maxOf(dp(16).toFloat(), (miniBallView?.width ?: dp(40)) * 0.4f)
+                val swipeThreshold = ballSwipeTracker.swipeThresholdPx
 
                 if (isDraggingBall) {
                     isDraggingBall = false
@@ -1153,7 +1182,12 @@ class TouchpadService : AccessibilityService() {
                 } else if (ballLongPressTriggered) {
                     ballLongPressTriggered = false
                     snapBallBackToAnchor()
-                } else if (dist >= swipeThreshold) {
+                } else if (ballSwipeTracker.isCancelledByReturn) {
+                    // 用户拖回中心打断手势：不触发滑动动作，也不触发点击，平滑复位
+                    main.removeCallbacks(ballSingleTapRunnable)
+                    isWaitingForBallDoubleTap = false
+                    snapBallBackToAnchor()
+                } else if (ballSwipeTracker.hasArmedSwipe || dist >= swipeThreshold) {
                     main.removeCallbacks(ballSingleTapRunnable)
                     isWaitingForBallDoubleTap = false
 
@@ -1170,7 +1204,7 @@ class TouchpadService : AccessibilityService() {
                         haptic()
                         performAction(act)
                     }
-                } else {
+                } else if (!ballMoved) {
                     snapBallBackToAnchor()
                     val now = SystemClock.uptimeMillis()
                     val doubleTapTimeout = 280L
@@ -1197,10 +1231,18 @@ class TouchpadService : AccessibilityService() {
                             main.postDelayed(ballSingleTapRunnable, doubleTapTimeout)
                         }
                     }
+                } else {
+                    // 微小拖动但未达到滑动阈值，不派发点击，平滑复位
+                    main.removeCallbacks(ballSingleTapRunnable)
+                    isWaitingForBallDoubleTap = false
+                    snapBallBackToAnchor()
                 }
             }
             MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(ballLongPressRunnable)
+                main.removeCallbacks(ballSingleTapRunnable)
+                isWaitingForBallDoubleTap = false
+                ballSwipeTracker.reset()
                 if (isDraggingBall) {
                     isDraggingBall = false
                     miniBallView?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(150)?.start()

@@ -300,4 +300,48 @@ internal fun computeDampedSwipeOffset(
     return SwipeOffset(dx * ratio, dy * ratio)
 }
 
+internal fun resolveBallCancelThreshold(swipeThresholdPx: Float, minCancelPx: Float): Float {
+    val preferred = maxOf(minCancelPx, swipeThresholdPx * 0.5f)
+    return minOf(preferred, swipeThresholdPx * 0.75f)
+}
+
+/**
+ * 悬浮球手势打断与取消状态判定。
+ * 具备迟滞区间（Hysteresis）：滑动划出阈值进入 Armed 状态，
+ * 用户拖回中心判定圈（<= cancelThreshold）时触发打断并震动反馈；
+ * 若未松手重新向外滑，可再次 Armed，有效防止误触并支持后悔撤销。
+ */
+internal class BallSwipeTracker(
+    val swipeThresholdPx: Float,
+    val cancelThresholdPx: Float,
+) {
+    var hasArmedSwipe: Boolean = false
+        private set
+    var isCancelledByReturn: Boolean = false
+        private set
+
+    /**
+     * 根据当前与触摸起点的欧氏距离更新状态。
+     * @return true 当且仅当本次移动刚跨入中心打断圈，需要立即派发震动提示手势已打断。
+     */
+    fun onMove(distPx: Float): Boolean {
+        if (distPx >= swipeThresholdPx) {
+            hasArmedSwipe = true
+            isCancelledByReturn = false
+            return false
+        }
+        if (hasArmedSwipe && distPx <= cancelThresholdPx) {
+            hasArmedSwipe = false
+            isCancelledByReturn = true
+            return true
+        }
+        return false
+    }
+
+    fun reset() {
+        hasArmedSwipe = false
+        isCancelledByReturn = false
+    }
+}
+
 

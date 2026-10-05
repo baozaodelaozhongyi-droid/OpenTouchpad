@@ -204,6 +204,62 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun ballSwipeTrackerCancelsWhenDraggingBackToCenterWithHysteresis() {
+        val tracker = BallSwipeTracker(swipeThresholdPx = 16f, cancelThresholdPx = 8f)
+
+        // 1. Initial touch: not armed, not cancelled
+        assertFalse(tracker.hasArmedSwipe)
+        assertFalse(tracker.isCancelledByReturn)
+
+        // 2. Small move below threshold: does not arm, does not trigger cancel
+        assertFalse(tracker.onMove(distPx = 10f))
+        assertFalse(tracker.hasArmedSwipe)
+        assertFalse(tracker.isCancelledByReturn)
+
+        // 3. Move beyond swipe threshold: arms gesture
+        assertFalse(tracker.onMove(distPx = 20f))
+        assertTrue(tracker.hasArmedSwipe)
+        assertFalse(tracker.isCancelledByReturn)
+
+        // 4. Move partially back (in hysteresis band 8..16): stays armed
+        assertFalse(tracker.onMove(distPx = 12f))
+        assertTrue(tracker.hasArmedSwipe)
+        assertFalse(tracker.isCancelledByReturn)
+
+        // 5. Crosses into center cancel zone (<= 8): triggers cancellation vibration!
+        assertTrue(tracker.onMove(distPx = 7f))
+        assertFalse(tracker.hasArmedSwipe)
+        assertTrue(tracker.isCancelledByReturn)
+
+        // 6. Continues moving deeper into center: stays cancelled, does not re-vibrate
+        assertFalse(tracker.onMove(distPx = 2f))
+        assertFalse(tracker.hasArmedSwipe)
+        assertTrue(tracker.isCancelledByReturn)
+
+        // 7. Pushes out again beyond threshold: re-arms!
+        assertFalse(tracker.onMove(distPx = 22f))
+        assertTrue(tracker.hasArmedSwipe)
+        assertFalse(tracker.isCancelledByReturn)
+
+        // 8. Pulls back into center zone again: triggers cancellation vibration again!
+        assertTrue(tracker.onMove(distPx = 5f))
+        assertFalse(tracker.hasArmedSwipe)
+        assertTrue(tracker.isCancelledByReturn)
+
+        // 9. Reset clears all state
+        tracker.reset()
+        assertFalse(tracker.hasArmedSwipe)
+        assertFalse(tracker.isCancelledByReturn)
+    }
+
+    @Test
+    fun cancelThresholdUsesReasonableProportion() {
+        assertEquals(10f, resolveBallCancelThreshold(swipeThresholdPx = 20f, minCancelPx = 8f))
+        assertEquals(8f, resolveBallCancelThreshold(swipeThresholdPx = 12f, minCancelPx = 8f))
+        assertEquals(6f, resolveBallCancelThreshold(swipeThresholdPx = 8f, minCancelPx = 8f))
+    }
+
+    @Test
     fun floatingBallPositionIsKeptInsideScreen() {
         assertEquals(
             PanelPosition(900, 1740),
