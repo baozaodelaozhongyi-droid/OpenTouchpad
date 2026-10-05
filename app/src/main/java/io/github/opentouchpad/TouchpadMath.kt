@@ -272,4 +272,12 @@ internal fun resolveBallSwipeAction(
     SwipeDirection.RIGHT -> rightAction
 }
 
+internal fun resolveBallLongPressHoldMs(configuredLongPressMs: Int, minSafeMs: Long = 450L): Long {
+    return maxOf(configuredLongPressMs.toLong(), minSafeMs)
+}
+
+internal fun shouldCancelBallLongPress(distPx: Float, slopPx: Float): Boolean {
+    return distPx > slopPx
+}
+
 

@@ -112,6 +112,7 @@ class TouchpadService : AccessibilityService() {
     // 悬浮球手势状态与坐标记录
     private var isDraggingBall = false
     private var ballLongPressTriggered = false
+    private var ballMoved = false
     private var lastBallTapTime = 0L
     private var isWaitingForBallDoubleTap = false
     private var ballFromX = 0f
@@ -131,6 +132,7 @@ class TouchpadService : AccessibilityService() {
     }
 
     private val ballLongPressRunnable = Runnable {
+        if (ballMoved) return@Runnable
         val act = prefs.ballActionLongPress
         ballLongPressTriggered = true
         ballHapticLongPress()
@@ -440,6 +442,7 @@ class TouchpadService : AccessibilityService() {
         isWaitingForBallDoubleTap = false
         isDraggingBall = false
         ballLongPressTriggered = false
+        ballMoved = false
         movingPanel = false
         resizingPanel = false
     }
@@ -1006,6 +1009,7 @@ class TouchpadService : AccessibilityService() {
             MotionEvent.ACTION_DOWN -> {
                 isDraggingBall = false
                 ballLongPressTriggered = false
+                ballMoved = false
                 ballFromX = e.rawX
                 ballFromY = e.rawY
                 ballX = panelParams?.x ?: prefs.ballX.coerceAtLeast(0)
@@ -1013,12 +1017,19 @@ class TouchpadService : AccessibilityService() {
 
                 // 若之前在等待双击的单击超时，先移除该延迟任务；在 UP 时根据时间间隔决定是否双击
                 main.removeCallbacks(ballLongPressRunnable)
-                main.postDelayed(ballLongPressRunnable, prefs.longPressMs.toLong())
+                val holdDuration = resolveBallLongPressHoldMs(prefs.longPressMs)
+                main.postDelayed(ballLongPressRunnable, holdDuration)
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = e.rawX - ballFromX
                 val dy = e.rawY - ballFromY
                 val dist = kotlin.math.hypot(dx, dy)
+                val slop = dp(6).toFloat()
+
+                if (shouldCancelBallLongPress(dist, slop) && !ballMoved) {
+                    ballMoved = true
+                    main.removeCallbacks(ballLongPressRunnable)
+                }
 
                 if (isDraggingBall) {
                     val size = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
@@ -1031,11 +1042,6 @@ class TouchpadService : AccessibilityService() {
                         panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
                         prefs.ballX = position.x
                         prefs.ballY = position.y
-                    }
-                } else if (!ballLongPressTriggered) {
-                    val slop = dp(8).toFloat()
-                    if (dist > slop) {
-                        main.removeCallbacks(ballLongPressRunnable)
                     }
                 }
             }
@@ -1104,6 +1110,7 @@ class TouchpadService : AccessibilityService() {
                     keepBallInBounds()
                 }
                 ballLongPressTriggered = false
+                ballMoved = false
             }
         }
         return true

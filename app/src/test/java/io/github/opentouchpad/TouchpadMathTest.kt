@@ -138,7 +138,21 @@ class TouchpadMathTest {
         assertEquals(PadAction.RECENTS, resolveBallSwipeAction(SwipeDirection.RIGHT, PadAction.HOME, PadAction.NOTIFICATIONS, PadAction.RECENTS, PadAction.RECENTS))
     }
 
+    @Test
+    fun ballLongPressHoldDurationHasSafeMinimum() {
+        assertEquals(450L, resolveBallLongPressHoldMs(configuredLongPressMs = 200))
+        assertEquals(450L, resolveBallLongPressHoldMs(configuredLongPressMs = 300))
+        assertEquals(600L, resolveBallLongPressHoldMs(configuredLongPressMs = 600))
+        assertEquals(1000L, resolveBallLongPressHoldMs(configuredLongPressMs = 1000))
+    }
 
+    @Test
+    fun ballLongPressCancelsOnMovementBeyondSlop() {
+        assertFalse(shouldCancelBallLongPress(distPx = 4f, slopPx = 6f))
+        assertFalse(shouldCancelBallLongPress(distPx = 6f, slopPx = 6f))
+        assertTrue(shouldCancelBallLongPress(distPx = 6.1f, slopPx = 6f))
+        assertTrue(shouldCancelBallLongPress(distPx = 15f, slopPx = 6f))
+    }
 
     @Test
     fun floatingBallPositionIsKeptInsideScreen() {
