@@ -155,6 +155,37 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun dampedSwipeOffsetTracksDirectionAndStaysWithinMax() {
+        // Zero movement
+        val zero = computeDampedSwipeOffset(0f, 0f, maxOffsetPx = 20f)
+        assertEquals(0f, zero.x, 0.001f)
+        assertEquals(0f, zero.y, 0.001f)
+
+        // Direction preservation (right)
+        val right = computeDampedSwipeOffset(50f, 0f, maxOffsetPx = 20f)
+        assertTrue(right.x > 0f)
+        assertEquals(0f, right.y, 0.001f)
+        assertTrue(right.x < 20f)
+
+        // Direction preservation (up)
+        val up = computeDampedSwipeOffset(0f, -60f, maxOffsetPx = 20f)
+        assertEquals(0f, up.x, 0.001f)
+        assertTrue(up.y < 0f)
+        assertTrue(kotlin.math.abs(up.y) < 20f)
+
+        // Large swipe asymptotes smoothly towards max offset without exceeding it
+        val far = computeDampedSwipeOffset(500f, 0f, maxOffsetPx = 20f)
+        assertTrue(far.x in 19.9f..20f)
+        assertTrue(far.x <= 20f)
+
+        // Proportionality on diagonals
+        val diag = computeDampedSwipeOffset(-40f, 40f, maxOffsetPx = 20f)
+        assertEquals(kotlin.math.abs(diag.x), diag.y, 0.001f)
+        assertTrue(diag.x < 0f)
+        assertTrue(diag.y > 0f)
+    }
+
+    @Test
     fun floatingBallPositionIsKeptInsideScreen() {
         assertEquals(
             PanelPosition(900, 1740),

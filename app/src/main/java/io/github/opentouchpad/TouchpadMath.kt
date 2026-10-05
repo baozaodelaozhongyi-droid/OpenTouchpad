@@ -280,4 +280,24 @@ internal fun shouldCancelBallLongPress(distPx: Float, slopPx: Float): Boolean {
     return distPx > slopPx
 }
 
+internal data class SwipeOffset(val x: Float, val y: Float)
+
+/**
+ * 计算悬浮球手势滑动时的弹性阻尼位移。
+ * 阻尼采用指数衰减曲线：位移越远阻力越大，平滑渐进逼近 [maxOffsetPx]，
+ * 既保证手势跟手直观，又防止悬浮球被过度拉离原始锚点。
+ */
+internal fun computeDampedSwipeOffset(
+    dx: Float,
+    dy: Float,
+    maxOffsetPx: Float,
+    dampingFactor: Float = 1.5f,
+): SwipeOffset {
+    val dist = kotlin.math.hypot(dx, dy)
+    if (dist <= 0.001f || maxOffsetPx <= 0f) return SwipeOffset(0f, 0f)
+    val scale = maxOffsetPx * (1f - kotlin.math.exp(-dist / (maxOffsetPx * dampingFactor)))
+    val ratio = scale / dist
+    return SwipeOffset(dx * ratio, dy * ratio)
+}
+
 
