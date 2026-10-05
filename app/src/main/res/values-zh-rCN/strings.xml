@@ -49,6 +49,7 @@
     <string name="act_minimize">展开/收起触控板</string>
     <string name="act_move_ball">拖动悬浮球</string>
     <string name="act_none">空槽位</string>
+    <string name="act_none_gesture">无动作</string>
 
 
     <!-- 设置项 -->

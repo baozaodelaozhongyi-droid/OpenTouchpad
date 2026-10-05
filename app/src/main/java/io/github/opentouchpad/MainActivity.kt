@@ -234,13 +234,13 @@ class MainActivity : Activity() {
         ))
         col.addView(sectionHeader(getString(R.string.sec_ball_gestures)))
         col.addView(card(
-            actionPickerRow(getString(R.string.gesture_single_tap), prefs.ballActionSingleTap) { prefs.ballActionSingleTap = it },
-            actionPickerRow(getString(R.string.gesture_double_tap), prefs.ballActionDoubleTap) { prefs.ballActionDoubleTap = it },
-            actionPickerRow(getString(R.string.gesture_long_press), prefs.ballActionLongPress) { prefs.ballActionLongPress = it },
-            actionPickerRow(getString(R.string.gesture_swipe_up), prefs.ballActionSwipeUp) { prefs.ballActionSwipeUp = it },
-            actionPickerRow(getString(R.string.gesture_swipe_down), prefs.ballActionSwipeDown) { prefs.ballActionSwipeDown = it },
-            actionPickerRow(getString(R.string.gesture_swipe_left), prefs.ballActionSwipeLeft) { prefs.ballActionSwipeLeft = it },
-            actionPickerRow(getString(R.string.gesture_swipe_right), prefs.ballActionSwipeRight) { prefs.ballActionSwipeRight = it },
+            actionPickerRow(getString(R.string.gesture_single_tap), prefs.ballActionSingleTap, PadAction.BALL_ACTIONS) { prefs.ballActionSingleTap = it },
+            actionPickerRow(getString(R.string.gesture_double_tap), prefs.ballActionDoubleTap, PadAction.BALL_ACTIONS) { prefs.ballActionDoubleTap = it },
+            actionPickerRow(getString(R.string.gesture_long_press), prefs.ballActionLongPress, PadAction.BALL_LONG_PRESS_ACTIONS) { prefs.ballActionLongPress = it },
+            actionPickerRow(getString(R.string.gesture_swipe_up), prefs.ballActionSwipeUp, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeUp = it },
+            actionPickerRow(getString(R.string.gesture_swipe_down), prefs.ballActionSwipeDown, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeDown = it },
+            actionPickerRow(getString(R.string.gesture_swipe_left), prefs.ballActionSwipeLeft, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeLeft = it },
+            actionPickerRow(getString(R.string.gesture_swipe_right), prefs.ballActionSwipeRight, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeRight = it },
             actionRow(getString(R.string.btn_reset_ball_gestures)) {
                 prefs.resetBallActions()
                 reload()
@@ -416,7 +416,12 @@ class MainActivity : Activity() {
             })
         }
 
-    private fun actionPickerRow(gestureTitle: String, currentAction: PadAction, onPicked: (PadAction) -> Unit): View =
+    private fun actionPickerRow(
+        gestureTitle: String,
+        currentAction: PadAction,
+        availableActions: List<PadAction> = PadAction.BALL_ACTIONS,
+        onPicked: (PadAction) -> Unit
+    ): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -425,7 +430,13 @@ class MainActivity : Activity() {
             background = ripple(null, rippleColor, 0)
             isClickable = true
             setOnClickListener {
-                ActionPicker.build(this@MainActivity, darkUi, currentAction) { picked ->
+                ActionPicker.build(
+                    this@MainActivity,
+                    darkUi,
+                    currentAction,
+                    actions = availableActions,
+                    noneLabelRes = R.string.act_none_gesture,
+                ) { picked ->
                     onPicked(picked)
                     reload()
                     recreateKeepingScroll()
@@ -446,7 +457,11 @@ class MainActivity : Activity() {
                     setPadding(0, 0, dp(6), 0)
                 }, LinearLayout.LayoutParams(dp(18), dp(18)))
                 addView(TextView(this@MainActivity).apply {
-                    text = getString(currentAction.labelRes)
+                    text = if (currentAction == PadAction.NONE) {
+                        getString(R.string.act_none_gesture)
+                    } else {
+                        getString(currentAction.labelRes)
+                    }
                     textSize = 13f
                     typeface = sansMedium
                     setTextColor(textColor)
@@ -776,7 +791,7 @@ class MainActivity : Activity() {
     }
 
     private fun pickAction(index: Int, current: PadAction) {
-        ActionPicker.build(this, darkUi, current) { picked ->
+        ActionPicker.build(this, darkUi, current, actions = PadAction.TOUCHPAD_ACTIONS) { picked ->
             val list = replaceSlot(prefs.buttons, index, picked)
             if (list == null) {
                 toast(getString(R.string.need_move_key))

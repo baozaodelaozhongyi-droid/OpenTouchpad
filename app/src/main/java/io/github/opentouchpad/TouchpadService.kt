@@ -872,7 +872,7 @@ class TouchpadService : AccessibilityService() {
     // ───────────────────────── 按钮长按换动作 ─────────────────────────
 
     private fun showActionPicker(slot: Int, current: PadAction) {
-        val dialog = ActionPicker.build(this, isDarkTheme(), current) { picked ->
+        val dialog = ActionPicker.build(this, isDarkTheme(), current, actions = PadAction.TOUCHPAD_ACTIONS) { picked ->
             val list = replaceSlot(prefs.buttons, slot, picked)
             if (list == null) {
                 toast(getString(R.string.need_move_key))

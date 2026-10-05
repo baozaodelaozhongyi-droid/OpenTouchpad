@@ -66,6 +66,42 @@ enum class PadAction(
 
         val ALL: List<PadAction> = entries.toList()
 
+        /** 悬浮球点击与滑动手势专属候选动作（过滤触控板光标操作，仅展示对悬浮球有意义的全局系统操作与触控板开关） */
+        val BALL_ACTIONS: List<PadAction> = listOf(
+            BACK,
+            HOME,
+            RECENTS,
+            MINIMIZE,
+            NOTIFICATIONS,
+            SCREENSHOT,
+            POWER,
+            KEYBOARD,
+            VOLUME_UP,
+            VOLUME_DOWN,
+            SETTINGS,
+            NONE,
+        )
+
+        /** 悬浮球长按手势专属候选动作（置顶「拖动悬浮球」，并提供全套悬浮球可用动作） */
+        val BALL_LONG_PRESS_ACTIONS: List<PadAction> = listOf(
+            MOVE_BALL,
+            BACK,
+            HOME,
+            RECENTS,
+            MINIMIZE,
+            NOTIFICATIONS,
+            SCREENSHOT,
+            POWER,
+            KEYBOARD,
+            VOLUME_UP,
+            VOLUME_DOWN,
+            SETTINGS,
+            NONE,
+        )
+
+        /** 触控板按钮槽位专用动作（排除仅限悬浮球长按拖动的 MOVE_BALL） */
+        val TOUCHPAD_ACTIONS: List<PadAction> = entries.filter { it != MOVE_BALL }
+
         /** 拖动型按键：按下后跟手拖动，而不是点击触发。 */
         fun isGrip(a: PadAction) = a == MOVE_PANEL || a == RESIZE_PANEL || a == MOVE_BALL
     }

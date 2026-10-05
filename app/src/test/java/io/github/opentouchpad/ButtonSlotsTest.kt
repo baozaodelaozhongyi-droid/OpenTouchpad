@@ -160,4 +160,51 @@ class ButtonSlotsTest {
         assertTrue(icons.all { it != 0 })
         assertEquals(icons.size, icons.toSet().size)
     }
+
+    @Test
+    fun ballActionsExcludeTouchpadSpecificAndPanelManipulations() {
+        val touchpadOnly = listOf(
+            PadAction.CLICK,
+            PadAction.LONG_PRESS,
+            PadAction.DRAG_LOCK,
+            PadAction.SCROLL_UP,
+            PadAction.SCROLL_DOWN,
+            PadAction.SCROLL_LEFT,
+            PadAction.SCROLL_RIGHT,
+            PadAction.SWIPE_UP,
+            PadAction.SWIPE_DOWN,
+            PadAction.SWIPE_LEFT,
+            PadAction.SWIPE_RIGHT,
+            PadAction.MOVE_PANEL,
+            PadAction.RESIZE_PANEL,
+            PadAction.MOVE_BALL,
+        )
+        for (action in touchpadOnly) {
+            assertFalse("Action $action should not be in BALL_ACTIONS", PadAction.BALL_ACTIONS.contains(action))
+        }
+        assertTrue(PadAction.BALL_ACTIONS.contains(PadAction.BACK))
+        assertTrue(PadAction.BALL_ACTIONS.contains(PadAction.HOME))
+        assertTrue(PadAction.BALL_ACTIONS.contains(PadAction.RECENTS))
+        assertTrue(PadAction.BALL_ACTIONS.contains(PadAction.MINIMIZE))
+        assertTrue(PadAction.BALL_ACTIONS.contains(PadAction.NOTIFICATIONS))
+        assertTrue(PadAction.BALL_ACTIONS.contains(PadAction.NONE))
+    }
+
+    @Test
+    fun ballLongPressActionsIncludeMoveBallAtTopAndExcludeTouchpadActions() {
+        assertEquals(PadAction.MOVE_BALL, PadAction.BALL_LONG_PRESS_ACTIONS.first())
+        assertFalse(PadAction.BALL_LONG_PRESS_ACTIONS.contains(PadAction.CLICK))
+        assertFalse(PadAction.BALL_LONG_PRESS_ACTIONS.contains(PadAction.MOVE_PANEL))
+        assertFalse(PadAction.BALL_LONG_PRESS_ACTIONS.contains(PadAction.RESIZE_PANEL))
+        assertTrue(PadAction.BALL_LONG_PRESS_ACTIONS.contains(PadAction.BACK))
+    }
+
+    @Test
+    fun touchpadActionsExcludeMoveBall() {
+        assertFalse(PadAction.TOUCHPAD_ACTIONS.contains(PadAction.MOVE_BALL))
+        assertTrue(PadAction.TOUCHPAD_ACTIONS.contains(PadAction.CLICK))
+        assertTrue(PadAction.TOUCHPAD_ACTIONS.contains(PadAction.MOVE_PANEL))
+        assertTrue(PadAction.TOUCHPAD_ACTIONS.contains(PadAction.RESIZE_PANEL))
+        assertTrue(PadAction.TOUCHPAD_ACTIONS.contains(PadAction.BACK))
+    }
 }

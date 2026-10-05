@@ -49,6 +49,7 @@
     <string name="act_minimize">Toggle touchpad</string>
     <string name="act_move_ball">Drag floating ball</string>
     <string name="act_none">Empty slot</string>
+    <string name="act_none_gesture">No action</string>
 
 
     <!-- 设置项 -->
