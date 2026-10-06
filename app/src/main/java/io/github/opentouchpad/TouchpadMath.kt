@@ -61,6 +61,13 @@ internal fun pixelsToDp(pixels: Int, density: Float): Int =
 internal fun shouldScheduleLongPress(dwellMs: Int, dragging: Boolean): Boolean =
     !dragging
 
+/**
+ * 停留点击是否重新计时。还没触发过（锚点为 NaN）时总是计时；
+ * 触发过之后，光标要离开触发点至少 [minDistancePx] 才重新计时，避免手指微抖造成原地连点。
+ */
+internal fun shouldRearmDwell(anchorX: Float, anchorY: Float, x: Float, y: Float, minDistancePx: Float): Boolean =
+    anchorX.isNaN() || anchorY.isNaN() || kotlin.math.hypot(x - anchorX, y - anchorY) >= minDistancePx
+
 internal fun resizePanelHeight(startPx: Int, deltaY: Int, minPx: Int, maxPx: Int): Int =
     (startPx - deltaY).coerceIn(minPx, maxPx)
 

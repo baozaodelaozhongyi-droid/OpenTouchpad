@@ -241,8 +241,11 @@ class TouchpadService : AccessibilityService() {
     }
 
 
-    // 键盘弹出时自动最小化（记录是不是"自动"最小化的，好自动还原）
-    private var minimizedByKeyboard = false
+    // 键盘弹出时自动最小化的标记存在 Prefs.minimizedByKeyboard（服务重启后也能自动还原）
+
+    // 停留点击触发时的光标位置：同一次触摸里，光标离开这里超过阈值才会再次计时，避免原地连点
+    private var dwellAnchorX = Float.NaN
+    private var dwellAnchorY = Float.NaN
 
     private val longPressRunnable = Runnable {
         if (!moved && !dwellFired) {
@@ -284,6 +287,8 @@ class TouchpadService : AccessibilityService() {
         buildCursor()
         updateCursor()
         buildPanel()
+        // 服务被重启时可能正处于「键盘自动收起」状态：键盘已经不在了就立刻还原
+        syncKeyboardMinimize()
     }
 
     override fun onDestroy() {
@@ -315,14 +320,31 @@ class TouchpadService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
-        if (!prefs.minimizeOnKeyboard) return
+        syncKeyboardMinimize()
+    }
+
+    /**
+     * 键盘弹出自动收起 / 键盘收起自动还原。
+     * 「是不是键盘收起的」存在 Prefs 里：服务被系统重启后也能正确还原；
+     * 自动收起期间关掉这个开关，也立即还原，不会一直卡在收起状态。
+     */
+    fun syncKeyboardMinimize() {
+        if (!this::prefs.isInitialized) return
+        if (!prefs.minimizeOnKeyboard) {
+            if (prefs.minimizedByKeyboard) {
+                prefs.minimizedByKeyboard = false
+                prefs.minimized = false
+                buildPanel()
+            }
+            return
+        }
         val ime = isImeVisible()
         if (ime && !prefs.minimized) {
-            minimizedByKeyboard = true
+            prefs.minimizedByKeyboard = true
             prefs.minimized = true
             buildPanel()
-        } else if (!ime && minimizedByKeyboard) {
-            minimizedByKeyboard = false
+        } else if (!ime && prefs.minimizedByKeyboard) {
+            prefs.minimizedByKeyboard = false
             prefs.minimized = false
             buildPanel()
         }
@@ -349,7 +371,7 @@ class TouchpadService : AccessibilityService() {
 
     fun toggleMinimize() {
         prefs.minimized = !prefs.minimized
-        minimizedByKeyboard = false
+        prefs.minimizedByKeyboard = false
         buildPanel(animate = true)
     }
 
@@ -537,6 +559,16 @@ class TouchpadService : AccessibilityService() {
         ballSwipeTracker.reset()
         movingPanel = false
         resizingPanel = false
+        // 手指还按在旧触控板上时面板被重建（转屏 / 键盘弹出 / 改设置），旧窗口收不到 UP：
+        // 这里把长按、停留点击计时一并取消，已经展开的长按圆环收起，避免之后在新面板上误触发、圆环卡住。
+        main.removeCallbacks(longPressRunnable)
+        cancelDwell()
+        if (customSwipeArmed) touchRing?.release()
+        customSwipeArmed = false
+        padTouchIgnored = false
+        // 新窗口本来就是可触摸的；上一笔穿透手势的兜底恢复已在上面移除，这里同步清掉拦截标记，
+        // 否则面板重建成「无窗口」（收起且隐藏悬浮球 / 横屏隐藏）时标记会一直留着，之后所有按键都失灵。
+        isPassThroughActive = false
     }
 
     private fun panelLayoutParams(w: Int, h: Int): WindowManager.LayoutParams {
@@ -630,6 +662,9 @@ class TouchpadService : AccessibilityService() {
             root.addView(button)
         }
         layoutControlChildren(root, widthPx, heightPx)
+        // 拖拽锁定进行中，但新面板上已经没有「拖拽锁定」键（被换掉了）：再也没法按第二下结束，
+        // 而拖拽期间触控板不点击、不长按，等于整块失灵。直接结束拖拽（不注入手势）。
+        if (dragging && PadAction.DRAG_LOCK !in prefs.buttons.take(BUTTON_SLOT_COUNT)) cancelDrag()
         refreshDragButtons()
 
         val lp = panelLayoutParams(widthPx, heightPx)
@@ -941,6 +976,7 @@ class TouchpadService : AccessibilityService() {
                 lastRawX = e.rawX; lastRawY = e.rawY
                 downTime = System.currentTimeMillis()
                 moved = false; longPressFired = false; dwellFired = false
+                dwellAnchorX = Float.NaN; dwellAnchorY = Float.NaN
                 customSwipeArmed = false
                 customSwipeStartX = cursorX
                 customSwipeStartY = cursorY
@@ -983,7 +1019,13 @@ class TouchpadService : AccessibilityService() {
                     appendTrailPoint(dragTrail, cursorX, cursorY, dp(4).toFloat())
                     moveTouchRing(cursorX, cursorY)
                 }
-                scheduleDwell()
+                // 长按已触发（正在做自定义滑动）时不再停留点击：中途停一下不能把滑动变成一次点击。
+                // 停留点击触发过之后，光标要先离开触发点才重新计时，手指搁着微微抖动不会原地连点。
+                if (!longPressFired && shouldRearmDwell(dwellAnchorX, dwellAnchorY, cursorX, cursorY, dp(8).toFloat())) {
+                    dwellAnchorX = Float.NaN
+                    dwellAnchorY = Float.NaN
+                    scheduleDwell()
+                }
             }
 
             MotionEvent.ACTION_UP -> {
@@ -1034,6 +1076,8 @@ class TouchpadService : AccessibilityService() {
         cancelDwell()
         val r = Runnable {
             dwellFired = true
+            dwellAnchorX = cursorX
+            dwellAnchorY = cursorY
             main.removeCallbacks(longPressRunnable)
             tapAt(cursorX, cursorY)
             haptic()
@@ -1479,11 +1523,13 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun setOverlayTouchable(touchable: Boolean) {
+        // 先同步拦截标记：即使此刻没有面板窗口（收起且隐藏悬浮球 / 横屏隐藏），恢复时也要清掉，
+        // 否则之后重建出来的面板会一直处于「穿透中」而忽略所有触摸。
+        isPassThroughActive = !touchable
         val v = panel ?: return
         val lp = panelParams ?: return
         val flag = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         val next = if (touchable) lp.flags and flag.inv() else lp.flags or flag
-        isPassThroughActive = !touchable
         if (next == lp.flags) return
         lp.flags = next
         runCatching { wm.updateViewLayout(v, lp) }

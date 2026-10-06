@@ -271,7 +271,10 @@ class MainActivity : Activity() {
             switchRow(getString(R.string.switch_press_feedback), prefs.pressFeedback, onChange = { prefs.pressFeedback = it; reload() }),
             switchRow(getString(R.string.switch_haptics), prefs.haptics, onChange = { prefs.haptics = it }),
             switchRow(getString(R.string.switch_autohide_landscape), prefs.autoHideLandscape, onChange = { prefs.autoHideLandscape = it; reload() }),
-            switchRow(getString(R.string.switch_minimize_keyboard), prefs.minimizeOnKeyboard, onChange = { prefs.minimizeOnKeyboard = it }),
+            switchRow(getString(R.string.switch_minimize_keyboard), prefs.minimizeOnKeyboard, onChange = {
+                prefs.minimizeOnKeyboard = it
+                TouchpadService.instance?.syncKeyboardMinimize()
+            }),
         ))
 
         // ── 关于 ──

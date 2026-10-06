@@ -39,6 +39,18 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun dwellRearmsOnlyAfterCursorLeavesTheFiredSpot() {
+        // 还没触发过：总是计时
+        assertTrue(shouldRearmDwell(Float.NaN, Float.NaN, 100f, 100f, minDistancePx = 24f))
+        // 触发后原地微抖：不重新计时，避免连点
+        assertFalse(shouldRearmDwell(100f, 100f, 100f, 100f, minDistancePx = 24f))
+        assertFalse(shouldRearmDwell(100f, 100f, 110f, 110f, minDistancePx = 24f))
+        // 光标真正移开：重新计时
+        assertTrue(shouldRearmDwell(100f, 100f, 124f, 100f, minDistancePx = 24f))
+        assertTrue(shouldRearmDwell(100f, 100f, 80f, 130f, minDistancePx = 24f))
+    }
+
+    @Test
     fun controlHeightResizeGrowsDownwardAndClamps() {
         assertEquals(620, resizeControlHeight(startPx = 420, deltaY = 200, minPx = 180, maxPx = 900))
         assertEquals(180, resizeControlHeight(startPx = 420, deltaY = -500, minPx = 180, maxPx = 900))
