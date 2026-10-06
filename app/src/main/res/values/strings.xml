@@ -142,4 +142,21 @@
     <string name="pad_dead_zone_hint">A touch that starts in this band along the touchpad edge (including outside the rounded corners) is ignored entirely, so pressing a nearby button doesn\'t hit the pad. 0 = off.</string>
     <string name="switch_long_press_customize">Long press button to customize action</string>
     <string name="switch_long_press_customize_hint">When enabled, long-pressing panel buttons opens the action picker to reassign their actions.</string>
+    <string name="set_button_layout_mode">Button layout mode</string>
+    <string name="btn_mode_4">4 Keys</string>
+    <string name="btn_mode_8">8 Keys</string>
+    <string name="btn_mode_12">12 Keys</string>
+    <string name="btn_mode_16">16 Keys</string>
+    <string name="btn_mode_4_desc">4 Keys: 1 bubble / capsule button on each of the 4 edges</string>
+    <string name="btn_mode_8_desc">8 Keys: 2 smaller bubble / capsule buttons on each edge</string>
+    <string name="btn_mode_12_desc">12 Keys: 3 compact bubble / capsule buttons on each edge</string>
+    <string name="btn_mode_16_desc">16 Keys: 4 buttons on each edge, compressed to circular shape</string>
+    <string name="slot_top_single">Top</string>
+    <string name="slot_bottom_single">Bottom</string>
+    <string name="slot_left_single">Left</string>
+    <string name="slot_right_single">Right</string>
+    <string name="slot_top_indexed">Top %d</string>
+    <string name="slot_bottom_indexed">Bottom %d</string>
+    <string name="slot_left_indexed">Left %d</string>
+    <string name="slot_right_indexed">Right %d</string>
 </resources>

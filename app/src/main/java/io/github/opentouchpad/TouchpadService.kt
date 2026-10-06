@@ -647,8 +647,8 @@ class TouchpadService : AccessibilityService() {
         root.addView(pad)
 
         // 槽位与布局一一对应；设为「无」的槽位留空，不会让后面的按钮挪位。
-        // 移动键、缩放键也是普通槽位里的一种动作，可以放到 18 个位置里的任意一个。
-        prefs.buttons.take(BUTTON_SLOT_COUNT).forEachIndexed { slot, action ->
+        val buttonCount = prefs.buttonCount
+        prefs.buttons.take(buttonCount).forEachIndexed { slot, action ->
             val button = when (action) {
                 PadAction.NONE -> return@forEachIndexed
                 PadAction.MOVE_PANEL -> makeHandle(action.iconRes, dark) { v, e -> handleMoveTouch(v, e) }
@@ -664,7 +664,7 @@ class TouchpadService : AccessibilityService() {
         layoutControlChildren(root, widthPx, heightPx)
         // 拖拽锁定进行中，但新面板上已经没有「拖拽锁定」键（被换掉了）：再也没法按第二下结束，
         // 而拖拽期间触控板不点击、不长按，等于整块失灵。直接结束拖拽（不注入手势）。
-        if (dragging && PadAction.DRAG_LOCK !in prefs.buttons.take(BUTTON_SLOT_COUNT)) cancelDrag()
+        if (dragging && PadAction.DRAG_LOCK !in prefs.buttons.take(prefs.buttonCount)) cancelDrag()
         refreshDragButtons()
 
         val lp = panelLayoutParams(widthPx, heightPx)
@@ -703,21 +703,30 @@ class TouchpadService : AccessibilityService() {
 
     /** 等间距网格：按钮之间、按钮与触控板之间都是同一个间距。 */
     private fun layoutControlChildren(root: FrameLayout, width: Int, height: Int) {
+        val buttonCount = prefs.buttonCount
         val layout = computeControlLayout(
-            width, height, resources.displayMetrics.density, spacingPx(),
+            width, height, resources.displayMetrics.density, spacingPx(), buttonCount
         )
         padArea?.layoutParams = rectParams(layout.pad)
-        // 触控板圆角随按钮大小变化，保持和圆形按钮的视觉比例
+        // 触控板圆角随按钮大小变化，保持和按钮的视觉比例
         (padArea?.background as? GradientDrawable)?.cornerRadius = layout.button * 0.42f
-        // 图标边长 = 按钮直径的 56%，随按钮大小缩放（原「按钮图标大小」设置被这个上限卡住，基本不起作用，已移除）
+        padCornerRadius = layout.button * 0.42f
+
+        val p = palette(isDarkTheme())
         val iconPx = (layout.button * 0.56f).roundToInt().coerceAtLeast(dp(8))
-        val iconInset = ((layout.button - iconPx) / 2).coerceAtLeast(0)
+
         actionViews.forEachIndexed { index, view ->
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
-            view.layoutParams = rectParams(layout.slots[slot])
-            view.setPadding(iconInset, iconInset, iconInset, iconInset)
+            val rect = layout.slots.getOrNull(slot) ?: return@forEachIndexed
+            view.layoutParams = rectParams(rect)
+
+            val cornerRadius = minOf(rect.w, rect.h) / 2f
+            view.background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, cornerRadius)
+
+            val padX = ((rect.w - iconPx) / 2).coerceAtLeast(0)
+            val padY = ((rect.h - iconPx) / 2).coerceAtLeast(0)
+            view.setPadding(padX, padY, padX, padY)
         }
-        padCornerRadius = layout.button * 0.42f
         root.requestLayout()
     }
 
@@ -854,10 +863,15 @@ class TouchpadService : AccessibilityService() {
             setStroke(dp(1), scaleAlpha(stroke, prefs.opacityPercent))
         }
 
-    /** 圆形按钮背景，带按压水波纹反馈。 */
-    private fun circleBackground(color: Int, stroke: Int, ripple: Int): Drawable {
-        val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
-        return RippleDrawable(ColorStateList.valueOf(ripple), solidBackground(GradientDrawable.OVAL, color, stroke), mask)
+    /** 按钮背景，支持胶囊型与圆形（根据传入的圆角半径自适应），带按压水波纹反馈。 */
+    private fun buttonBackground(color: Int, stroke: Int, ripple: Int, cornerRadiusPx: Float): Drawable {
+        val mask = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = cornerRadiusPx
+            setColor(Color.WHITE)
+        }
+        val content = solidBackground(GradientDrawable.RECTANGLE, color, stroke, cornerRadiusPx)
+        return RippleDrawable(ColorStateList.valueOf(ripple), content, mask)
     }
 
     private fun makeHandle(iconRes: Int, dark: Boolean, onTouch: (View, MotionEvent) -> Boolean): View =
@@ -866,7 +880,7 @@ class TouchpadService : AccessibilityService() {
             setImageResource(iconRes)
             setColorFilter(p.buttonText)
             scaleType = ImageView.ScaleType.FIT_CENTER
-            background = circleBackground(p.buttonBg, p.buttonStroke, p.ripple)
+            background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, dp(14).toFloat())
             isClickable = true
             isHapticFeedbackEnabled = false
             setOnTouchListener { v, e ->
@@ -885,7 +899,7 @@ class TouchpadService : AccessibilityService() {
         setImageResource(action.iconRes)
         setColorFilter(p.buttonText)
         scaleType = ImageView.ScaleType.FIT_CENTER
-        background = circleBackground(p.buttonBg, p.buttonStroke, p.ripple)
+        background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, dp(14).toFloat())
         isClickable = true
         isHapticFeedbackEnabled = false
         contentDescription = getString(action.labelRes)
@@ -930,7 +944,7 @@ class TouchpadService : AccessibilityService() {
 
     private fun showActionPicker(slot: Int, current: PadAction) {
         val dialog = ActionPicker.build(this, isDarkTheme(), current, actions = PadAction.TOUCHPAD_ACTIONS) { picked ->
-            val list = replaceSlot(prefs.buttons, slot, picked)
+            val list = replaceSlot(prefs.buttons, slot, picked, prefs.buttonCount)
             if (list == null) {
                 toast(getString(R.string.need_move_key))
                 return@build
@@ -1836,11 +1850,12 @@ class TouchpadService : AccessibilityService() {
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
             if (prefs.buttons.getOrNull(slot) != PadAction.DRAG_LOCK) return@forEachIndexed
             val iv = view as? ImageView ?: return@forEachIndexed
+            val radius = minOf(view.width, view.height).takeIf { it > 0 }?.let { it / 2f } ?: dp(14).toFloat()
             if (dragging) {
-                iv.background = circleBackground(accentBg, accentStroke, p.ripple)
+                iv.background = buttonBackground(accentBg, accentStroke, p.ripple, radius)
                 iv.setColorFilter(accentText)
             } else {
-                iv.background = circleBackground(p.buttonBg, p.buttonStroke, p.ripple)
+                iv.background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, radius)
                 iv.setColorFilter(p.buttonText)
             }
         }

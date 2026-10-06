@@ -56,13 +56,8 @@ enum class PadAction(
     companion object {
         fun fromId(id: String?): PadAction? = entries.firstOrNull { it.id == id }
 
-        /** 默认按钮布局，顺序见 [BUTTON_SLOT_COUNT]：上 4、下 4、左 2、右 2、四角、移动键、缩放键。 */
-        val DEFAULT: List<PadAction> = listOf(
-            CLICK, LONG_PRESS, DRAG_LOCK, SCROLL_UP, SCROLL_DOWN, NOTIFICATIONS,
-            BACK, HOME, RECENTS, KEYBOARD, SCREENSHOT, MINIMIZE,
-            SCROLL_LEFT, SCROLL_RIGHT, SWIPE_LEFT, SWIPE_RIGHT,
-            MOVE_PANEL, RESIZE_PANEL,
-        )
+        /** 默认按钮布局（16 键位）。 */
+        val DEFAULT: List<PadAction> get() = DEFAULT_BUTTONS_16
 
         val ALL: List<PadAction> = entries.toList()
 

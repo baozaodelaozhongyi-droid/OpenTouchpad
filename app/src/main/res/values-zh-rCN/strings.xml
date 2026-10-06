@@ -142,4 +142,21 @@
     <string name="pad_dead_zone_hint">手指落在触控板边缘这一圈（包括圆角外侧）里，这一整次触摸都忽略，按旁边的按钮时不会误碰。0 = 关闭。</string>
     <string name="switch_long_press_customize">长按按钮自定义动作</string>
     <string name="switch_long_press_customize_hint">开启后长按触控板按钮可弹出动作选择器，自由更换按钮功能。</string>
+    <string name="set_button_layout_mode">自选键位模式</string>
+    <string name="btn_mode_4">4 键</string>
+    <string name="btn_mode_8">8 键</string>
+    <string name="btn_mode_12">12 键</string>
+    <string name="btn_mode_16">16 键</string>
+    <string name="btn_mode_4_desc">4 键位：上下左右四条边气泡型/胶囊型按钮</string>
+    <string name="btn_mode_8_desc">8 键位：上下左右四条边小一点的气泡型/胶囊型按钮</string>
+    <string name="btn_mode_12_desc">12 键位：上下左右四条边紧凑气泡型/胶囊型按钮</string>
+    <string name="btn_mode_16_desc">16 键位：上下左右四条边各四个按钮，压缩成圆形</string>
+    <string name="slot_top_single">上</string>
+    <string name="slot_bottom_single">下</string>
+    <string name="slot_left_single">左</string>
+    <string name="slot_right_single">右</string>
+    <string name="slot_top_indexed">上 %d</string>
+    <string name="slot_bottom_indexed">下 %d</string>
+    <string name="slot_left_indexed">左 %d</string>
+    <string name="slot_right_indexed">右 %d</string>
 </resources>

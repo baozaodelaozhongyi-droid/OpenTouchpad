@@ -322,9 +322,9 @@ class TouchpadMathTest {
         )
     }
 
-    private fun gridOf(width: Int, gap: Int, extra: Int = 0, density: Float = 1f): ControlLayout {
+    private fun gridOf(width: Int, gap: Int, extra: Int = 0, density: Float = 1f, buttonCount: Int = 16): ControlLayout {
         val h = controlGridHeight(width, density, gap) + extra
-        return computeControlLayout(width, h, density, gap)
+        return computeControlLayout(width, h, density, gap, buttonCount)
     }
 
     private fun assertNoOverlap(l: ControlLayout) {
@@ -337,43 +337,89 @@ class TouchpadMathTest {
     }
 
     @Test
-    fun everyGapIsTheSameInRowsColumnsCornersAndAroundTouchpad() {
-        for (gap in listOf(0, 3, 8)) {
-            val l = gridOf(168, gap)
-            val b = l.button
-            val (tl, tr, bl, br) = l.slots.subList(12, 16)
-            val top = listOf(tl) + l.slots.subList(0, 4) + tr
-            val bottom = listOf(bl) + l.slots.subList(4, 8) + br
-            for (row in listOf(top, bottom)) for (i in 1 until row.size) {
-                assertEquals("row gap", gap, row[i].x - (row[i - 1].x + b))
-                assertEquals(row[0].y, row[i].y)
+    fun selectableButtonModesGenerateCorrectSlotCountsAndShapes() {
+        for (count in listOf(4, 8, 12, 16)) {
+            val l = gridOf(168, 3, buttonCount = count)
+            assertEquals(count, l.slots.size)
+            val edgeCount = count / 4
+            val topSlots = l.slots.subList(0, edgeCount)
+            val bottomSlots = l.slots.subList(edgeCount, 2 * edgeCount)
+            val leftSlots = l.slots.subList(2 * edgeCount, 3 * edgeCount)
+            val rightSlots = l.slots.subList(3 * edgeCount, 4 * edgeCount)
+
+            for (slot in topSlots + bottomSlots) {
+                assertEquals(l.button, slot.h)
+                if (count == 16) {
+                    assertEquals("Mode 16 buttons should be circular (square rect)", l.button, slot.w)
+                } else {
+                    assertTrue("Mode $count top/bottom buttons should be capsules (w > h)", slot.w > slot.h)
+                }
             }
-            val left = listOf(tl, l.slots[16], l.slots[8], l.slots[9], bl)
-            val right = listOf(tr, l.slots[10], l.slots[11], l.slots[17], br)
-            for (col in listOf(left, right)) for (i in 1 until col.size) {
-                assertEquals("column gap", gap, col[i].y - (col[i - 1].y + b))
-                assertEquals(col[0].x, col[i].x)
+
+            for (slot in leftSlots + rightSlots) {
+                assertEquals(l.button, slot.w)
+                if (count == 16) {
+                    assertEquals("Mode 16 buttons should be circular (square rect)", l.button, slot.h)
+                } else {
+                    assertTrue("Mode $count left/right buttons should be capsules (h > w)", slot.h > slot.w)
+                }
             }
-            // touchpad keeps the same gap to every neighbour
-            assertEquals(gap, l.pad.y - (tl.y + b))
-            assertEquals(gap, bl.y - (l.pad.y + l.pad.h))
-            assertEquals(gap, l.pad.x - (tl.x + b))
-            assertEquals(gap, tr.x - (l.pad.x + l.pad.w))
+
             assertNoOverlap(l)
         }
     }
 
     @Test
-    fun extraHeightOnlyMakesTouchpadTaller() {
-        val a = gridOf(168, 3)
-        val b = gridOf(168, 3, extra = 60)
-        assertEquals(a.button, b.button)
-        assertEquals(a.pad.w, b.pad.w)
-        assertEquals(a.pad.h + 60, b.pad.h)
-        // side buttons stay packed with the same gap
-        assertEquals(3, b.slots[8].y - (b.slots[16].y + b.button))
-        assertEquals(3, b.slots[17].y - (b.slots[11].y + b.button))
-        assertNoOverlap(b)
+    fun everyGapIsTheSameAroundTouchpadAndAdjacentButtons() {
+        for (count in listOf(4, 8, 12, 16)) {
+            val edgeCount = count / 4
+            for (gap in listOf(0, 3, 8)) {
+                val l = gridOf(168, gap, buttonCount = count)
+                val topSlots = l.slots.subList(0, edgeCount)
+                val bottomSlots = l.slots.subList(edgeCount, 2 * edgeCount)
+                val leftSlots = l.slots.subList(2 * edgeCount, 3 * edgeCount)
+                val rightSlots = l.slots.subList(3 * edgeCount, 4 * edgeCount)
+
+                // 检查触控板与四周按键的间距
+                assertEquals("gap to top slots", gap, l.pad.y - (topSlots[0].y + topSlots[0].h))
+                assertEquals("gap to bottom slots", gap, bottomSlots[0].y - (l.pad.y + l.pad.h))
+                assertEquals("gap to left slots", gap, l.pad.x - (leftSlots[0].x + leftSlots[0].w))
+                assertEquals("gap to right slots", gap, rightSlots[0].x - (l.pad.x + l.pad.w))
+
+                // 检查同一边相邻按钮之间的间距
+                for (row in listOf(topSlots, bottomSlots)) {
+                    for (i in 1 until row.size) {
+                        assertEquals("horizontal adjacent button gap", gap, row[i].x - (row[i - 1].x + row[i - 1].w))
+                        assertEquals(row[0].y, row[i].y)
+                    }
+                }
+                for (col in listOf(leftSlots, rightSlots)) {
+                    for (i in 1 until col.size) {
+                        assertEquals("vertical adjacent button gap", gap, col[i].y - (col[i - 1].y + col[i - 1].h))
+                        assertEquals(col[0].x, col[i].x)
+                    }
+                }
+
+                assertNoOverlap(l)
+            }
+        }
+    }
+
+    @Test
+    fun extraHeightOnlyMakesTouchpadTallerAndCentersSideButtons() {
+        for (count in listOf(4, 8, 12, 16)) {
+            val a = gridOf(168, 3, buttonCount = count)
+            val b = gridOf(168, 3, extra = 60, buttonCount = count)
+            assertEquals(a.button, b.button)
+            assertEquals(a.pad.w, b.pad.w)
+            assertEquals(a.pad.h + 60, b.pad.h)
+
+            val edgeCount = count / 4
+            val leftIndex = 2 * edgeCount
+            // 触控板高度增加 60，侧边按键整体垂直居中下移 30
+            assertEquals(30, b.slots[leftIndex].y - a.slots[leftIndex].y)
+            assertNoOverlap(b)
+        }
     }
 
     @Test
@@ -384,8 +430,9 @@ class TouchpadMathTest {
         assertNoOverlap(tiny)
         // densities other than 1 also keep equal gaps
         val hi = gridOf(168 * 3, 9, density = 3f)
-        assertEquals(9, hi.slots[1].x - (hi.slots[0].x + hi.button))
-        assertEquals(9, hi.slots[8].y - (hi.slots[16].y + hi.button))
+        val edgeCount = 16 / 4
+        assertEquals(9, hi.slots[1].x - (hi.slots[0].x + hi.slots[0].w))
+        assertEquals(9, hi.slots[2 * edgeCount + 1].y - (hi.slots[2 * edgeCount].y + hi.slots[2 * edgeCount].h))
     }
 
     @Test

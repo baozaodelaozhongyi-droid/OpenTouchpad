@@ -1,61 +1,125 @@
 package io.github.opentouchpad
 
-/**
- * 18 个按键位置：TOP 1-4, BOTTOM 1-4, LEFT 1-2, RIGHT 1-2, 四角 TL TR BL BR,
- * 左列上方（默认移动键）, 右列下方（默认缩放键）。顺序和 [computeControlLayout] 的 slots 一致。
- */
-internal const val BUTTON_SLOT_COUNT = 18
-internal const val MOVE_GRIP_SLOT = 16
-internal const val RESIZE_GRIP_SLOT = 17
+import android.content.Context
 
-/** 早期版本存 12 个位置，加了四角后存 16 个；那时移动键、缩放键是固定的，不在存储里。 */
-private const val LEGACY_SLOT_COUNT = 12
-private const val PRE_GRIP_SLOT_COUNT = 16
+enum class ButtonLayoutMode(val count: Int) {
+    FOUR(4),
+    EIGHT(8),
+    TWELVE(12),
+    SIXTEEN(16);
 
-/**
- * 每个按键位置在 6 列 × 5 行网格里的 (列, 行)；中间 4 × 3 是触控板，外圈 18 格正好全是按键。
- * 设置页缩略图直接用这张表，单元测试核对它和 [computeControlLayout] 一致。
- */
-internal val BUTTON_SLOT_CELLS: List<Pair<Int, Int>> =
-    (1..4).map { it to 0 } + (1..4).map { it to 4 } +
-        listOf(0 to 2, 0 to 3, 5 to 1, 5 to 2) +
-        listOf(0 to 0, 5 to 0, 0 to 4, 5 to 4) +
-        listOf(0 to 1, 5 to 3)
+    val edgeCount: Int get() = count / 4
 
-internal fun decodeButtonSlots(raw: String?): List<PadAction> {
-    if (raw == null) return PadAction.DEFAULT
-
-    val decoded = raw.split(',').map { PadAction.fromId(it) }
-    if (decoded.none { it != null }) return PadAction.DEFAULT
-
-    // 认不出的动作留空，不让后面的按钮挪位
-    val kept = decoded.take(BUTTON_SLOT_COUNT).map { it ?: PadAction.NONE }
-    // 老配置自动补齐：12 个位置补四角和移动/缩放键，16 个位置补移动/缩放键，都放在原来的默认位置
-    val filled = if (kept.size >= LEGACY_SLOT_COUNT) {
-        kept + PadAction.DEFAULT.drop(kept.size)
-    } else {
-        kept + List(PRE_GRIP_SLOT_COUNT - kept.size) { PadAction.NONE } + PadAction.DEFAULT.drop(PRE_GRIP_SLOT_COUNT)
+    companion object {
+        val ALL = entries.toList()
+        fun fromCount(c: Int): ButtonLayoutMode = entries.firstOrNull { it.count == c } ?: SIXTEEN
     }
-    return ensureMoveKey(filled)
 }
 
-/** 面板至少要有一个移动键，否则再也拖不动；万一一个都没有（存储损坏），放回默认位置。 */
-internal fun ensureMoveKey(slots: List<PadAction>): List<PadAction> {
-    if (PadAction.MOVE_PANEL in slots) return slots
-    val list = slots.take(BUTTON_SLOT_COUNT).toMutableList()
-    while (list.size < BUTTON_SLOT_COUNT) list.add(PadAction.NONE)
-    list[MOVE_GRIP_SLOT] = PadAction.MOVE_PANEL
+/** 默认 4 键位：上下左右各一个气泡/胶囊型按钮。首键为移动键。 */
+internal val DEFAULT_BUTTONS_4: List<PadAction> = listOf(
+    PadAction.MOVE_PANEL, // 上
+    PadAction.HOME,       // 下
+    PadAction.BACK,       // 左
+    PadAction.RECENTS,    // 右
+)
+
+/** 默认 8 键位：上下左右各两个紧凑气泡/胶囊型按钮。 */
+internal val DEFAULT_BUTTONS_8: List<PadAction> = listOf(
+    // 上 (2)
+    PadAction.MOVE_PANEL, PadAction.MINIMIZE,
+    // 下 (2)
+    PadAction.BACK, PadAction.HOME,
+    // 左 (2)
+    PadAction.NOTIFICATIONS, PadAction.SCREENSHOT,
+    // 右 (2)
+    PadAction.SCROLL_UP, PadAction.SCROLL_DOWN,
+)
+
+/** 默认 12 键位：上下左右各三个紧凑气泡/胶囊型按钮。 */
+internal val DEFAULT_BUTTONS_12: List<PadAction> = listOf(
+    // 上 (3)
+    PadAction.MOVE_PANEL, PadAction.NOTIFICATIONS, PadAction.MINIMIZE,
+    // 下 (3)
+    PadAction.BACK, PadAction.HOME, PadAction.RECENTS,
+    // 左 (3)
+    PadAction.SCROLL_UP, PadAction.SCROLL_DOWN, PadAction.SCREENSHOT,
+    // 右 (3)
+    PadAction.VOLUME_UP, PadAction.VOLUME_DOWN, PadAction.RESIZE_PANEL,
+)
+
+/** 默认 16 键位：上下左右各四个按钮，从胶囊型压缩成圆形。 */
+internal val DEFAULT_BUTTONS_16: List<PadAction> = listOf(
+    // 上 (4)
+    PadAction.MOVE_PANEL, PadAction.CLICK, PadAction.LONG_PRESS, PadAction.MINIMIZE,
+    // 下 (4)
+    PadAction.BACK, PadAction.HOME, PadAction.RECENTS, PadAction.RESIZE_PANEL,
+    // 左 (4)
+    PadAction.NOTIFICATIONS, PadAction.SCREENSHOT, PadAction.KEYBOARD, PadAction.POWER,
+    // 右 (4)
+    PadAction.SCROLL_UP, PadAction.SCROLL_DOWN, PadAction.VOLUME_UP, PadAction.VOLUME_DOWN,
+)
+
+internal fun defaultButtonsFor(count: Int): List<PadAction> = when (count) {
+    4 -> DEFAULT_BUTTONS_4
+    8 -> DEFAULT_BUTTONS_8
+    12 -> DEFAULT_BUTTONS_12
+    else -> DEFAULT_BUTTONS_16
+}
+
+internal fun decodeButtonSlots(raw: String?, count: Int = 16): List<PadAction> {
+    val defaults = defaultButtonsFor(count)
+    if (raw == null) return defaults
+
+    val decoded = raw.split(',').map { PadAction.fromId(it) }
+    if (decoded.none { it != null }) return defaults
+
+    val kept = decoded.take(count).map { it ?: PadAction.NONE }
+    val filled = if (kept.size >= count) kept else kept + defaults.drop(kept.size)
+    return ensureMoveKey(filled, count)
+}
+
+/** 面板至少要有一个移动键，否则再也拖不动；万一一个都没有，放回首个按键位置。 */
+internal fun ensureMoveKey(slots: List<PadAction>, count: Int = slots.size): List<PadAction> {
+    val actualCount = count.coerceAtLeast(1)
+    val list = slots.take(actualCount).toMutableList()
+    while (list.size < actualCount) list.add(PadAction.NONE)
+    if (PadAction.MOVE_PANEL in list) return list
+    list[0] = PadAction.MOVE_PANEL
     return list
 }
 
 /**
- * 把 [slot] 改成 [picked]。会去掉最后一个「移动触控板」键时拒绝，返回 null（界面上提示用户）；
- * 缩放键不受限制。[slot] 越界也返回 null。
+ * 把 [slot] 改成 [picked]。会去掉最后一个「移动触控板」键时拒绝，返回 null；
+ * 越界也返回 null。
  */
-internal fun replaceSlot(current: List<PadAction>, slot: Int, picked: PadAction): List<PadAction>? {
-    if (slot !in 0 until BUTTON_SLOT_COUNT) return null
-    val list = current.take(BUTTON_SLOT_COUNT).toMutableList()
-    while (list.size < BUTTON_SLOT_COUNT) list.add(PadAction.NONE)
+internal fun replaceSlot(current: List<PadAction>, slot: Int, picked: PadAction, count: Int = current.size): List<PadAction>? {
+    if (slot !in 0 until count) return null
+    val list = current.take(count).toMutableList()
+    while (list.size < count) list.add(PadAction.NONE)
     list[slot] = picked
     return if (PadAction.MOVE_PANEL in list) list else null
+}
+
+/** 获取各槽位的无障碍/说明文本。 */
+internal fun slotPositionDescription(index: Int, count: Int, context: Context): String {
+    val edgeCount = (count / 4).coerceAtLeast(1)
+    val edge = index / edgeCount
+    val edgeIndex = (index % edgeCount) + 1
+    val res = if (edgeCount == 1) {
+        when (edge) {
+            0 -> R.string.slot_top_single
+            1 -> R.string.slot_bottom_single
+            2 -> R.string.slot_left_single
+            else -> R.string.slot_right_single
+        }
+    } else {
+        when (edge) {
+            0 -> R.string.slot_top_indexed
+            1 -> R.string.slot_bottom_indexed
+            2 -> R.string.slot_left_indexed
+            else -> R.string.slot_right_indexed
+        }
+    }
+    return if (edgeCount == 1) context.getString(res) else context.getString(res, edgeIndex)
 }

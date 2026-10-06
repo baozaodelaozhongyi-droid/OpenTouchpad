@@ -238,10 +238,41 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("longPressButtonToCustomize", true)
         set(v) = sp.edit().putBoolean("longPressButtonToCustomize", v).apply()
 
-    /** 按键位置，逗号分隔的 PadAction.id；共 [BUTTON_SLOT_COUNT] 个（含四角、移动键、缩放键）。 */
+    /** 自选键位模式：4, 8, 12, 16 键位。默认 16 键。 */
+    var buttonCount: Int
+        get() = sp.getInt("buttonCount", 16).let {
+            if (it in listOf(4, 8, 12, 16)) it else 16
+        }
+        set(v) {
+            val valid = if (v in listOf(4, 8, 12, 16)) v else 16
+            sp.edit().putInt("buttonCount", valid).apply()
+        }
+
+    var buttonLayoutMode: ButtonLayoutMode
+        get() = ButtonLayoutMode.fromCount(buttonCount)
+        set(v) { buttonCount = v.count }
+
+    fun buttonsFor(count: Int): List<PadAction> {
+        val key = "buttons_$count"
+        val raw = if (sp.contains(key)) {
+            sp.getString(key, null)
+        } else if (count == 16 && sp.contains("buttons")) {
+            sp.getString("buttons", null)
+        } else {
+            null
+        }
+        return decodeButtonSlots(raw, count)
+    }
+
+    fun setButtonsFor(count: Int, list: List<PadAction>) {
+        val encoded = list.take(count).joinToString(",") { it.id }
+        sp.edit().putString("buttons_$count", encoded).apply()
+    }
+
+    /** 当前键位模式下的按键列表。 */
     var buttons: List<PadAction>
-        get() = decodeButtonSlots(sp.getString("buttons", null))
-        set(v) = sp.edit().putString("buttons", v.joinToString(",") { it.id }).apply()
+        get() = buttonsFor(buttonCount)
+        set(v) = setButtonsFor(buttonCount, v)
 
     // ── 手感 ──
     var longPressMs: Int

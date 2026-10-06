@@ -215,6 +215,7 @@ class MainActivity : Activity() {
         // ── 按钮 ──
         col.addView(sectionHeader(getString(R.string.sec_buttons)))
         col.addView(card(
+            buttonLayoutModeRow(),
             buttonSlotMap(),
             FrameLayout(this).apply {
                 setPadding(dp(16), 0, dp(16), dp(10))
@@ -716,35 +717,143 @@ class MainActivity : Activity() {
         }
     }
 
-    /**
-     * 按钮槽位编辑：画一张和真实面板同布局的缩略图（6 列 × 5 行），
-     * 中间是触控板；移动键、缩放键（陶土色）也是普通槽位，点任意按钮都能改动作。
-     */
-    private fun buttonSlotMap(): View {
-        val slots = prefs.buttons.toMutableList()
-        while (slots.size < BUTTON_SLOT_COUNT) slots.add(PadAction.NONE)
-        val positions = resources.getStringArray(R.array.slot_positions)
-        // 槽位 → (列, 行)，和 computeControlLayout 的顺序一致（单元测试里核对）
-        val cells = BUTTON_SLOT_CELLS
-        val gap = dp(6)
-        val available = resources.displayMetrics.widthPixels - dp(16) * 2 - dp(16) * 2
-        val cell = ((available - 5 * gap) / 6).coerceAtMost(dp(52))
-        val step = cell + gap
-        val map = FrameLayout(this)
-        fun place(v: View, c: Int, r: Int, w: Int = cell, h: Int = cell) {
-            map.addView(v, FrameLayout.LayoutParams(w, h).apply {
-                leftMargin = c * step
-                topMargin = r * step
+    private fun buttonLayoutModeRow(): View {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(12), 0, dp(8))
+        }
+        col.addView(titleText(getString(R.string.set_button_layout_mode)).apply {
+            setPadding(dp(16), 0, dp(16), dp(8))
+        })
+
+        val track = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = roundedSurface(trackColor, 12)
+        }
+        val modes = listOf(
+            ButtonLayoutMode.FOUR to R.string.btn_mode_4,
+            ButtonLayoutMode.EIGHT to R.string.btn_mode_8,
+            ButtonLayoutMode.TWELVE to R.string.btn_mode_12,
+            ButtonLayoutMode.SIXTEEN to R.string.btn_mode_16,
+        )
+        modes.forEach { (mode, labelRes) ->
+            val selected = prefs.buttonCount == mode.count
+            track.addView(TextView(this).apply {
+                text = getString(labelRes)
+                textSize = 14f
+                gravity = Gravity.CENTER
+                typeface = if (selected) sansMedium else Typeface.DEFAULT
+                setTextColor(if (selected) textColor else secondaryTextColor)
+                background = if (selected) {
+                    roundedSurface(elevatedColor, 9).apply { setStroke(maxOf(1, dp(1)), borderColor) }
+                } else {
+                    ripple(null, rippleColor, 9)
+                }
+                if (selected) elevation = dp(1).toFloat()
+                isClickable = true
+                contentDescription = getString(labelRes)
+                setOnClickListener {
+                    if (prefs.buttonCount != mode.count) {
+                        prefs.buttonCount = mode.count
+                        reload()
+                        recreateKeepingScroll()
+                    }
+                }
+            }, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+                setMargins(dp(2), 0, dp(2), 0)
             })
         }
+        col.addView(track, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(16), 0, dp(16), 0)
+        })
+
+        val descRes = when (prefs.buttonCount) {
+            4 -> R.string.btn_mode_4_desc
+            8 -> R.string.btn_mode_8_desc
+            12 -> R.string.btn_mode_12_desc
+            else -> R.string.btn_mode_16_desc
+        }
+        col.addView(hintText(getString(descRes)).apply {
+            setPadding(dp(16), dp(6), dp(16), 0)
+        })
+
+        return col
+    }
+
+    /**
+     * 按钮槽位编辑：画一张和真实面板同布局的自适应缩略图，
+     * 中间是触控板；根据所选模式（4/8/12/16 键）呈现胶囊型或圆形按钮。
+     */
+    private fun buttonSlotMap(): View {
+        val count = prefs.buttonCount
+        val edgeCount = count / 4
+        val slots = prefs.buttons.take(count).toMutableList()
+        while (slots.size < count) slots.add(PadAction.NONE)
+
+        val gap = dp(6)
+        val available = resources.displayMetrics.widthPixels - dp(16) * 4
+        val cell = ((available - 5 * gap) / 6).coerceAtMost(dp(50))
+        val span = 4 * cell + 3 * gap
+        val map = FrameLayout(this)
+
+        fun place(v: View, x: Int, y: Int, w: Int, h: Int) {
+            map.addView(v, FrameLayout.LayoutParams(w, h).apply {
+                leftMargin = x
+                topMargin = y
+            })
+        }
+
+        // 中间触控板底衬与提示
+        val padX = cell + gap
+        val padY = cell + gap
         place(View(this).apply {
             background = borderedSurface(trackColor, borderColor, 16)
-        }, 1, 1, 4 * cell + 3 * gap, 3 * cell + 2 * gap)
-        val iconPad = (cell * 0.26f).roundToInt()
-        slots.take(BUTTON_SLOT_COUNT).forEachIndexed { index, action ->
-            val (c, r) = cells[index]
+        }, padX, padY, span, span)
+
+        place(TextView(this).apply {
+            text = getString(R.string.btn_edit_buttons)
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(secondaryTextColor)
+            setPadding(dp(10), 0, dp(10), 0)
+        }, padX, padY, span, span)
+
+        // 槽位布局：上 (0..N-1), 下 (N..2N-1), 左 (2N..3N-1), 右 (3N..4N-1)
+        val bottomY = padY + span + gap
+        val rightX = padX + span + gap
+
+        val slotRects = mutableListOf<ControlRect>()
+        // Top
+        for (i in 0 until edgeCount) {
+            val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
+            slotRects.add(ControlRect(padX + off, 0, size, cell))
+        }
+        // Bottom
+        for (i in 0 until edgeCount) {
+            val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
+            slotRects.add(ControlRect(padX + off, bottomY, size, cell))
+        }
+        // Left
+        for (i in 0 until edgeCount) {
+            val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
+            slotRects.add(ControlRect(0, padY + off, cell, size))
+        }
+        // Right
+        for (i in 0 until edgeCount) {
+            val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
+            slotRects.add(ControlRect(rightX, padY + off, cell, size))
+        }
+
+        slotRects.forEachIndexed { index, rect ->
+            val action = slots.getOrElse(index) { PadAction.NONE }
             val empty = action == PadAction.NONE
             val grip = PadAction.isGrip(action)
+            val radius = minOf(rect.w, rect.h) / 2f
+            val iconPx = (minOf(rect.w, rect.h) * 0.54f).roundToInt().coerceAtLeast(dp(8))
+            val padH = ((rect.w - iconPx) / 2).coerceAtLeast(0)
+            val padV = ((rect.h - iconPx) / 2).coerceAtLeast(0)
+
             place(ImageView(this).apply {
                 setImageResource(action.iconRes)
                 imageTintList = ColorStateList.valueOf(when {
@@ -752,9 +861,10 @@ class MainActivity : Activity() {
                     grip -> accentColor
                     else -> textColor
                 })
-                setPadding(iconPad, iconPad, iconPad, iconPad)
+                setPadding(padH, padV, padH, padV)
                 val face = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = radius
                     when {
                         empty -> {
                             setColor(Color.TRANSPARENT)
@@ -770,32 +880,31 @@ class MainActivity : Activity() {
                         }
                     }
                 }
-                background = RippleDrawable(ColorStateList.valueOf(rippleColor), face,
-                    GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) })
+                val mask = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = radius
+                    setColor(Color.WHITE)
+                }
+                background = RippleDrawable(ColorStateList.valueOf(rippleColor), face, mask)
                 if (!empty && !grip) elevation = dp(1).toFloat()
                 isClickable = true
                 PressFeedback.attach(this, maxTiltX = 6f, maxTiltY = 6f, pressScale = 0.92f, sinkDp = 1.5f, isEnabled = { prefs.pressFeedback })
-                contentDescription = "${positions.getOrElse(index) { "${index + 1}" }}: ${getString(action.labelRes)}"
+                contentDescription = "${slotPositionDescription(index, count, this@MainActivity)}: ${getString(action.labelRes)}"
                 setOnClickListener { pickAction(index, action) }
-            }, c, r)
+            }, rect.x, rect.y, rect.w, rect.h)
         }
-        // 中间触控板上写提示
-        place(TextView(this).apply {
-            text = getString(R.string.btn_edit_buttons)
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(secondaryTextColor)
-            setPadding(dp(10), 0, dp(10), 0)
-        }, 1, 1, 4 * cell + 3 * gap, 3 * cell + 2 * gap)
+
+        val totalW = 2 * cell + span + 2 * gap
+        val totalH = 2 * cell + span + 2 * gap
         return FrameLayout(this).apply {
             setPadding(0, dp(16), 0, dp(12))
-            addView(map, FrameLayout.LayoutParams(6 * cell + 5 * gap, 5 * cell + 4 * gap, Gravity.CENTER_HORIZONTAL))
+            addView(map, FrameLayout.LayoutParams(totalW, totalH, Gravity.CENTER_HORIZONTAL))
         }
     }
 
     private fun pickAction(index: Int, current: PadAction) {
         ActionPicker.build(this, darkUi, current, actions = PadAction.TOUCHPAD_ACTIONS) { picked ->
-            val list = replaceSlot(prefs.buttons, index, picked)
+            val list = replaceSlot(prefs.buttons, index, picked, prefs.buttonCount)
             if (list == null) {
                 toast(getString(R.string.need_move_key))
                 return@build

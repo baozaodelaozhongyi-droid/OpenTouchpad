@@ -9,149 +9,128 @@ import org.junit.Test
 class ButtonSlotsTest {
     private fun encode(list: List<PadAction>) = list.joinToString(",") { it.id }
 
-    // ── 18 个位置的布局 ──
+    // ── 4 / 8 / 12 / 16 自选键位模式测试 ──
 
     @Test
-    fun defaultLayoutHasEighteenSlotsWithMoveAndResizeInTheirOldPlaces() {
-        assertEquals(18, BUTTON_SLOT_COUNT)
-        assertEquals(BUTTON_SLOT_COUNT, PadAction.DEFAULT.size)
-        assertEquals(PadAction.MOVE_PANEL, PadAction.DEFAULT[MOVE_GRIP_SLOT])
-        assertEquals(PadAction.RESIZE_PANEL, PadAction.DEFAULT[RESIZE_GRIP_SLOT])
-        // v0.5.3 及以前：移动键在左列最上面，缩放键在右列最下面
-        assertEquals(0 to 1, BUTTON_SLOT_CELLS[MOVE_GRIP_SLOT])
-        assertEquals(5 to 3, BUTTON_SLOT_CELLS[RESIZE_GRIP_SLOT])
-        assertEquals(1, PadAction.DEFAULT.count { it == PadAction.MOVE_PANEL })
-    }
+    fun defaultLayoutsHaveExpectedKeyCountsAndMovePanel() {
+        assertEquals(4, DEFAULT_BUTTONS_4.size)
+        assertEquals(8, DEFAULT_BUTTONS_8.size)
+        assertEquals(12, DEFAULT_BUTTONS_12.size)
+        assertEquals(16, DEFAULT_BUTTONS_16.size)
 
-    @Test
-    fun slotCellsCoverTheOuterRingOfTheGridExactlyOnce() {
-        assertEquals(BUTTON_SLOT_COUNT, BUTTON_SLOT_CELLS.size)
-        assertEquals(BUTTON_SLOT_COUNT, BUTTON_SLOT_CELLS.toSet().size)
-        val ring = (0..5).flatMap { c -> (0..4).map { r -> c to r } }
-            .filter { (c, r) -> c == 0 || c == 5 || r == 0 || r == 4 }
-        assertEquals(ring.toSet(), BUTTON_SLOT_CELLS.toSet())
-    }
-
-    @Test
-    fun slotCellsMatchComputeControlLayout() {
-        for ((density, gap) in listOf(1f to 0, 1f to 3, 3f to 9)) {
-            val width = (168 * density).toInt()
-            val layout = computeControlLayout(width, controlGridHeight(width, density, gap), density, gap)
-            assertEquals(BUTTON_SLOT_COUNT, layout.slots.size)
-            val step = layout.button + gap
-            val origin = layout.slots[12] // 左上角 = 网格 (0, 0)
-            BUTTON_SLOT_CELLS.forEachIndexed { i, (col, row) ->
-                assertEquals("slot $i x", origin.x + col * step, layout.slots[i].x)
-                assertEquals("slot $i y", origin.y + row * step, layout.slots[i].y)
-            }
-            // 触控板占中间 4 × 3
-            assertEquals(origin.x + step, layout.pad.x)
-            assertEquals(origin.y + step, layout.pad.y)
+        for (count in listOf(4, 8, 12, 16)) {
+            val defaults = defaultButtonsFor(count)
+            assertEquals(count, defaults.size)
+            assertTrue("Mode $count must include MOVE_PANEL", defaults.contains(PadAction.MOVE_PANEL))
+            assertEquals(PadAction.MOVE_PANEL, defaults[0])
         }
     }
 
-    // ── 老配置自动补齐 ──
-
     @Test
-    fun legacyTwelveSlotLayoutGetsDefaultCornersAndGripKeys() {
-        val decoded = decodeButtonSlots(encode(PadAction.DEFAULT.take(12)))
-        assertEquals(BUTTON_SLOT_COUNT, decoded.size)
-        assertEquals(PadAction.DEFAULT, decoded)
+    fun buttonLayoutModeEnumCounts() {
+        assertEquals(4, ButtonLayoutMode.FOUR.count)
+        assertEquals(8, ButtonLayoutMode.EIGHT.count)
+        assertEquals(12, ButtonLayoutMode.TWELVE.count)
+        assertEquals(16, ButtonLayoutMode.SIXTEEN.count)
+
+        assertEquals(1, ButtonLayoutMode.FOUR.edgeCount)
+        assertEquals(2, ButtonLayoutMode.EIGHT.edgeCount)
+        assertEquals(3, ButtonLayoutMode.TWELVE.edgeCount)
+        assertEquals(4, ButtonLayoutMode.SIXTEEN.edgeCount)
+
+        assertEquals(ButtonLayoutMode.FOUR, ButtonLayoutMode.fromCount(4))
+        assertEquals(ButtonLayoutMode.EIGHT, ButtonLayoutMode.fromCount(8))
+        assertEquals(ButtonLayoutMode.TWELVE, ButtonLayoutMode.fromCount(12))
+        assertEquals(ButtonLayoutMode.SIXTEEN, ButtonLayoutMode.fromCount(16))
+        assertEquals(ButtonLayoutMode.SIXTEEN, ButtonLayoutMode.fromCount(999))
     }
 
     @Test
-    fun legacySixteenSlotLayoutGetsMoveAndResizeKeysAndKeepsCustomButtons() {
-        val custom = PadAction.DEFAULT.take(16).toMutableList().also {
-            it[0] = PadAction.HOME
-            it[15] = PadAction.NONE
+    fun decodeButtonSlotsReturnsCorrectSizeForEveryMode() {
+        for (count in listOf(4, 8, 12, 16)) {
+            val defaults = defaultButtonsFor(count)
+            assertEquals(defaults, decodeButtonSlots(null, count))
+            assertEquals(defaults, decodeButtonSlots("", count))
+
+            val encoded = encode(defaults)
+            assertEquals(defaults, decodeButtonSlots(encoded, count))
         }
-        val decoded = decodeButtonSlots(encode(custom))
-        assertEquals(BUTTON_SLOT_COUNT, decoded.size)
-        assertEquals(custom, decoded.take(16))
-        assertEquals(PadAction.MOVE_PANEL, decoded[MOVE_GRIP_SLOT])
-        assertEquals(PadAction.RESIZE_PANEL, decoded[RESIZE_GRIP_SLOT])
     }
 
     @Test
-    fun invalidButtonIdKeepsItsSlotInsteadOfShiftingFollowingButtons() {
-        val decoded = decodeButtonSlots("click,removed-action,home")
-        assertEquals(BUTTON_SLOT_COUNT, decoded.size)
-        assertEquals(listOf(PadAction.CLICK, PadAction.NONE, PadAction.HOME), decoded.take(3))
-        assertEquals(PadAction.MOVE_PANEL, decoded[MOVE_GRIP_SLOT])
-    }
-
-    @Test
-    fun completelyInvalidStoredLayoutFallsBackToDefaults() {
-        assertEquals(PadAction.DEFAULT, decodeButtonSlots("removed-action,also-removed"))
-        assertEquals(PadAction.DEFAULT, decodeButtonSlots(null))
-    }
-
-    @Test
-    fun eighteenSlotLayoutRoundTrips() {
-        val custom = PadAction.DEFAULT.toMutableList().also {
-            it[MOVE_GRIP_SLOT] = PadAction.HOME
-            it[0] = PadAction.MOVE_PANEL
-            it[RESIZE_GRIP_SLOT] = PadAction.NONE
+    fun invalidButtonIdKeepsSlotWithoutShifting() {
+        for (count in listOf(4, 8, 12, 16)) {
+            val decoded = decodeButtonSlots("movepanel,invalid_action,back", count)
+            assertEquals(count, decoded.size)
+            assertEquals(PadAction.MOVE_PANEL, decoded[0])
+            assertEquals(PadAction.NONE, decoded[1])
+            assertEquals(PadAction.BACK, decoded[2])
         }
-        assertEquals(custom, decodeButtonSlots(encode(custom)))
     }
 
     @Test
-    fun storedLayoutWithoutAnyMoveKeyGetsItBack() {
-        val stored = PadAction.DEFAULT.toMutableList().also { it[MOVE_GRIP_SLOT] = PadAction.HOME }
-        assertEquals(PadAction.MOVE_PANEL, decodeButtonSlots(encode(stored))[MOVE_GRIP_SLOT])
-        assertEquals(PadAction.MOVE_PANEL, ensureMoveKey(List(BUTTON_SLOT_COUNT) { PadAction.NONE })[MOVE_GRIP_SLOT])
-        assertEquals(PadAction.DEFAULT, ensureMoveKey(PadAction.DEFAULT))
+    fun storedLayoutWithoutMoveKeyRestoresItAtFirstSlot() {
+        for (count in listOf(4, 8, 12, 16)) {
+            val noMove = List(count) { PadAction.BACK }
+            val decoded = decodeButtonSlots(encode(noMove), count)
+            assertEquals(count, decoded.size)
+            assertEquals(PadAction.MOVE_PANEL, decoded[0])
+
+            val ensured = ensureMoveKey(List(count) { PadAction.NONE }, count)
+            assertEquals(count, ensured.size)
+            assertEquals(PadAction.MOVE_PANEL, ensured[0])
+        }
     }
 
     // ── 移动键保护 ──
 
     @Test
-    fun lastMoveKeyCannotBeReplaced() {
-        for (other in PadAction.ALL.filter { it != PadAction.MOVE_PANEL }) {
-            assertNull("$other", replaceSlot(PadAction.DEFAULT, MOVE_GRIP_SLOT, other))
+    fun lastMoveKeyCannotBeReplacedInAnyMode() {
+        for (count in listOf(4, 8, 12, 16)) {
+            val current = defaultButtonsFor(count)
+            // 默认情况下只有 slot 0 是 MOVE_PANEL
+            assertEquals(1, current.count { it == PadAction.MOVE_PANEL })
+
+            for (other in listOf(PadAction.BACK, PadAction.HOME, PadAction.NONE)) {
+                assertNull("Mode $count: replacing sole MOVE_PANEL with $other should be rejected",
+                    replaceSlot(current, 0, other, count))
+            }
+            // 换成它自己不算移除
+            assertEquals(current, replaceSlot(current, 0, PadAction.MOVE_PANEL, count))
         }
-        // 换成它自己不算移除
-        assertEquals(PadAction.DEFAULT, replaceSlot(PadAction.DEFAULT, MOVE_GRIP_SLOT, PadAction.MOVE_PANEL))
     }
 
     @Test
     fun moveKeyCanBeReplacedOnceAnotherExists() {
-        val two = replaceSlot(PadAction.DEFAULT, 0, PadAction.MOVE_PANEL)!!
-        val one = replaceSlot(two, MOVE_GRIP_SLOT, PadAction.HOME)!!
-        assertEquals(PadAction.HOME, one[MOVE_GRIP_SLOT])
-        assertEquals(1, one.count { it == PadAction.MOVE_PANEL })
-        // 现在 0 号是最后一个移动键
-        assertNull(replaceSlot(one, 0, PadAction.CLICK))
-    }
+        for (count in listOf(4, 8, 12, 16)) {
+            val current = defaultButtonsFor(count)
+            // 先把 slot 1 改成 MOVE_PANEL
+            val twoMoves = replaceSlot(current, 1, PadAction.MOVE_PANEL, count)!!
+            assertEquals(2, twoMoves.count { it == PadAction.MOVE_PANEL })
 
-    @Test
-    fun resizeKeyIsNotProtected() {
-        val noResize = replaceSlot(PadAction.DEFAULT, RESIZE_GRIP_SLOT, PadAction.BACK)!!
-        assertFalse(PadAction.RESIZE_PANEL in noResize)
-        assertEquals(PadAction.BACK, noResize[RESIZE_GRIP_SLOT])
-    }
+            // 现在可以安全地把 slot 0 改成别的按键
+            val oneMove = replaceSlot(twoMoves, 0, PadAction.HOME, count)!!
+            assertEquals(PadAction.HOME, oneMove[0])
+            assertEquals(PadAction.MOVE_PANEL, oneMove[1])
+            assertEquals(1, oneMove.count { it == PadAction.MOVE_PANEL })
 
-    @Test
-    fun moveAndResizeCanBeAssignedToAnyPosition() {
-        for (slot in 0 until BUTTON_SLOT_COUNT) {
-            assertEquals(PadAction.MOVE_PANEL, replaceSlot(PadAction.DEFAULT, slot, PadAction.MOVE_PANEL)!![slot])
-            if (slot != MOVE_GRIP_SLOT) {
-                assertEquals(PadAction.RESIZE_PANEL, replaceSlot(PadAction.DEFAULT, slot, PadAction.RESIZE_PANEL)!![slot])
-            }
+            // 此时 slot 1 成为唯一的移动键，不能再被替换
+            assertNull(replaceSlot(oneMove, 1, PadAction.BACK, count))
         }
-        assertTrue(PadAction.MOVE_PANEL in PadAction.ALL)
-        assertTrue(PadAction.RESIZE_PANEL in PadAction.ALL)
     }
 
     @Test
-    fun replaceSlotRejectsOutOfRangeAndAlwaysReturnsEighteen() {
-        assertNull(replaceSlot(PadAction.DEFAULT, -1, PadAction.BACK))
-        assertNull(replaceSlot(PadAction.DEFAULT, BUTTON_SLOT_COUNT, PadAction.BACK))
-        assertEquals(BUTTON_SLOT_COUNT, replaceSlot(PadAction.DEFAULT, 0, PadAction.BACK)!!.size)
-        // 短列表也会补齐到 18 个
-        val short = listOf(PadAction.MOVE_PANEL)
-        assertEquals(BUTTON_SLOT_COUNT, replaceSlot(short, 5, PadAction.HOME)!!.size)
+    fun replaceSlotRejectsOutOfRangeAndPreservesCount() {
+        for (count in listOf(4, 8, 12, 16)) {
+            val current = defaultButtonsFor(count)
+            assertNull(replaceSlot(current, -1, PadAction.BACK, count))
+            assertNull(replaceSlot(current, count, PadAction.BACK, count))
+            assertNull(replaceSlot(current, count + 5, PadAction.BACK, count))
+
+            val updated = replaceSlot(current, count - 1, PadAction.SCREENSHOT, count)!!
+            assertEquals(count, updated.size)
+            assertEquals(PadAction.SCREENSHOT, updated[count - 1])
+        }
     }
 
     @Test
