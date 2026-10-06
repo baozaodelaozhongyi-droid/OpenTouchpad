@@ -6,9 +6,10 @@ enum class ButtonLayoutMode(val count: Int) {
     FOUR(4),
     EIGHT(8),
     TWELVE(12),
-    SIXTEEN(16);
+    SIXTEEN(16),
+    EIGHTEEN(18);
 
-    val edgeCount: Int get() = count / 4
+    val edgeCount: Int get() = if (count == 18) 4 else count / 4
 
     companion object {
         val ALL = entries.toList()
@@ -60,10 +61,27 @@ internal val DEFAULT_BUTTONS_16: List<PadAction> = listOf(
     PadAction.SCROLL_UP, PadAction.SCROLL_DOWN, PadAction.VOLUME_UP, PadAction.VOLUME_DOWN,
 )
 
+/** 默认 18 键位：最开始的经典 6 列 × 5 行网格环形按键布局（含四角、移动键与缩放键）。 */
+internal val DEFAULT_BUTTONS_18: List<PadAction> = listOf(
+    PadAction.CLICK, PadAction.LONG_PRESS, PadAction.DRAG_LOCK, PadAction.SCROLL_UP,
+    PadAction.SCROLL_DOWN, PadAction.NOTIFICATIONS, PadAction.BACK, PadAction.HOME,
+    PadAction.RECENTS, PadAction.KEYBOARD, PadAction.SCREENSHOT, PadAction.MINIMIZE,
+    PadAction.SCROLL_LEFT, PadAction.SCROLL_RIGHT, PadAction.SWIPE_LEFT, PadAction.SWIPE_RIGHT,
+    PadAction.MOVE_PANEL, PadAction.RESIZE_PANEL,
+)
+
+/** 18 键位在 6 列 × 5 行网格中的坐标。 */
+internal val BUTTON_SLOT_CELLS: List<Pair<Int, Int>> =
+    (1..4).map { it to 0 } + (1..4).map { it to 4 } +
+        listOf(0 to 2, 0 to 3, 5 to 1, 5 to 2) +
+        listOf(0 to 0, 5 to 0, 0 to 4, 5 to 4) +
+        listOf(0 to 1, 5 to 3)
+
 internal fun defaultButtonsFor(count: Int): List<PadAction> = when (count) {
     4 -> DEFAULT_BUTTONS_4
     8 -> DEFAULT_BUTTONS_8
     12 -> DEFAULT_BUTTONS_12
+    18 -> DEFAULT_BUTTONS_18
     else -> DEFAULT_BUTTONS_16
 }
 
@@ -75,17 +93,28 @@ internal fun decodeButtonSlots(raw: String?, count: Int = 16): List<PadAction> {
     if (decoded.none { it != null }) return defaults
 
     val kept = decoded.take(count).map { it ?: PadAction.NONE }
-    val filled = if (kept.size >= count) kept else kept + defaults.drop(kept.size)
+    val filled = if (count == 18) {
+        if (kept.size >= 12) {
+            kept + DEFAULT_BUTTONS_18.drop(kept.size)
+        } else {
+            kept + List(16 - kept.size) { PadAction.NONE } + DEFAULT_BUTTONS_18.drop(16)
+        }
+    } else if (kept.size >= count) {
+        kept
+    } else {
+        kept + defaults.drop(kept.size)
+    }
     return ensureMoveKey(filled, count)
 }
 
-/** 面板至少要有一个移动键，否则再也拖不动；万一一个都没有，放回首个按键位置。 */
+/** 面板至少要有一个移动键，否则再也拖不动；万一一个都没有，放回默认按键位置。 */
 internal fun ensureMoveKey(slots: List<PadAction>, count: Int = slots.size): List<PadAction> {
     val actualCount = count.coerceAtLeast(1)
     val list = slots.take(actualCount).toMutableList()
     while (list.size < actualCount) list.add(PadAction.NONE)
     if (PadAction.MOVE_PANEL in list) return list
-    list[0] = PadAction.MOVE_PANEL
+    val moveSlot = if (actualCount == 18) 16 else 0
+    list[moveSlot] = PadAction.MOVE_PANEL
     return list
 }
 
@@ -103,6 +132,10 @@ internal fun replaceSlot(current: List<PadAction>, slot: Int, picked: PadAction,
 
 /** 获取各槽位的无障碍/说明文本。 */
 internal fun slotPositionDescription(index: Int, count: Int, context: Context): String {
+    if (count == 18) {
+        val positions = context.resources.getStringArray(R.array.slot_positions)
+        return positions.getOrElse(index) { "${index + 1}" }
+    }
     val edgeCount = (count / 4).coerceAtLeast(1)
     val edge = index / edgeCount
     val edgeIndex = (index % edgeCount) + 1

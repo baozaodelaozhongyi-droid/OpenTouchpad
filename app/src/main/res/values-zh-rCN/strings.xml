@@ -147,10 +147,12 @@
     <string name="btn_mode_8">8 键</string>
     <string name="btn_mode_12">12 键</string>
     <string name="btn_mode_16">16 键</string>
+    <string name="btn_mode_18">18 键</string>
     <string name="btn_mode_4_desc">4 键位：上下左右四条边气泡型/胶囊型按钮</string>
     <string name="btn_mode_8_desc">8 键位：上下左右四条边小一点的气泡型/胶囊型按钮</string>
     <string name="btn_mode_12_desc">12 键位：上下左右四条边紧凑气泡型/胶囊型按钮</string>
     <string name="btn_mode_16_desc">16 键位：上下左右四条边各四个按钮，压缩成圆形</string>
+    <string name="btn_mode_18_desc">18 键位：经典环形布局（含四角、移动键与缩放键）</string>
     <string name="slot_top_single">上</string>
     <string name="slot_bottom_single">下</string>
     <string name="slot_left_single">左</string>

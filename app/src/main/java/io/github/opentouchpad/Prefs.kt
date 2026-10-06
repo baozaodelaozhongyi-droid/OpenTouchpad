@@ -238,13 +238,13 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("longPressButtonToCustomize", true)
         set(v) = sp.edit().putBoolean("longPressButtonToCustomize", v).apply()
 
-    /** 自选键位模式：4, 8, 12, 16 键位。默认 16 键。 */
+    /** 自选键位模式：4, 8, 12, 16, 18 键位。默认 16 键。 */
     var buttonCount: Int
         get() = sp.getInt("buttonCount", 16).let {
-            if (it in listOf(4, 8, 12, 16)) it else 16
+            if (it in listOf(4, 8, 12, 16, 18)) it else 16
         }
         set(v) {
-            val valid = if (v in listOf(4, 8, 12, 16)) v else 16
+            val valid = if (v in listOf(4, 8, 12, 16, 18)) v else 16
             sp.edit().putInt("buttonCount", valid).apply()
         }
 
@@ -256,7 +256,7 @@ class Prefs(ctx: Context) {
         val key = "buttons_$count"
         val raw = if (sp.contains(key)) {
             sp.getString(key, null)
-        } else if (count == 16 && sp.contains("buttons")) {
+        } else if (sp.contains("buttons")) {
             sp.getString("buttons", null)
         } else {
             null

@@ -147,10 +147,12 @@
     <string name="btn_mode_8">8 Keys</string>
     <string name="btn_mode_12">12 Keys</string>
     <string name="btn_mode_16">16 Keys</string>
+    <string name="btn_mode_18">18 Keys</string>
     <string name="btn_mode_4_desc">4 Keys: 1 bubble / capsule button on each of the 4 edges</string>
     <string name="btn_mode_8_desc">8 Keys: 2 smaller bubble / capsule buttons on each edge</string>
     <string name="btn_mode_12_desc">12 Keys: 3 compact bubble / capsule buttons on each edge</string>
     <string name="btn_mode_16_desc">16 Keys: 4 buttons on each edge, compressed to circular shape</string>
+    <string name="btn_mode_18_desc">18 Keys: Classic ring layout with corners, move and resize keys</string>
     <string name="slot_top_single">Top</string>
     <string name="slot_bottom_single">Bottom</string>
     <string name="slot_left_single">Left</string>

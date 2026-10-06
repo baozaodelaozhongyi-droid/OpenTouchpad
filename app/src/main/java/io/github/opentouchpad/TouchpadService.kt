@@ -690,7 +690,7 @@ class TouchpadService : AccessibilityService() {
 
     /** 面板高度 = 当前宽度下最紧凑的网格高度 + 用户加的额外高度，不超过屏幕。 */
     private fun panelHeightFor(widthPx: Int, extraDp: Int = prefs.extraHeightDp): Int {
-        val grid = controlGridHeight(widthPx, resources.displayMetrics.density, spacingPx())
+        val grid = controlGridHeight(widthPx, resources.displayMetrics.density, spacingPx(), prefs.buttonCount)
         return (grid + dp(extraDp.coerceIn(0, CONTROL_EXTRA_HEIGHT_MAX_DP))).coerceAtMost(maxOf(grid, screenH))
     }
 

@@ -736,6 +736,7 @@ class MainActivity : Activity() {
             ButtonLayoutMode.EIGHT to R.string.btn_mode_8,
             ButtonLayoutMode.TWELVE to R.string.btn_mode_12,
             ButtonLayoutMode.SIXTEEN to R.string.btn_mode_16,
+            ButtonLayoutMode.EIGHTEEN to R.string.btn_mode_18,
         )
         modes.forEach { (mode, labelRes) ->
             val selected = prefs.buttonCount == mode.count
@@ -772,6 +773,7 @@ class MainActivity : Activity() {
             4 -> R.string.btn_mode_4_desc
             8 -> R.string.btn_mode_8_desc
             12 -> R.string.btn_mode_12_desc
+            18 -> R.string.btn_mode_18_desc
             else -> R.string.btn_mode_16_desc
         }
         col.addView(hintText(getString(descRes)).apply {
@@ -783,11 +785,10 @@ class MainActivity : Activity() {
 
     /**
      * 按钮槽位编辑：画一张和真实面板同布局的自适应缩略图，
-     * 中间是触控板；根据所选模式（4/8/12/16 键）呈现胶囊型或圆形按钮。
+     * 中间是触控板；根据所选模式（4/8/12/16/18 键）呈现对应布局与形状。
      */
     private fun buttonSlotMap(): View {
         val count = prefs.buttonCount
-        val edgeCount = count / 4
         val slots = prefs.buttons.take(count).toMutableList()
         while (slots.size < count) slots.add(PadAction.NONE)
 
@@ -804,12 +805,18 @@ class MainActivity : Activity() {
             })
         }
 
-        // 中间触控板底衬与提示
         val padX = cell + gap
         val padY = cell + gap
+        val (padH, totalH) = if (count == 18) {
+            (3 * cell + 2 * gap) to (5 * cell + 4 * gap)
+        } else {
+            span to (2 * cell + span + 2 * gap)
+        }
+
+        // 中间触控板底衬与提示
         place(View(this).apply {
             background = borderedSurface(trackColor, borderColor, 16)
-        }, padX, padY, span, span)
+        }, padX, padY, span, padH)
 
         place(TextView(this).apply {
             text = getString(R.string.btn_edit_buttons)
@@ -817,32 +824,39 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setTextColor(secondaryTextColor)
             setPadding(dp(10), 0, dp(10), 0)
-        }, padX, padY, span, span)
+        }, padX, padY, span, padH)
 
-        // 槽位布局：上 (0..N-1), 下 (N..2N-1), 左 (2N..3N-1), 右 (3N..4N-1)
-        val bottomY = padY + span + gap
-        val rightX = padX + span + gap
-
-        val slotRects = mutableListOf<ControlRect>()
-        // Top
-        for (i in 0 until edgeCount) {
-            val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
-            slotRects.add(ControlRect(padX + off, 0, size, cell))
-        }
-        // Bottom
-        for (i in 0 until edgeCount) {
-            val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
-            slotRects.add(ControlRect(padX + off, bottomY, size, cell))
-        }
-        // Left
-        for (i in 0 until edgeCount) {
-            val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
-            slotRects.add(ControlRect(0, padY + off, cell, size))
-        }
-        // Right
-        for (i in 0 until edgeCount) {
-            val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
-            slotRects.add(ControlRect(rightX, padY + off, cell, size))
+        val slotRects = if (count == 18) {
+            val step = cell + gap
+            BUTTON_SLOT_CELLS.map { (c, r) ->
+                ControlRect(c * step, r * step, cell, cell)
+            }
+        } else {
+            val edgeCount = count / 4
+            val bottomY = padY + span + gap
+            val rightX = padX + span + gap
+            val rects = mutableListOf<ControlRect>()
+            // Top
+            for (i in 0 until edgeCount) {
+                val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
+                rects.add(ControlRect(padX + off, 0, size, cell))
+            }
+            // Bottom
+            for (i in 0 until edgeCount) {
+                val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
+                rects.add(ControlRect(padX + off, bottomY, size, cell))
+            }
+            // Left
+            for (i in 0 until edgeCount) {
+                val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
+                rects.add(ControlRect(0, padY + off, cell, size))
+            }
+            // Right
+            for (i in 0 until edgeCount) {
+                val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
+                rects.add(ControlRect(rightX, padY + off, cell, size))
+            }
+            rects
         }
 
         slotRects.forEachIndexed { index, rect ->
@@ -894,8 +908,7 @@ class MainActivity : Activity() {
             }, rect.x, rect.y, rect.w, rect.h)
         }
 
-        val totalW = 2 * cell + span + 2 * gap
-        val totalH = 2 * cell + span + 2 * gap
+        val totalW = 6 * cell + 5 * gap
         return FrameLayout(this).apply {
             setPadding(0, dp(16), 0, dp(12))
             addView(map, FrameLayout.LayoutParams(totalW, totalH, Gravity.CENTER_HORIZONTAL))

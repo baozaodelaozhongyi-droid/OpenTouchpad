@@ -323,7 +323,7 @@ class TouchpadMathTest {
     }
 
     private fun gridOf(width: Int, gap: Int, extra: Int = 0, density: Float = 1f, buttonCount: Int = 16): ControlLayout {
-        val h = controlGridHeight(width, density, gap) + extra
+        val h = controlGridHeight(width, density, gap, buttonCount) + extra
         return computeControlLayout(width, h, density, gap, buttonCount)
     }
 
@@ -367,6 +367,17 @@ class TouchpadMathTest {
 
             assertNoOverlap(l)
         }
+    }
+
+    @Test
+    fun eighteenButtonModeGeneratesCircularSlotsAndMatchesGrid() {
+        val l = gridOf(168, 3, buttonCount = 18)
+        assertEquals(18, l.slots.size)
+        for (slot in l.slots) {
+            assertEquals("Mode 18 buttons should be circular (b x b)", l.button, slot.w)
+            assertEquals("Mode 18 buttons should be circular (b x b)", l.button, slot.h)
+        }
+        assertNoOverlap(l)
     }
 
     @Test
@@ -420,6 +431,18 @@ class TouchpadMathTest {
             assertEquals(30, b.slots[leftIndex].y - a.slots[leftIndex].y)
             assertNoOverlap(b)
         }
+    }
+
+    @Test
+    fun extraHeightCentersSideButtonsInEighteenMode() {
+        val a = gridOf(168, 3, buttonCount = 18)
+        val b = gridOf(168, 3, extra = 60, buttonCount = 18)
+        assertEquals(a.button, b.button)
+        assertEquals(a.pad.w, b.pad.w)
+        assertEquals(a.pad.h + 60, b.pad.h)
+        // 侧边按键 (slot 8: left col row 2) 整体垂直居中下移 30
+        assertEquals(30, b.slots[8].y - a.slots[8].y)
+        assertNoOverlap(b)
     }
 
     @Test
