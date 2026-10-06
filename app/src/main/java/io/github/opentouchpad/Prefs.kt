@@ -184,6 +184,11 @@ class Prefs(ctx: Context) {
         set(v) = sp.edit().putBoolean("minimizedByKeyboard", v).apply()
 
     // ── 悬浮球手势动作 ──
+    /** 是否开启悬浮球手势动作。默认开启。关闭后点击直接展开触控板，拖动直接移动悬浮球。 */
+    var ballGesturesEnabled: Boolean
+        get() = sp.getBoolean("ballGesturesEnabled", true)
+        set(v) = sp.edit().putBoolean("ballGesturesEnabled", v).apply()
+
     var ballActionSingleTap: PadAction
         get() = PadAction.fromId(sp.getString("ballActionSingleTap", null)) ?: PadAction.BACK
         set(v) = sp.edit().putString("ballActionSingleTap", v.id).apply()

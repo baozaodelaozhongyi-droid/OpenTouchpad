@@ -1237,8 +1237,71 @@ class TouchpadService : AccessibilityService() {
         anim.start()
     }
 
+    /**
+     * 关闭悬浮球手势时的极简模式：
+     * - 点击悬浮球直接展开触控板（0ms 延迟，无需等待双击超时）；
+     * - 拖动悬浮球直接实时移动位置（无需长按触发，无阻尼手势判定与误触发）。
+     */
+    private fun handleSimpleBallTouch(v: View, e: MotionEvent): Boolean {
+        val slop = dp(6).toFloat()
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                ballSnapAnimator?.cancel()
+                ballSnapAnimator = null
+                resetBallDeformation(animated = false)
+                ballMoved = false
+                ballFromX = e.rawX
+                ballFromY = e.rawY
+                ballDragStartX = panelParams?.x ?: prefs.ballX.coerceAtLeast(0)
+                ballDragStartY = panelParams?.y ?: prefs.ballY.coerceAtLeast(0)
+                miniBallView?.animate()?.alpha(1f)?.setDuration(100)?.start()
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = e.rawX - ballFromX
+                val dy = e.rawY - ballFromY
+                if (!ballMoved && kotlin.math.hypot(dx, dy) >= slop) {
+                    ballMoved = true
+                }
+                if (ballMoved) {
+                    val size = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
+                    val position = clampFloatingBallPosition(
+                        ballDragStartX + dx.roundToInt(),
+                        ballDragStartY + dy.roundToInt(),
+                        size,
+                        screenW,
+                        screenH,
+                    )
+                    panelParams?.let { lp ->
+                        lp.x = position.x
+                        lp.y = position.y
+                        panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
+                        prefs.ballX = position.x
+                        prefs.ballY = position.y
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(200)?.start()
+                if (!ballMoved) {
+                    haptic()
+                    toggleMinimize()
+                } else {
+                    keepBallInBounds()
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(200)?.start()
+                keepBallInBounds()
+            }
+        }
+        return true
+    }
+
     private fun handleBallTouch(v: View, e: MotionEvent): Boolean {
         if (isPassThroughActive) return false
+        if (!prefs.ballGesturesEnabled) {
+            return handleSimpleBallTouch(v, e)
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 ballSnapAnimator?.cancel()

@@ -234,20 +234,34 @@ class MainActivity : Activity() {
             switchRow(getString(R.string.switch_hide_ball), prefs.hideFloatingBall, hint = getString(R.string.hide_ball_hint), onChange = { prefs.hideFloatingBall = it; reload() }),
         ))
         col.addView(sectionHeader(getString(R.string.sec_ball_gestures)))
-        col.addView(card(
-            actionPickerRow(getString(R.string.gesture_single_tap), prefs.ballActionSingleTap, PadAction.BALL_ACTIONS) { prefs.ballActionSingleTap = it },
-            actionPickerRow(getString(R.string.gesture_double_tap), prefs.ballActionDoubleTap, PadAction.BALL_ACTIONS) { prefs.ballActionDoubleTap = it },
-            actionPickerRow(getString(R.string.gesture_long_press), prefs.ballActionLongPress, PadAction.BALL_LONG_PRESS_ACTIONS) { prefs.ballActionLongPress = it },
-            actionPickerRow(getString(R.string.gesture_swipe_up), prefs.ballActionSwipeUp, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeUp = it },
-            actionPickerRow(getString(R.string.gesture_swipe_down), prefs.ballActionSwipeDown, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeDown = it },
-            actionPickerRow(getString(R.string.gesture_swipe_left), prefs.ballActionSwipeLeft, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeLeft = it },
-            actionPickerRow(getString(R.string.gesture_swipe_right), prefs.ballActionSwipeRight, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeRight = it },
-            actionRow(getString(R.string.btn_reset_ball_gestures)) {
+        val ballGestureRows = mutableListOf<View>()
+        ballGestureRows.add(
+            switchRow(
+                getString(R.string.switch_ball_gestures),
+                prefs.ballGesturesEnabled,
+                hint = getString(R.string.switch_ball_gestures_hint),
+                onChange = {
+                    prefs.ballGesturesEnabled = it
+                    reload()
+                    recreateKeepingScroll()
+                }
+            )
+        )
+        if (prefs.ballGesturesEnabled) {
+            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_single_tap), prefs.ballActionSingleTap, PadAction.BALL_ACTIONS) { prefs.ballActionSingleTap = it })
+            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_double_tap), prefs.ballActionDoubleTap, PadAction.BALL_ACTIONS) { prefs.ballActionDoubleTap = it })
+            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_long_press), prefs.ballActionLongPress, PadAction.BALL_LONG_PRESS_ACTIONS) { prefs.ballActionLongPress = it })
+            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_up), prefs.ballActionSwipeUp, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeUp = it })
+            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_down), prefs.ballActionSwipeDown, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeDown = it })
+            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_left), prefs.ballActionSwipeLeft, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeLeft = it })
+            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_right), prefs.ballActionSwipeRight, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeRight = it })
+            ballGestureRows.add(actionRow(getString(R.string.btn_reset_ball_gestures)) {
                 prefs.resetBallActions()
                 reload()
                 recreateKeepingScroll()
-            },
-        ))
+            })
+        }
+        col.addView(card(*ballGestureRows.toTypedArray()))
 
         // ── 光标 ──
         col.addView(sectionHeader(getString(R.string.sec_cursor)))

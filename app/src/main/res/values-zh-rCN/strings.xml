@@ -98,6 +98,8 @@
     <string name="switch_hide_ball">隐藏悬浮球</string>
     <string name="hide_ball_hint">开启后收起触控板不显示悬浮球，可在本页打开「显示触控板」重新展开。</string>
     <string name="sec_ball_gestures">悬浮球手势动作</string>
+    <string name="switch_ball_gestures">开启手势动作</string>
+    <string name="switch_ball_gestures_hint">关闭后，点击悬浮球直接展开触控板，拖动直接移动悬浮球位置。</string>
     <string name="gesture_single_tap">单击</string>
     <string name="gesture_double_tap">双击</string>
     <string name="gesture_long_press">长按</string>

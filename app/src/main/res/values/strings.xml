@@ -98,6 +98,8 @@
     <string name="switch_hide_ball">Hide floating ball</string>
     <string name="hide_ball_hint">When on, collapsing leaves no floating ball. Turn on "Show touchpad" here to expand again.</string>
     <string name="sec_ball_gestures">Floating ball gestures</string>
+    <string name="switch_ball_gestures">Enable gesture actions</string>
+    <string name="switch_ball_gestures_hint">When off, tap the ball to expand the touchpad directly, and drag to move the ball.</string>
     <string name="gesture_single_tap">Single tap</string>
     <string name="gesture_double_tap">Double tap</string>
     <string name="gesture_long_press">Long press</string>
