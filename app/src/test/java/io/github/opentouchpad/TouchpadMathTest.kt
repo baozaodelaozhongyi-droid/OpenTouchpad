@@ -444,7 +444,7 @@ class TouchpadMathTest {
     }
 
     @Test
-    fun extraHeightOnlyMakesTouchpadTallerAndCentersSideButtons() {
+    fun extraHeightStretchesSideButtonsWithTouchpad() {
         for (count in listOf(4, 8, 12, 16)) {
             val a = gridOf(168, 3, buttonCount = count)
             val b = gridOf(168, 3, extra = 60, buttonCount = count)
@@ -454,21 +454,39 @@ class TouchpadMathTest {
 
             val edgeCount = count / 4
             val leftIndex = 2 * edgeCount
-            // 触控板高度增加 60，侧边按键整体垂直居中下移 30
-            assertEquals(30, b.slots[leftIndex].y - a.slots[leftIndex].y)
+            // 侧边按键顶部与触控板对齐
+            assertEquals(a.pad.y, a.slots[leftIndex].y)
+            assertEquals(b.pad.y, b.slots[leftIndex].y)
+
+            // 侧边按键高度跟着触控板高度拉伸
+            val totalSideHA = (0 until edgeCount).sumOf { a.slots[leftIndex + it].h } + (edgeCount - 1) * 3
+            val totalSideHB = (0 until edgeCount).sumOf { b.slots[leftIndex + it].h } + (edgeCount - 1) * 3
+            assertEquals(a.pad.h, totalSideHA)
+            assertEquals(b.pad.h, totalSideHB)
+            assertEquals(totalSideHA + 60, totalSideHB)
+
             assertNoOverlap(b)
         }
     }
 
     @Test
-    fun extraHeightCentersSideButtonsInEighteenMode() {
+    fun extraHeightStretchesSideButtonsInEighteenMode() {
         val a = gridOf(168, 3, buttonCount = 18)
         val b = gridOf(168, 3, extra = 60, buttonCount = 18)
         assertEquals(a.button, b.button)
         assertEquals(a.pad.w, b.pad.w)
         assertEquals(a.pad.h + 60, b.pad.h)
-        // 侧边按键 (slot 8: left col row 2) 整体垂直居中下移 30
-        assertEquals(30, b.slots[8].y - a.slots[8].y)
+
+        // 侧边 3 个按钮高度总和严格填满触控板高度，并跟着拉伸
+        val left18A = listOf(a.slots[16], a.slots[8], a.slots[9])
+        val left18B = listOf(b.slots[16], b.slots[8], b.slots[9])
+        assertEquals(a.pad.y, left18A[0].y)
+        assertEquals(b.pad.y, left18B[0].y)
+        val totalSideA = left18A.sumOf { it.h } + 2 * 3
+        val totalSideB = left18B.sumOf { it.h } + 2 * 3
+        assertEquals(a.pad.h, totalSideA)
+        assertEquals(b.pad.h, totalSideB)
+        assertEquals(totalSideA + 60, totalSideB)
         assertNoOverlap(b)
     }
 

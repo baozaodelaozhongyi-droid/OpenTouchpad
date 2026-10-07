@@ -853,7 +853,6 @@ class MainActivity : Activity() {
             val bottomY = padY + padH + gap
             val rightX = padX + span + gap
             val rects = mutableListOf<ControlRect>()
-            val sideY0 = padY + (padH - minPadH) / 2
             // Top
             for (i in 0 until edgeCount) {
                 val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
@@ -866,13 +865,13 @@ class MainActivity : Activity() {
             }
             // Left
             for (i in 0 until edgeCount) {
-                val (off, size) = edgeItemOffsetAndSize(i, minPadH, edgeCount, gap)
-                rects.add(ControlRect(0, sideY0 + off, cell, size))
+                val (off, size) = edgeItemOffsetAndSize(i, padH, edgeCount, gap)
+                rects.add(ControlRect(0, padY + off, cell, size))
             }
             // Right
             for (i in 0 until edgeCount) {
-                val (off, size) = edgeItemOffsetAndSize(i, minPadH, edgeCount, gap)
-                rects.add(ControlRect(rightX, sideY0 + off, cell, size))
+                val (off, size) = edgeItemOffsetAndSize(i, padH, edgeCount, gap)
+                rects.add(ControlRect(rightX, padY + off, cell, size))
             }
             rects
         }

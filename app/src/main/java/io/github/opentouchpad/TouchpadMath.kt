@@ -172,21 +172,28 @@ internal fun computeControlLayout(
         val x0 = ((width - gridW) / 2).coerceAtLeast(0)
         val colX = List(6) { x0 + it * step }
         val topY = edge
-        val bottomY = (height - edge - b).coerceAtLeast(topY + 4 * step)
+        val minPadH = controlMinPadHeight(b, gap, 18)
+        val minBottomY = topY + b + gap + minPadH + gap
+        val bottomY = (height - edge - b).coerceAtLeast(minBottomY)
         val padTop = topY + step
         val padH = bottomY - gap - padTop
         val pad = ControlRect(colX[1], padTop, 4 * b + 3 * gap, padH)
-        val sideStart = padTop + (padH - (3 * b + 2 * gap)) / 2
-        val sideY = List(3) { sideStart + it * step }
-        fun at(x: Int, y: Int) = ControlRect(x, y, b, b)
+
+        val sideRects = (0..2).map { i ->
+            val (off, size) = edgeItemOffsetAndSize(i, padH, 3, gap)
+            (padTop + off) to size
+        }
         val leftX = colX[0]
         val rightX = colX[5]
+        fun at(x: Int, y: Int) = ControlRect(x, y, b, b)
+        fun sideAt(x: Int, index: Int) = ControlRect(x, sideRects[index].first, b, sideRects[index].second)
+
         val slots = (1..4).map { at(colX[it], topY) } +
             (1..4).map { at(colX[it], bottomY) } +
-            listOf(at(leftX, sideY[1]), at(leftX, sideY[2])) +
-            listOf(at(rightX, sideY[0]), at(rightX, sideY[1])) +
+            listOf(sideAt(leftX, 1), sideAt(leftX, 2)) +
+            listOf(sideAt(rightX, 0), sideAt(rightX, 1)) +
             listOf(at(leftX, topY), at(rightX, topY), at(leftX, bottomY), at(rightX, bottomY)) +
-            listOf(at(leftX, sideY[0]), at(rightX, sideY[2]))
+            listOf(sideAt(leftX, 0), sideAt(rightX, 2))
         return ControlLayout(button = b, pad = pad, slots = slots, buttonCount = 18)
     }
 
@@ -206,8 +213,6 @@ internal fun computeControlLayout(
     val padH = bottomY - gap - padTop
     val pad = ControlRect(padX, padTop, span, padH)
 
-    val sideY0 = padTop + (padH - minPadH) / 2
-
     val edgeCount = (buttonCount / 4).coerceIn(1, 4)
 
     val topSlots = (0 until edgeCount).map { i ->
@@ -221,13 +226,13 @@ internal fun computeControlLayout(
     }
 
     val leftSlots = (0 until edgeCount).map { i ->
-        val (off, size) = edgeItemOffsetAndSize(i, minPadH, edgeCount, gap)
-        ControlRect(leftX, sideY0 + off, b, size)
+        val (off, size) = edgeItemOffsetAndSize(i, padH, edgeCount, gap)
+        ControlRect(leftX, padTop + off, b, size)
     }
 
     val rightSlots = (0 until edgeCount).map { i ->
-        val (off, size) = edgeItemOffsetAndSize(i, minPadH, edgeCount, gap)
-        ControlRect(rightX, sideY0 + off, b, size)
+        val (off, size) = edgeItemOffsetAndSize(i, padH, edgeCount, gap)
+        ControlRect(rightX, padTop + off, b, size)
     }
 
     val slots = topSlots + bottomSlots + leftSlots + rightSlots
