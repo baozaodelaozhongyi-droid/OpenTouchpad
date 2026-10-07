@@ -57,6 +57,9 @@ class TouchpadService : AccessibilityService() {
         @Volatile
         var instance: TouchpadService? = null
             private set
+
+        @Volatile
+        var onPanelResized: ((widthDp: Int, extraHeightDp: Int) -> Unit)? = null
     }
 
     private lateinit var wm: WindowManager
@@ -299,6 +302,7 @@ class TouchpadService : AccessibilityService() {
         isPassThroughActive = false
         setOverlayTouchable(true)
         instance = null
+        onPanelResized = null
         cancelDrag()
         removeTouchRing()
         cancelTransitions()
@@ -367,6 +371,115 @@ class TouchpadService : AccessibilityService() {
         buildCursor()
         buildPanel()
         updateCursor()
+    }
+
+    /** 实时平滑更新触控板尺寸与边距（拖拽缩放键或滑动条时调用，绝不重建窗口，零闪烁）。 */
+    fun updatePanelGeometry() {
+        prefs = Prefs(this)
+        val root = panel as? FrameLayout ?: return
+        if (root === miniBallView) return
+        val window = panelParams ?: return
+        val widthRange = controlWidthRange(screenW, resources.displayMetrics.density)
+        val widthPx = if (prefs.panelWidthDp > 0) {
+            dp(prefs.panelWidthDp)
+        } else {
+            screenW * prefs.padWidthPercent / 100
+        }.coerceIn(widthRange.first, widthRange.last)
+        val heightPx = panelHeightFor(widthPx, prefs.extraHeightDp)
+        val position = clampPanelPosition(window.x, window.y, widthPx, heightPx, screenW, screenH)
+        window.x = position.x
+        window.y = position.y
+        window.width = widthPx
+        window.height = heightPx
+        root.layoutParams = window
+        layoutControlChildren(root, widthPx, heightPx)
+        runCatching { wm.updateViewLayout(root, window) }
+        root.requestLayout()
+        root.invalidate()
+    }
+
+    /** 实时平滑更新触控板透明度与按键样式（零闪烁）。 */
+    fun updatePanelAppearance() {
+        prefs = Prefs(this)
+        val root = panel as? FrameLayout ?: return
+        if (root === miniBallView) return
+        val window = panelParams ?: return
+        layoutControlChildren(root, window.width, window.height)
+        root.invalidate()
+    }
+
+    /** 实时平滑更新悬浮球尺寸、透明度与颜色（零闪烁）。 */
+    fun updateBallAppearance() {
+        prefs = Prefs(this)
+        val dot = miniBallView ?: return
+        val lp = panelParams ?: return
+        val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
+        val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
+            ?: if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+        val light = Color.luminance(ballColor) > 0.55f
+        val ballSize = (size * 0.86f).roundToInt()
+        val halo = (ballSize * 0.06f).roundToInt().coerceAtLeast(dp(1))
+
+        val ring = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor((ballColor and 0x00FFFFFF) or 0x40000000)
+        }
+        val disc = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(lighten(ballColor, 0.08f), ballColor),
+        ).apply {
+            shape = GradientDrawable.OVAL
+            setStroke(maxOf(1, dp(1)), if (light) 0x26141413 else 0x33FAF9F5)
+        }
+        val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+
+        ballBgView?.background = RippleDrawable(
+            ColorStateList.valueOf(if (light) 0x26141413 else 0x40FAF9F5),
+            LayerDrawable(arrayOf(ring, disc)).apply { setLayerInset(1, halo, halo, halo, halo) },
+            mask,
+        )
+        ballBgView?.layoutParams = FrameLayout.LayoutParams(ballSize, ballSize, Gravity.CENTER)
+
+        val icon = ballIconView
+        if (icon != null) {
+            icon.imageTintList = ColorStateList.valueOf(if (light) 0xFF141413.toInt() else 0xFFFAF9F5.toInt())
+            val iconPadding = (ballSize * 0.04f).roundToInt()
+            icon.setPadding(iconPadding, iconPadding, iconPadding, iconPadding)
+            val iconSize = (ballSize * 0.48f).roundToInt()
+            icon.layoutParams = FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER)
+        }
+
+        dot.alpha = ballRestingAlpha()
+        if (lp.width != size || lp.height != size) {
+            lp.width = size
+            lp.height = size
+            val position = clampFloatingBallPosition(lp.x, lp.y, size, screenW, screenH)
+            lp.x = position.x
+            lp.y = position.y
+            prefs.ballX = position.x
+            prefs.ballY = position.y
+            ballAnchorX = position.x
+            ballAnchorY = position.y
+            runCatching { wm.updateViewLayout(dot, lp) }
+        }
+        dot.requestLayout()
+        dot.invalidate()
+    }
+
+    /** 实时平滑更新光标大小、透明度与颜色（零闪烁）。 */
+    fun updateCursorAppearance() {
+        prefs = Prefs(this)
+        val cv = cursorView ?: return
+        val cp = cursorParams ?: return
+        val size = dp(prefs.cursorSizeDp.coerceIn(CURSOR_MIN_DP, CURSOR_MAX_DP))
+        cv.alpha = prefs.cursorOpacityPercent.coerceIn(10, 100) / 100f
+        (cv as? CursorArrowView)?.pointerColor = prefs.cursorColor
+        if (cp.width != size || cp.height != size) {
+            cp.width = size
+            cp.height = size
+            runCatching { wm.updateViewLayout(cv, cp) }
+        }
+        cv.invalidate()
     }
 
     fun toggleMinimize() {
@@ -709,8 +822,8 @@ class TouchpadService : AccessibilityService() {
         )
         padArea?.layoutParams = rectParams(layout.pad)
         // 触控板圆角随按钮大小变化，保持和按钮的视觉比例
-        (padArea?.background as? GradientDrawable)?.cornerRadius = layout.button * 0.42f
         padCornerRadius = layout.button * 0.42f
+        padArea?.background = padBackground(isDarkTheme(), padCornerRadius)
 
         val p = palette(isDarkTheme())
 
@@ -1165,7 +1278,8 @@ class TouchpadService : AccessibilityService() {
                     ((e.rawY - resizingFromY) / resources.displayMetrics.density).roundToInt())
                     .coerceIn(0, CONTROL_EXTRA_HEIGHT_MAX_DP)
                 val height = panelHeightFor(width, extraDp)
-                prefs.panelWidthDp = pixelsToDp(width, resources.displayMetrics.density)
+                val widthDp = pixelsToDp(width, resources.displayMetrics.density)
+                prefs.panelWidthDp = widthDp
                 prefs.padWidthPercent = (width * 100 / screenW).coerceIn(20, 100)
                 prefs.extraHeightDp = extraDp
                 panel?.let { panelView ->
@@ -1178,10 +1292,12 @@ class TouchpadService : AccessibilityService() {
                     runCatching { wm.updateViewLayout(root, window) }
                     root.requestLayout()
                 }
+                onPanelResized?.invoke(widthDp, extraDp)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 resizingPanel = false
                 panel?.post { keepPanelInBounds() }
+                onPanelResized?.invoke(prefs.panelWidthDp, prefs.extraHeightDp)
             }
         }
         return true

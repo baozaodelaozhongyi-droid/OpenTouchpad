@@ -623,4 +623,32 @@ class TouchpadMathTest {
         assertEquals(0f, lerpAngleDeg(350f, 10f, 0.5f), 0.01f)
         assertEquals(0f, lerpAngleDeg(10f, 350f, 0.5f), 0.01f)
     }
+
+    @Test
+    fun sliderControllerClampsValuesProperly() {
+        var recordedValue = -1
+        val controller = MainActivity.SliderController { newValue ->
+            recordedValue = newValue.coerceIn(10, 100)
+        }
+        controller.setValue(5)
+        assertEquals(10, recordedValue)
+        controller.setValue(50)
+        assertEquals(50, recordedValue)
+        controller.setValue(150)
+        assertEquals(100, recordedValue)
+    }
+
+    @Test
+    fun onPanelResizedCallbackDispatchesDimensions() {
+        var receivedW = 0
+        var receivedH = 0
+        TouchpadService.onPanelResized = { w, h ->
+            receivedW = w
+            receivedH = h
+        }
+        TouchpadService.onPanelResized?.invoke(320, 45)
+        assertEquals(320, receivedW)
+        assertEquals(45, receivedH)
+        TouchpadService.onPanelResized = null
+    }
 }

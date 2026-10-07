@@ -51,9 +51,15 @@ class MainActivity : Activity() {
     private lateinit var scroller: ScrollView
     private lateinit var baseScroller: ScrollView
     private lateinit var rootContainer: FrameLayout
+    class SliderController(val setValue: (Int) -> Unit)
+
     private var showPanelSwitch: Switch? = null
     private var baseStatusView: TextView? = null
     private var baseShowPanelSwitch: Switch? = null
+    private var widthSliderController: SliderController? = null
+    private var heightSliderController: SliderController? = null
+    private var baseWidthSliderController: SliderController? = null
+    private var baseHeightSliderController: SliderController? = null
     private var darkUi = false
     private var baseThemeDark = false
     private var currentReveal: RevealLayout? = null
@@ -98,6 +104,8 @@ class MainActivity : Activity() {
         scroller = baseScroller
         baseStatusView = statusView
         baseShowPanelSwitch = showPanelSwitch
+        baseWidthSliderController = widthSliderController
+        baseHeightSliderController = heightSliderController
         attachScrollSync(baseScroller)
         rootContainer = FrameLayout(this).apply {
             setBackgroundColor(pageColor)
@@ -153,6 +161,20 @@ class MainActivity : Activity() {
         oldAnim?.cancel()
     }
 
+    override fun onStart() {
+        super.onStart()
+        TouchpadService.onPanelResized = { w, h ->
+            runOnUiThread {
+                updateResizedSliders(w, h)
+            }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        TouchpadService.onPanelResized = null
+    }
+
     override fun onResume() {
         super.onResume()
         updateStatus()
@@ -164,6 +186,25 @@ class MainActivity : Activity() {
                 sw.isChecked = shown
                 sw.tag = null
             }
+        }
+        val maxPanelWidth = pixelsToDp(resources.displayMetrics.widthPixels, resources.displayMetrics.density)
+            .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
+        val w = if (prefs.panelWidthDp > 0) {
+            prefs.panelWidthDp
+        } else {
+            maxPanelWidth * prefs.padWidthPercent / 100
+        }
+        updateResizedSliders(w, prefs.extraHeightDp)
+    }
+
+    private fun updateResizedSliders(widthDp: Int, extraHeightDp: Int) {
+        widthSliderController?.setValue(widthDp)
+        heightSliderController?.setValue(extraHeightDp)
+        if (baseWidthSliderController !== widthSliderController) {
+            baseWidthSliderController?.setValue(widthDp)
+        }
+        if (baseHeightSliderController !== heightSliderController) {
+            baseHeightSliderController?.setValue(extraHeightDp)
         }
     }
 
@@ -190,10 +231,42 @@ class MainActivity : Activity() {
             ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
         col.addView(sectionHeader(getString(R.string.sec_pad)))
         col.addView(card(
-            slider(getString(R.string.set_pad_width), PANEL_MIN_WIDTH_DP, maxPanelWidth, currentPanelWidth, unit = "dp", onChange = { prefs.panelWidthDp = it; reload() }),
-            slider(getString(R.string.set_pad_height), 0, CONTROL_EXTRA_HEIGHT_MAX_DP, prefs.extraHeightDp.coerceIn(0, CONTROL_EXTRA_HEIGHT_MAX_DP), unit = "dp",
-                hint = getString(R.string.pad_height_hint), onChange = { prefs.extraHeightDp = it; reload() }),
-            slider(getString(R.string.set_opacity), 20, 100, prefs.opacityPercent, unit = "%", onChange = { prefs.opacityPercent = it; reload() }),
+            slider(
+                getString(R.string.set_pad_width),
+                PANEL_MIN_WIDTH_DP,
+                maxPanelWidth,
+                currentPanelWidth,
+                unit = "dp",
+                bind = { widthSliderController = it },
+                onChange = {
+                    prefs.panelWidthDp = it
+                    TouchpadService.instance?.updatePanelGeometry()
+                },
+            ),
+            slider(
+                getString(R.string.set_pad_height),
+                0,
+                CONTROL_EXTRA_HEIGHT_MAX_DP,
+                prefs.extraHeightDp.coerceIn(0, CONTROL_EXTRA_HEIGHT_MAX_DP),
+                unit = "dp",
+                hint = getString(R.string.pad_height_hint),
+                bind = { heightSliderController = it },
+                onChange = {
+                    prefs.extraHeightDp = it
+                    TouchpadService.instance?.updatePanelGeometry()
+                },
+            ),
+            slider(
+                getString(R.string.set_opacity),
+                20,
+                100,
+                prefs.opacityPercent,
+                unit = "%",
+                onChange = {
+                    prefs.opacityPercent = it
+                    TouchpadService.instance?.updatePanelAppearance()
+                },
+            ),
             switchRow(getString(R.string.switch_show_panel), !prefs.minimized, hint = getString(R.string.switch_show_panel_hint),
                 bind = { showPanelSwitch = it }) { show ->
                 val svc = TouchpadService.instance
@@ -221,16 +294,46 @@ class MainActivity : Activity() {
                 setPadding(dp(16), 0, dp(16), dp(10))
                 addView(hintText(getString(R.string.drag_lock_hint)))
             },
-            slider(getString(R.string.set_button_spacing), 0, BUTTON_SPACING_MAX_DP, prefs.buttonSpacingDp, unit = "dp", onChange = { prefs.buttonSpacingDp = it; reload() }),
+            slider(
+                getString(R.string.set_button_spacing),
+                0,
+                BUTTON_SPACING_MAX_DP,
+                prefs.buttonSpacingDp,
+                unit = "dp",
+                onChange = {
+                    prefs.buttonSpacingDp = it
+                    TouchpadService.instance?.updatePanelGeometry()
+                },
+            ),
             switchRow(getString(R.string.switch_long_press_customize), prefs.longPressButtonToCustomize, hint = getString(R.string.switch_long_press_customize_hint), onChange = { prefs.longPressButtonToCustomize = it; reload() }),
         ))
 
         // ── 悬浮球 ──
         col.addView(sectionHeader(getString(R.string.sec_ball)))
         col.addView(card(
-            slider(getString(R.string.set_ball_size), FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP, prefs.floatingBallSizeDp, unit = "dp", onChange = { prefs.floatingBallSizeDp = it; reload() }),
+            slider(
+                getString(R.string.set_ball_size),
+                FLOATING_BALL_MIN_DP,
+                FLOATING_BALL_MAX_DP,
+                prefs.floatingBallSizeDp,
+                unit = "dp",
+                onChange = {
+                    prefs.floatingBallSizeDp = it
+                    TouchpadService.instance?.updateBallAppearance()
+                },
+            ),
             colorRow(getString(R.string.set_ball_color), BALL_COLORS, { prefs.floatingBallColor }, { prefs.floatingBallColor = it }),
-            slider(getString(R.string.set_ball_opacity), 20, 100, prefs.floatingBallOpacityPercent, unit = "%", onChange = { prefs.floatingBallOpacityPercent = it; reload() }),
+            slider(
+                getString(R.string.set_ball_opacity),
+                20,
+                100,
+                prefs.floatingBallOpacityPercent,
+                unit = "%",
+                onChange = {
+                    prefs.floatingBallOpacityPercent = it
+                    TouchpadService.instance?.updateBallAppearance()
+                },
+            ),
             switchRow(getString(R.string.switch_hide_ball), prefs.hideFloatingBall, hint = getString(R.string.hide_ball_hint), onChange = { prefs.hideFloatingBall = it; reload() }),
         ))
         col.addView(sectionHeader(getString(R.string.sec_ball_gestures)))
@@ -266,8 +369,28 @@ class MainActivity : Activity() {
         // ── 光标 ──
         col.addView(sectionHeader(getString(R.string.sec_cursor)))
         col.addView(card(
-            slider(getString(R.string.set_cursor_size), CURSOR_MIN_DP, CURSOR_MAX_DP, prefs.cursorSizeDp, unit = "dp", onChange = { prefs.cursorSizeDp = it; reload() }),
-            slider(getString(R.string.set_cursor_opacity), 10, 100, prefs.cursorOpacityPercent, unit = "%", onChange = { prefs.cursorOpacityPercent = it; reload() }),
+            slider(
+                getString(R.string.set_cursor_size),
+                CURSOR_MIN_DP,
+                CURSOR_MAX_DP,
+                prefs.cursorSizeDp,
+                unit = "dp",
+                onChange = {
+                    prefs.cursorSizeDp = it
+                    TouchpadService.instance?.updateCursorAppearance()
+                },
+            ),
+            slider(
+                getString(R.string.set_cursor_opacity),
+                10,
+                100,
+                prefs.cursorOpacityPercent,
+                unit = "%",
+                onChange = {
+                    prefs.cursorOpacityPercent = it
+                    TouchpadService.instance?.updateCursorAppearance()
+                },
+            ),
             colorRow(getString(R.string.set_cursor_color), CURSOR_COLORS, { prefs.cursorColor }, { prefs.cursorColor = it }),
         ))
 
@@ -588,6 +711,7 @@ class MainActivity : Activity() {
         offLabel: String? = null,
         hint: String? = null,
         format: ((Int) -> String)? = null,
+        bind: ((SliderController) -> Unit)? = null,
         onChange: (Int) -> Unit,
     ): View {
         val box = LinearLayout(this).apply {
@@ -623,6 +747,7 @@ class MainActivity : Activity() {
             contentDescription = title
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (seekBar?.tag === SYNCING) return
                     val v = progress + min
                     render(v)
                     onChange(v)
@@ -632,6 +757,14 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
             })
         }
+        val controller = SliderController { newValue ->
+            val clamped = newValue.coerceIn(min, max)
+            sb.tag = SYNCING
+            sb.progress = clamped - min
+            sb.tag = null
+            render(clamped)
+        }
+        bind?.invoke(controller)
         box.addView(sb, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         return box
     }
@@ -1098,6 +1231,8 @@ class MainActivity : Activity() {
                             currentReveal = null
                             baseStatusView?.let { statusView = it }
                             baseShowPanelSwitch?.let { showPanelSwitch = it }
+                            baseWidthSliderController?.let { widthSliderController = it }
+                            baseHeightSliderController?.let { heightSliderController = it }
                             scroller = baseScroller
                         } else {
                             finishThemeTransition(reveal, currentRevealDark)
@@ -1235,6 +1370,8 @@ class MainActivity : Activity() {
         currentReveal = null
         baseStatusView = statusView
         baseShowPanelSwitch = showPanelSwitch
+        baseWidthSliderController = widthSliderController
+        baseHeightSliderController = heightSliderController
 
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
         rootContainer.setBackgroundColor(pageColor)
