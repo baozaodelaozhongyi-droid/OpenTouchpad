@@ -123,17 +123,21 @@ internal fun controlButtonSize(width: Int, density: Float, gapPx: Int): Int {
         .coerceIn((CONTROL_BUTTON_MIN_DP * density).roundToInt(), (CONTROL_BUTTON_MAX_DP * density).roundToInt())
 }
 
-/** 网格最紧凑时的面板高度（触控板区域跨度 = 4 个按钮 + 3 个间距，加上下按键与间距；18 键位为 5 个按钮 + 4 个间距）。 */
+/** 触控板区域在最紧凑网格下的最低高度。4/8 键位为 2 单元，12 键位为 2.5 单元，16/18 键位为 3 单元。 */
+internal fun controlMinPadHeight(b: Int, gap: Int, buttonCount: Int = 16): Int = when (buttonCount) {
+    4, 8 -> 2 * b + gap
+    12 -> (2.5f * b + 1.5f * gap).roundToInt()
+    16, 18 -> 3 * b + 2 * gap
+    else -> 2 * b + gap
+}
+
+/** 网格最紧凑时的面板高度（上下按键 + 间距 + 最低触控板高度）。 */
 internal fun controlGridHeight(width: Int, density: Float, gapPx: Int, buttonCount: Int = 16): Int {
     val edge = (CONTROL_EDGE_DP * density).roundToInt()
     val gap = gapPx.coerceAtLeast(0)
     val b = controlButtonSize(width, density, gap)
-    return if (buttonCount == 18) {
-        2 * edge + 5 * b + 4 * gap
-    } else {
-        val span = 4 * b + 3 * gap
-        2 * edge + 2 * b + 2 * gap + span
-    }
+    val minPadH = controlMinPadHeight(b, gap, buttonCount)
+    return 2 * edge + 2 * b + 2 * gap + minPadH
 }
 
 internal fun edgeItemOffsetAndSize(index: Int, totalSpan: Int, count: Int, gap: Int): Pair<Int, Int> {
@@ -194,14 +198,15 @@ internal fun computeControlLayout(
     val padX = x0 + b + gap
     val rightX = padX + span + gap
 
+    val minPadH = controlMinPadHeight(b, gap, buttonCount)
     val topY = edge
-    val minBottomY = topY + b + gap + span + gap
+    val minBottomY = topY + b + gap + minPadH + gap
     val bottomY = (height - edge - b).coerceAtLeast(minBottomY)
     val padTop = topY + b + gap
     val padH = bottomY - gap - padTop
     val pad = ControlRect(padX, padTop, span, padH)
 
-    val sideY0 = padTop + (padH - span) / 2
+    val sideY0 = padTop + (padH - minPadH) / 2
 
     val edgeCount = (buttonCount / 4).coerceIn(1, 4)
 
@@ -216,12 +221,12 @@ internal fun computeControlLayout(
     }
 
     val leftSlots = (0 until edgeCount).map { i ->
-        val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
+        val (off, size) = edgeItemOffsetAndSize(i, minPadH, edgeCount, gap)
         ControlRect(leftX, sideY0 + off, b, size)
     }
 
     val rightSlots = (0 until edgeCount).map { i ->
-        val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
+        val (off, size) = edgeItemOffsetAndSize(i, minPadH, edgeCount, gap)
         ControlRect(rightX, sideY0 + off, b, size)
     }
 

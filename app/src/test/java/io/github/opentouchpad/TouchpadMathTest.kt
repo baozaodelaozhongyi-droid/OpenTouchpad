@@ -1,5 +1,6 @@
 package io.github.opentouchpad
 
+import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -358,10 +359,10 @@ class TouchpadMathTest {
 
             for (slot in leftSlots + rightSlots) {
                 assertEquals(l.button, slot.w)
-                if (count == 16) {
-                    assertEquals("Mode 16 buttons should be circular (square rect)", l.button, slot.h)
-                } else {
-                    assertTrue("Mode $count left/right buttons should be capsules (h > w)", slot.h > slot.w)
+                when (count) {
+                    4 -> assertTrue("Mode 4 side button should be a vertical capsule (h > w)", slot.h > slot.w)
+                    8 -> assertEquals("Mode 8 side buttons should be circular (h == w) at minimum height", l.button, slot.h)
+                    12, 16 -> assertTrue("Mode $count side buttons should be compact valid buttons", slot.h > 0 && slot.h <= l.button)
                 }
             }
 
@@ -378,6 +379,32 @@ class TouchpadMathTest {
             assertEquals("Mode 18 buttons should be circular (b x b)", l.button, slot.h)
         }
         assertNoOverlap(l)
+    }
+
+    @Test
+    fun controlMinPadHeightIsCompactForLowerMinimumHeight() {
+        val density = 3f
+        val gap = 9
+        val width = (168 * density).toInt()
+        val b = controlButtonSize(width, density, gap)
+
+        // 4 and 8 keys: minimum pad height is 2 buttons + 1 gap (~53 dp)
+        assertEquals(2 * b + gap, controlMinPadHeight(b, gap, 4))
+        assertEquals(2 * b + gap, controlMinPadHeight(b, gap, 8))
+
+        // 12 keys: minimum pad height is 2.5 buttons + 1.5 gap (~67 dp)
+        assertEquals((2.5f * b + 1.5f * gap).roundToInt(), controlMinPadHeight(b, gap, 12))
+
+        // 16 and 18 keys: minimum pad height is 3 buttons + 2 gap (~81 dp)
+        assertEquals(3 * b + 2 * gap, controlMinPadHeight(b, gap, 16))
+        assertEquals(3 * b + 2 * gap, controlMinPadHeight(b, gap, 18))
+
+        // Grid height is 2 * edge + 2 * b + 2 * gap + minPadH
+        for (count in listOf(4, 8, 12, 16, 18)) {
+            val minPadH = controlMinPadHeight(b, gap, count)
+            val expectedGridH = 2 * (CONTROL_EDGE_DP * density).roundToInt() + 2 * b + 2 * gap + minPadH
+            assertEquals(expectedGridH, controlGridHeight(width, density, gap, count))
+        }
     }
 
     @Test

@@ -821,11 +821,14 @@ class MainActivity : Activity() {
 
         val padX = cell + gap
         val padY = cell + gap
-        val (padH, totalH) = if (count == 18) {
-            (3 * cell + 2 * gap) to (5 * cell + 4 * gap)
-        } else {
-            span to (2 * cell + span + 2 * gap)
+        val minPadH = when (count) {
+            4, 8 -> 2 * cell + gap
+            12 -> (2.5f * cell + 1.5f * gap).roundToInt()
+            16, 18 -> 3 * cell + 2 * gap
+            else -> 2 * cell + gap
         }
+        val padH = minPadH
+        val totalH = 2 * cell + 2 * gap + padH
 
         // 中间触控板底衬与提示
         place(View(this).apply {
@@ -847,9 +850,10 @@ class MainActivity : Activity() {
             }
         } else {
             val edgeCount = count / 4
-            val bottomY = padY + span + gap
+            val bottomY = padY + padH + gap
             val rightX = padX + span + gap
             val rects = mutableListOf<ControlRect>()
+            val sideY0 = padY + (padH - minPadH) / 2
             // Top
             for (i in 0 until edgeCount) {
                 val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
@@ -862,13 +866,13 @@ class MainActivity : Activity() {
             }
             // Left
             for (i in 0 until edgeCount) {
-                val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
-                rects.add(ControlRect(0, padY + off, cell, size))
+                val (off, size) = edgeItemOffsetAndSize(i, minPadH, edgeCount, gap)
+                rects.add(ControlRect(0, sideY0 + off, cell, size))
             }
             // Right
             for (i in 0 until edgeCount) {
-                val (off, size) = edgeItemOffsetAndSize(i, span, edgeCount, gap)
-                rects.add(ControlRect(rightX, padY + off, cell, size))
+                val (off, size) = edgeItemOffsetAndSize(i, minPadH, edgeCount, gap)
+                rects.add(ControlRect(rightX, sideY0 + off, cell, size))
             }
             rects
         }
