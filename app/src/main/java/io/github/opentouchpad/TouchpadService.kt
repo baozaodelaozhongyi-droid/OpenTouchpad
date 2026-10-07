@@ -1582,7 +1582,6 @@ class TouchpadService : AccessibilityService() {
                         ?.start()
                     miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(200)?.start()
                     keepBallInBounds()
-                    ballHapticCancel()
                 } else if (ballLongPressTriggered) {
                     ballLongPressTriggered = false
                     snapBallBackToAnchor()
