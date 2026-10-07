@@ -876,7 +876,9 @@ class MainActivity : Activity() {
             val empty = action == PadAction.NONE
             val grip = PadAction.isGrip(action)
             val radius = minOf(rect.w, rect.h) / 2f
-            val iconPx = (minOf(rect.w, rect.h) * 0.54f).roundToInt().coerceAtLeast(dp(8))
+            val standardIconPx = (cell * 0.54f).roundToInt()
+            val maxIconPx = (minOf(rect.w, rect.h) - dp(4)).coerceAtLeast(dp(8))
+            val iconPx = minOf(standardIconPx, maxIconPx).coerceAtLeast(dp(8))
             val padH = ((rect.w - iconPx) / 2).coerceAtLeast(0)
             val padV = ((rect.h - iconPx) / 2).coerceAtLeast(0)
 

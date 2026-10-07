@@ -722,7 +722,9 @@ class TouchpadService : AccessibilityService() {
             val cornerRadius = minOf(rect.w, rect.h) / 2f
             view.background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, cornerRadius)
 
-            val iconPx = (minOf(rect.w, rect.h) * 0.56f).roundToInt().coerceAtLeast(dp(8))
+            val standardIconPx = (layout.button * 0.56f).roundToInt()
+            val maxIconPx = (minOf(rect.w, rect.h) - dp(4)).coerceAtLeast(dp(8))
+            val iconPx = minOf(standardIconPx, maxIconPx).coerceAtLeast(dp(8))
             val padX = ((rect.w - iconPx) / 2).coerceAtLeast(0)
             val padY = ((rect.h - iconPx) / 2).coerceAtLeast(0)
             view.setPadding(padX, padY, padX, padY)
