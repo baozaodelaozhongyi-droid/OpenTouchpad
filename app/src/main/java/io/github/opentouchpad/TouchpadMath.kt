@@ -123,12 +123,12 @@ internal fun controlButtonSize(width: Int, density: Float, gapPx: Int): Int {
         .coerceIn((CONTROL_BUTTON_MIN_DP * density).roundToInt(), (CONTROL_BUTTON_MAX_DP * density).roundToInt())
 }
 
-/** 触控板区域在最紧凑网格下的最低高度。4/8 键位为 2 单元，12 键位为 2.5 单元，16/18 键位为 3 单元。 */
+/** 触控板区域在最紧凑网格下的最低高度。4/8 键位为 2 单元，12/18 键位为 3 单元，16 键位为 4 单元（四边各 4 个按钮均为标准正圆）。 */
 internal fun controlMinPadHeight(b: Int, gap: Int, buttonCount: Int = 16): Int = when (buttonCount) {
     4, 8 -> 2 * b + gap
-    12 -> (2.5f * b + 1.5f * gap).roundToInt()
-    16, 18 -> 3 * b + 2 * gap
-    else -> 2 * b + gap
+    12, 18 -> 3 * b + 2 * gap
+    16 -> 4 * b + 3 * gap
+    else -> 4 * b + 3 * gap
 }
 
 /** 网格最紧凑时的面板高度（上下按键 + 间距 + 最低触控板高度）。 */

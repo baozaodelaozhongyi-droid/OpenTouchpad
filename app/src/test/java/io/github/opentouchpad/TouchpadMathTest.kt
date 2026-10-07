@@ -361,8 +361,7 @@ class TouchpadMathTest {
                 assertEquals(l.button, slot.w)
                 when (count) {
                     4 -> assertTrue("Mode 4 side button should be a vertical capsule (h > w)", slot.h > slot.w)
-                    8 -> assertEquals("Mode 8 side buttons should be circular (h == w) at minimum height", l.button, slot.h)
-                    12, 16 -> assertTrue("Mode $count side buttons should be compact valid buttons", slot.h > 0 && slot.h <= l.button)
+                    8, 12, 16 -> assertEquals("Mode $count side buttons should be circular (h == w) at minimum height", l.button, slot.h)
                 }
             }
 
@@ -392,12 +391,12 @@ class TouchpadMathTest {
         assertEquals(2 * b + gap, controlMinPadHeight(b, gap, 4))
         assertEquals(2 * b + gap, controlMinPadHeight(b, gap, 8))
 
-        // 12 keys: minimum pad height is 2.5 buttons + 1.5 gap (~67 dp)
-        assertEquals((2.5f * b + 1.5f * gap).roundToInt(), controlMinPadHeight(b, gap, 12))
-
-        // 16 and 18 keys: minimum pad height is 3 buttons + 2 gap (~81 dp)
-        assertEquals(3 * b + 2 * gap, controlMinPadHeight(b, gap, 16))
+        // 12 and 18 keys: minimum pad height is 3 buttons + 2 gap (~81 dp)
+        assertEquals(3 * b + 2 * gap, controlMinPadHeight(b, gap, 12))
         assertEquals(3 * b + 2 * gap, controlMinPadHeight(b, gap, 18))
+
+        // 16 keys: minimum pad height is 4 buttons + 3 gap (~109 dp) to match 4 side buttons and remain circular
+        assertEquals(4 * b + 3 * gap, controlMinPadHeight(b, gap, 16))
 
         // Grid height is 2 * edge + 2 * b + 2 * gap + minPadH
         for (count in listOf(4, 8, 12, 16, 18)) {

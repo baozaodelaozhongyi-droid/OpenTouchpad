@@ -821,12 +821,7 @@ class MainActivity : Activity() {
 
         val padX = cell + gap
         val padY = cell + gap
-        val minPadH = when (count) {
-            4, 8 -> 2 * cell + gap
-            12 -> (2.5f * cell + 1.5f * gap).roundToInt()
-            16, 18 -> 3 * cell + 2 * gap
-            else -> 2 * cell + gap
-        }
+        val minPadH = controlMinPadHeight(cell, gap, count)
         val padH = minPadH
         val totalH = 2 * cell + 2 * gap + padH
 
