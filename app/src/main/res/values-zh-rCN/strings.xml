@@ -74,7 +74,6 @@
     <string name="set_cursor_color">光标颜色</string>
     <string name="set_sensitivity">光标速度</string>
     <string name="set_long_press">触控板长按判定时长</string>
-    <string name="set_dwell">停留点击（停住不动即点击）</string>
     <string name="set_scroll_distance">滚动距离</string>
     <string name="set_swipe_distance">长滑动距离</string>
     <string name="set_button_radius">按钮圆角</string>
@@ -92,7 +91,7 @@
 
     <string name="screenshot_needs_p">截图需要 Android 9 及以上</string>
     <string name="no_input_field">还没有输入框获得焦点 —— 先用触控板点一下文本框</string>
-    <string name="dwell_off">关闭</string>
+    <string name="label_off">关闭</string>
     <string name="reset_done">已恢复默认设置</string>
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
     <string name="switch_hide_ball">隐藏悬浮球</string>

@@ -314,11 +314,6 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("padEdgeDeadZone", PAD_EDGE_DEAD_ZONE_DEFAULT_DP).coerceIn(0, PAD_EDGE_DEAD_ZONE_MAX_DP)
         set(v) = sp.edit().putInt("padEdgeDeadZone", v.coerceIn(0, PAD_EDGE_DEAD_ZONE_MAX_DP)).apply()
 
-    /** 0 = 关闭停留点击；否则为"手指静止这么久就自动点一下"的毫秒数。 */
-    var dwellMs: Int
-        get() = sp.getInt("dwellMs", 0)
-        set(v) = sp.edit().putInt("dwellMs", v).apply()
-
     var scrollDistanceDp: Int
         get() = sp.getInt("scrollDistance", 180)
         set(v) = sp.edit().putInt("scrollDistance", v).apply()

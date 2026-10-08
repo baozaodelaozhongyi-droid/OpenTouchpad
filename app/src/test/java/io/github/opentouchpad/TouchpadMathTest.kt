@@ -31,24 +31,11 @@ class TouchpadMathTest {
 
     @Test
     fun padReleaseDistinguishesClickLongPressAndCustomSwipe() {
-        assertEquals(PadTouchOutcome.CLICK, resolvePadTouchOutcome(false, false, false, 0f, 12f))
-        assertEquals(PadTouchOutcome.MOVE_ONLY, resolvePadTouchOutcome(false, false, true, 80f, 12f))
-        assertEquals(PadTouchOutcome.LONG_PRESS, resolvePadTouchOutcome(true, false, false, 0f, 12f))
-        assertEquals(PadTouchOutcome.CUSTOM_SWIPE, resolvePadTouchOutcome(true, false, true, 80f, 12f))
-        assertEquals(PadTouchOutcome.MOVE_ONLY, resolvePadTouchOutcome(true, false, true, 4f, 12f))
-        assertEquals(PadTouchOutcome.DWELL_CLICK, resolvePadTouchOutcome(false, true, false, 0f, 12f))
-    }
-
-    @Test
-    fun dwellRearmsOnlyAfterCursorLeavesTheFiredSpot() {
-        // 还没触发过：总是计时
-        assertTrue(shouldRearmDwell(Float.NaN, Float.NaN, 100f, 100f, minDistancePx = 24f))
-        // 触发后原地微抖：不重新计时，避免连点
-        assertFalse(shouldRearmDwell(100f, 100f, 100f, 100f, minDistancePx = 24f))
-        assertFalse(shouldRearmDwell(100f, 100f, 110f, 110f, minDistancePx = 24f))
-        // 光标真正移开：重新计时
-        assertTrue(shouldRearmDwell(100f, 100f, 124f, 100f, minDistancePx = 24f))
-        assertTrue(shouldRearmDwell(100f, 100f, 80f, 130f, minDistancePx = 24f))
+        assertEquals(PadTouchOutcome.CLICK, resolvePadTouchOutcome(false, false, 0f, 12f))
+        assertEquals(PadTouchOutcome.MOVE_ONLY, resolvePadTouchOutcome(false, true, 80f, 12f))
+        assertEquals(PadTouchOutcome.LONG_PRESS, resolvePadTouchOutcome(true, false, 0f, 12f))
+        assertEquals(PadTouchOutcome.CUSTOM_SWIPE, resolvePadTouchOutcome(true, true, 80f, 12f))
+        assertEquals(PadTouchOutcome.MOVE_ONLY, resolvePadTouchOutcome(true, true, 4f, 12f))
     }
 
     @Test
@@ -72,9 +59,8 @@ class TouchpadMathTest {
 
     @Test
     fun longPressSchedulingIsDisabledOnlyDuringDragLock() {
-        assertTrue(shouldScheduleLongPress(dwellMs = 800, dragging = false))
-        assertTrue(shouldScheduleLongPress(dwellMs = 0, dragging = false))
-        assertFalse(shouldScheduleLongPress(dwellMs = 0, dragging = true))
+        assertTrue(shouldScheduleLongPress(dragging = false))
+        assertFalse(shouldScheduleLongPress(dragging = true))
     }
 
     @Test

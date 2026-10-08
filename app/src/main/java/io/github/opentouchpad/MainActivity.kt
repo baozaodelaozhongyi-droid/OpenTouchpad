@@ -467,12 +467,11 @@ class MainActivity : Activity() {
         col.addView(card(
             slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt(), format = { String.format(java.util.Locale.US, "%.1f×", it / 10f) }) { prefs.sensitivity = it / 10f },
             slider(getString(R.string.set_pad_dead_zone), 0, PAD_EDGE_DEAD_ZONE_MAX_DP, prefs.padEdgeDeadZoneDp, unit = "dp",
-                offLabel = getString(R.string.dwell_off), hint = getString(R.string.pad_dead_zone_hint),
+                offLabel = getString(R.string.label_off), hint = getString(R.string.pad_dead_zone_hint),
                 onChange = { prefs.padEdgeDeadZoneDp = it }),
             slider(getString(R.string.set_long_press), 200, 1500, prefs.longPressMs, unit = "ms", onChange = { prefs.longPressMs = it }),
             slider(getString(R.string.set_cursor_hold), CURSOR_HOLD_MIN_MS, CURSOR_HOLD_MAX_MS, prefs.cursorHoldMs, unit = "ms",
                 hint = getString(R.string.cursor_hold_hint), onChange = { prefs.cursorHoldMs = it }),
-            slider(getString(R.string.set_dwell), 0, 2000, prefs.dwellMs, unit = "ms", offLabel = getString(R.string.dwell_off), onChange = { prefs.dwellMs = it }),
             slider(getString(R.string.set_scroll_distance), 60, 500, prefs.scrollDistanceDp, unit = "dp", hint = getString(R.string.custom_swipe_hint), onChange = { prefs.scrollDistanceDp = it }),
             switchRow(getString(R.string.switch_press_feedback), prefs.pressFeedback, onChange = { prefs.pressFeedback = it; reload() }),
             switchRow(getString(R.string.switch_haptics), prefs.haptics, onChange = { prefs.haptics = it }),

@@ -74,7 +74,6 @@
     <string name="set_cursor_color">Cursor colour</string>
     <string name="set_sensitivity">Cursor speed</string>
     <string name="set_long_press">Touchpad long-press threshold</string>
-    <string name="set_dwell">Dwell click (hold still to click)</string>
     <string name="set_scroll_distance">Scroll distance</string>
     <string name="set_swipe_distance">Long swipe distance</string>
     <string name="set_button_radius">Button corner radius</string>
@@ -92,7 +91,7 @@
 
     <string name="screenshot_needs_p">Screenshot needs Android 9 or newer</string>
     <string name="no_input_field">No text field focused yet — tap a text box first</string>
-    <string name="dwell_off">off</string>
+    <string name="label_off">off</string>
     <string name="reset_done">Settings reset</string>
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
     <string name="switch_hide_ball">Hide floating ball</string>

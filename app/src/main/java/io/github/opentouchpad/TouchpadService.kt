@@ -92,7 +92,6 @@ class TouchpadService : AccessibilityService() {
     private var downTime = 0L
     private var moved = false
     private var longPressFired = false
-    private var dwellFired = false
 
     private var customSwipeArmed = false
     private var customSwipeStartX = 0f
@@ -247,19 +246,14 @@ class TouchpadService : AccessibilityService() {
 
     // 键盘弹出时自动最小化的标记存在 Prefs.minimizedByKeyboard（服务重启后也能自动还原）
 
-    // 停留点击触发时的光标位置：同一次触摸里，光标离开这里超过阈值才会再次计时，避免原地连点
-    private var dwellAnchorX = Float.NaN
-    private var dwellAnchorY = Float.NaN
-
     private val longPressRunnable = Runnable {
-        if (!moved && !dwellFired) {
+        if (!moved) {
             longPressFired = true
             customSwipeArmed = true
             customSwipeStartX = cursorX
             customSwipeStartY = cursorY
             customSwipeEndX = cursorX
             customSwipeEndY = cursorY
-            cancelDwell()
             if (prefs.touchRingEnabled) {
                 moveTouchRing(cursorX, cursorY)
                 touchRing?.pressUntilRelease()
@@ -267,7 +261,6 @@ class TouchpadService : AccessibilityService() {
             haptic()
         }
     }
-    private var dwellRunnable: Runnable? = null
 
     // ───────────────────────── 生命周期 ─────────────────────────
 
@@ -299,7 +292,6 @@ class TouchpadService : AccessibilityService() {
 
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
-        cancelDwell()
         gestureQueue.clear()
         isDispatching = false
         isPassThroughActive = false
@@ -318,7 +310,6 @@ class TouchpadService : AccessibilityService() {
 
     override fun onInterrupt() {
         main.removeCallbacksAndMessages(null)
-        cancelDwell()
         gestureQueue.clear()
         isDispatching = false
         setOverlayTouchable(true)
@@ -695,9 +686,8 @@ class TouchpadService : AccessibilityService() {
         movingPanel = false
         resizingPanel = false
         // 手指还按在旧触控板上时面板被重建（转屏 / 键盘弹出 / 改设置），旧窗口收不到 UP：
-        // 这里把长按、停留点击计时一并取消，已经展开的长按圆环收起，避免之后在新面板上误触发、圆环卡住。
+        // 这里把长按计时取消，已经展开的长按圆环收起，避免之后在新面板上误触发、圆环卡住。
         main.removeCallbacks(longPressRunnable)
-        cancelDwell()
         if (customSwipeArmed) touchRing?.release()
         customSwipeArmed = false
         padTouchIgnored = false
@@ -1239,20 +1229,18 @@ class TouchpadService : AccessibilityService() {
                 downRawX = e.rawX; downRawY = e.rawY
                 lastRawX = e.rawX; lastRawY = e.rawY
                 downTime = System.currentTimeMillis()
-                moved = false; longPressFired = false; dwellFired = false
-                dwellAnchorX = Float.NaN; dwellAnchorY = Float.NaN
+                moved = false; longPressFired = false
                 customSwipeArmed = false
                 customSwipeStartX = cursorX
                 customSwipeStartY = cursorY
                 customSwipeEndX = cursorX
                 customSwipeEndY = cursorY
                 main.removeCallbacks(longPressRunnable)
-                // 拖拽锁定期间触控板只移动光标，不点击、不长按、不停留点击
+                // 拖拽锁定期间触控板只移动光标，不点击、不长按
                 if (!dragging) {
-                    if (shouldScheduleLongPress(prefs.dwellMs, dragging = false)) {
+                    if (shouldScheduleLongPress(dragging = false)) {
                         main.postDelayed(longPressRunnable, prefs.longPressMs.toLong())
                     }
-                    scheduleDwell()
                 }
             }
 
@@ -1287,13 +1275,6 @@ class TouchpadService : AccessibilityService() {
                         moveTouchRing(cursorX, cursorY)
                     }
                 }
-                // 长按已触发（正在做自定义滑动）时不再停留点击：中途停一下不能把滑动变成一次点击。
-                // 停留点击触发过之后，光标要先离开触发点才重新计时，手指搁着微微抖动不会原地连点。
-                if (!longPressFired && shouldRearmDwell(dwellAnchorX, dwellAnchorY, cursorX, cursorY, dp(8).toFloat())) {
-                    dwellAnchorX = Float.NaN
-                    dwellAnchorY = Float.NaN
-                    scheduleDwell()
-                }
             }
 
             MotionEvent.ACTION_UP -> {
@@ -1303,21 +1284,20 @@ class TouchpadService : AccessibilityService() {
                     }
                 }
                 main.removeCallbacks(longPressRunnable)
-                cancelDwell()
                 val distance = kotlin.math.hypot(customSwipeEndX - customSwipeStartX, customSwipeEndY - customSwipeStartY)
                 if (dragging) {
                     // 拖拽锁定期间圆环继续跟着光标，等第二次按拖拽锁定再收缩
                     customSwipeArmed = false
                     return
                 }
-                val outcome = resolvePadTouchOutcome(longPressFired, dwellFired, moved, distance, dp(12).toFloat())
+                val outcome = resolvePadTouchOutcome(longPressFired, moved, distance, dp(12).toFloat())
                 // 松手即收缩：触控板长按松手时圆环立即收缩，不再在松手后强行多停留
                 if (customSwipeArmed) touchRing?.release()
                 when (outcome) {
                     PadTouchOutcome.CUSTOM_SWIPE -> customSwipeAt(customSwipeStartX, customSwipeStartY, customSwipeEndX, customSwipeEndY)
                     PadTouchOutcome.LONG_PRESS -> longPressAt(cursorX, cursorY, showFeedbackRing = false)
                     PadTouchOutcome.CLICK -> tapOrDouble()
-                    PadTouchOutcome.DWELL_CLICK, PadTouchOutcome.MOVE_ONLY -> Unit
+                    PadTouchOutcome.MOVE_ONLY -> Unit
                 }
                 customSwipeArmed = false
             }
@@ -1329,33 +1309,10 @@ class TouchpadService : AccessibilityService() {
                     }
                 }
                 main.removeCallbacks(longPressRunnable)
-                cancelDwell()
                 if (customSwipeArmed) touchRing?.release()
                 customSwipeArmed = false
             }
         }
-    }
-
-    /** 停留点击：手指在触控板上停住不动，自动点一下光标位置。 */
-    private fun scheduleDwell() {
-        val ms = prefs.dwellMs
-        if (ms <= 0 || dragging) return
-        cancelDwell()
-        val r = Runnable {
-            dwellFired = true
-            dwellAnchorX = cursorX
-            dwellAnchorY = cursorY
-            main.removeCallbacks(longPressRunnable)
-            tapAt(cursorX, cursorY)
-            haptic()
-        }
-        dwellRunnable = r
-        main.postDelayed(r, ms.toLong())
-    }
-
-    private fun cancelDwell() {
-        dwellRunnable?.let { main.removeCallbacks(it) }
-        dwellRunnable = null
     }
 
     private fun tapOrDouble() {
