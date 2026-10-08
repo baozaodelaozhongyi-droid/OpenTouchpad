@@ -287,7 +287,7 @@ class MainActivity : Activity() {
 
         // ── 按钮 ──
         col.addView(sectionHeader(getString(R.string.sec_buttons)))
-        col.addView(card(
+        val buttonRows = mutableListOf<View>(
             buttonLayoutModeRow(),
             buttonSlotMap(),
             FrameLayout(this).apply {
@@ -305,8 +305,30 @@ class MainActivity : Activity() {
                     TouchpadService.instance?.updatePanelGeometry()
                 },
             ),
-            switchRow(getString(R.string.switch_long_press_customize), prefs.longPressButtonToCustomize, hint = getString(R.string.switch_long_press_customize_hint), onChange = { prefs.longPressButtonToCustomize = it; reload() }),
-        ))
+            switchRow(
+                getString(R.string.switch_long_press_customize),
+                prefs.longPressButtonToCustomize,
+                hint = getString(R.string.switch_long_press_customize_hint),
+                onChange = {
+                    prefs.longPressButtonToCustomize = it
+                    recreateKeepingScroll()
+                },
+            ),
+        )
+        if (prefs.longPressButtonToCustomize) {
+            buttonRows.add(
+                slider(
+                    getString(R.string.set_button_customize_hold),
+                    BUTTON_CUSTOMIZE_HOLD_MIN_MS,
+                    BUTTON_CUSTOMIZE_HOLD_MAX_MS,
+                    prefs.buttonCustomizeHoldMs,
+                    unit = "ms",
+                    hint = getString(R.string.button_customize_hold_hint),
+                    onChange = { prefs.buttonCustomizeHoldMs = it },
+                )
+            )
+        }
+        col.addView(card(*buttonRows.toTypedArray()))
 
         // ── 悬浮球 ──
         col.addView(sectionHeader(getString(R.string.sec_ball)))

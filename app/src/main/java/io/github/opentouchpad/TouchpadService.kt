@@ -1036,23 +1036,116 @@ class TouchpadService : AccessibilityService() {
         isClickable = true
         isHapticFeedbackEnabled = false
         contentDescription = getString(action.labelRes)
-        PressFeedback.attach(
-            this,
-            maxTiltX = 8f,
-            maxTiltY = 12f,
-            pressScale = 0.92f,
-            sinkDp = 2f,
-            isEnabled = { prefs.pressFeedback && !isPassThroughActive },
-        )
-        setOnClickListener {
-            if (isPassThroughActive) return@setOnClickListener
-            performAction(action)
+        attachActionButtonBehavior(this, slot, action)
+    }
+
+    private fun attachActionButtonBehavior(
+        button: View,
+        slot: Int,
+        action: PadAction,
+    ) {
+        val slop = dp(6).toFloat()
+        var downX = 0f
+        var downY = 0f
+        var longPressFired = false
+        var isDown = false
+
+        val longPressRunnable = Runnable {
+            if (!isDown) return@Runnable
+            longPressFired = true
+            isDown = false
+            button.isPressed = false
+            if (prefs.pressFeedback && !isPassThroughActive) {
+                PressFeedback.applyButtonRelease(button)
+            }
+            haptic(button)
+            showActionPicker(slot, action)
         }
-        if (prefs.longPressButtonToCustomize) {
-            setOnLongClickListener {
-                if (isPassThroughActive) return@setOnLongClickListener true
-                showActionPicker(slot, action)
-                true
+
+        button.setOnTouchListener { v, event ->
+            if (isPassThroughActive) return@setOnTouchListener false
+            val w = v.width.toFloat().coerceAtLeast(1f)
+            val h = v.height.toFloat().coerceAtLeast(1f)
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    isDown = true
+                    longPressFired = false
+                    downX = event.x
+                    downY = event.y
+                    v.isPressed = true
+                    v.drawableHotspotChanged(event.x, event.y)
+                    if (prefs.pressFeedback) {
+                        PressFeedback.applyButtonDown(
+                            v, event,
+                            maxTiltX = 8f, maxTiltY = 12f,
+                            pressScale = 0.92f, sinkDp = 2f,
+                        )
+                    }
+                    if (prefs.longPressButtonToCustomize) {
+                        val holdMs = prefs.buttonCustomizeHoldMs.toLong()
+                        v.postDelayed(longPressRunnable, holdMs)
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    if (!isDown) return@setOnTouchListener true
+                    val dx = event.x - downX
+                    val dy = event.y - downY
+                    val inside = event.x in -slop..(w + slop) && event.y in -slop..(h + slop)
+                    if (!inside || kotlin.math.hypot(dx, dy) > slop * 2f) {
+                        v.removeCallbacks(longPressRunnable)
+                        if (!inside) {
+                            v.isPressed = false
+                        }
+                    } else {
+                        v.isPressed = true
+                        v.drawableHotspotChanged(event.x, event.y)
+                    }
+                    if (prefs.pressFeedback) {
+                        PressFeedback.applyButtonMove(
+                            v, event,
+                            maxTiltX = 8f, maxTiltY = 12f,
+                            pressScale = 0.92f, sinkDp = 2f,
+                        )
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    v.removeCallbacks(longPressRunnable)
+                    val wasDown = isDown
+                    isDown = false
+                    v.isPressed = false
+                    if (prefs.pressFeedback) {
+                        PressFeedback.applyButtonRelease(v)
+                    }
+                    if (longPressFired) {
+                        longPressFired = false
+                        return@setOnTouchListener true
+                    }
+                    if (wasDown) {
+                        val inside = event.x in 0f..w && event.y in 0f..h
+                        if (inside) {
+                            performAction(action)
+                        }
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    v.removeCallbacks(longPressRunnable)
+                    isDown = false
+                    longPressFired = false
+                    v.isPressed = false
+                    if (prefs.pressFeedback) {
+                        PressFeedback.applyButtonRelease(v)
+                    }
+                    true
+                }
+
+                else -> false
             }
         }
     }

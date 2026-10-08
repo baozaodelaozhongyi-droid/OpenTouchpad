@@ -253,6 +253,11 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("longPressButtonToCustomize", true)
         set(v) = sp.edit().putBoolean("longPressButtonToCustomize", v).apply()
 
+    /** 长按按钮弹出自定义动作选择器的判定时长（300–3000 ms）。默认 1000 ms（1 秒）。最长 3 秒。 */
+    var buttonCustomizeHoldMs: Int
+        get() = resolveButtonCustomizeHoldMs(sp.getInt("buttonCustomizeHoldMs", BUTTON_CUSTOMIZE_HOLD_DEFAULT_MS))
+        set(v) = sp.edit().putInt("buttonCustomizeHoldMs", resolveButtonCustomizeHoldMs(v)).apply()
+
     /** 自选键位模式：4, 8, 12, 16, 18 键位。默认 16 键。 */
     var buttonCount: Int
         get() = sp.getInt("buttonCount", 16).let {

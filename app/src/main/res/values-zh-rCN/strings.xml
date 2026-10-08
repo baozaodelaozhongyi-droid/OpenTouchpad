@@ -166,4 +166,6 @@
     <string name="switch_touch_ring">点击光圈反馈</string>
     <string name="switch_touch_ring_hint">在光标点击或长按位置显示视觉光圈</string>
     <string name="set_touch_ring_color">光圈颜色</string>
+    <string name="set_button_customize_hold">长按自定义判定时长</string>
+    <string name="button_customize_hold_hint">长按触控板按钮达到此时长后弹出动作选择器，防误触最长可设 3 秒</string>
 </resources>

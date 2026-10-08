@@ -671,5 +671,13 @@ class TouchpadMathTest {
         assertEquals(0.2f, resolveBallRestingAlpha(5), 0.001f)
         assertEquals(1.0f, resolveBallRestingAlpha(120), 0.001f)
     }
+
+    @Test
+    fun resolveButtonCustomizeHoldMsClampsWithinRange() {
+        assertEquals(1000, resolveButtonCustomizeHoldMs(1000))
+        assertEquals(300, resolveButtonCustomizeHoldMs(100))
+        assertEquals(3000, resolveButtonCustomizeHoldMs(4000))
+        assertEquals(2500, resolveButtonCustomizeHoldMs(2500))
+    }
 }
 

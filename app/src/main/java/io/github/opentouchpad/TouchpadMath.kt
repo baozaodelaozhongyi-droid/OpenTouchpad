@@ -568,5 +568,15 @@ internal fun resolveTouchRingColor(customColor: Int, isDark: Boolean): Int {
 internal fun resolveBallRestingAlpha(opacityPercent: Int): Float =
     opacityPercent.coerceIn(20, 100) / 100f
 
+internal const val BUTTON_CUSTOMIZE_HOLD_MIN_MS = 300
+internal const val BUTTON_CUSTOMIZE_HOLD_MAX_MS = 3000
+internal const val BUTTON_CUSTOMIZE_HOLD_DEFAULT_MS = 1000
+
+/**
+ * 解析长按触控板按钮自定义动作的判定时长，范围 300–3000 ms（最长 3 秒），默认 1000 ms。
+ */
+internal fun resolveButtonCustomizeHoldMs(configuredMs: Int): Int =
+    configuredMs.coerceIn(BUTTON_CUSTOMIZE_HOLD_MIN_MS, BUTTON_CUSTOMIZE_HOLD_MAX_MS)
+
 
 

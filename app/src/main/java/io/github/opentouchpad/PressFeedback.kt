@@ -42,73 +42,99 @@ object PressFeedback {
             if (!isEnabled()) {
                 return@setOnTouchListener false
             }
-            val w = v.width.toFloat().coerceAtLeast(1f)
-            val h = v.height.toFloat().coerceAtLeast(1f)
-            val normX = ((event.x - w / 2f) / (w / 2f)).coerceIn(-1.5f, 1.5f)
-            val normY = ((event.y - h / 2f) / (h / 2f)).coerceIn(-1.5f, 1.5f)
-            val sinkPx = (sinkDp * density).roundToInt().toFloat()
-
             when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    val clampedNormX = normX.coerceIn(-1f, 1f)
-                    val clampedNormY = normY.coerceIn(-1f, 1f)
-                    v.animate().cancel()
-                    v.animate()
-                        .rotationX(-clampedNormY * maxTiltX)
-                        .rotationY(clampedNormX * maxTiltY)
-                        .scaleX(pressScale)
-                        .scaleY(pressScale)
-                        .translationY(sinkPx)
-                        .setDuration(70)
-                        .setInterpolator(decelerate)
-                        .start()
-
-                    onHaptic?.invoke()
-                }
-
-                MotionEvent.ACTION_MOVE -> {
-                    val inside = event.x in -w * 0.25f..w * 1.25f && event.y in -h * 0.25f..h * 1.25f
-                    if (inside) {
-                        val clampedNormX = normX.coerceIn(-1f, 1f)
-                        val clampedNormY = normY.coerceIn(-1f, 1f)
-                        v.animate()
-                            .rotationX(-clampedNormY * maxTiltX)
-                            .rotationY(clampedNormX * maxTiltY)
-                            .scaleX(pressScale)
-                            .scaleY(pressScale)
-                            .translationY(sinkPx)
-                            .setDuration(35)
-                            .start()
-                    } else {
-                        // 手指拖移出按钮较远区域，平滑复原
-                        v.animate().cancel()
-                        v.animate()
-                            .rotationX(0f)
-                            .rotationY(0f)
-                            .scaleX(1f)
-                            .scaleY(1f)
-                            .translationY(0f)
-                            .setDuration(160)
-                            .setInterpolator(decelerate)
-                            .start()
-                    }
-                }
-
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    v.animate().cancel()
-                    v.animate()
-                        .rotationX(0f)
-                        .rotationY(0f)
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .translationY(0f)
-                        .setDuration(180)
-                        .setInterpolator(overshoot)
-                        .start()
-                }
+                MotionEvent.ACTION_DOWN -> applyButtonDown(v, event, maxTiltX, maxTiltY, pressScale, sinkDp, onHaptic)
+                MotionEvent.ACTION_MOVE -> applyButtonMove(v, event, maxTiltX, maxTiltY, pressScale, sinkDp)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> applyButtonRelease(v)
             }
             false
         }
+    }
+
+    fun applyButtonDown(
+        v: View,
+        event: MotionEvent,
+        maxTiltX: Float = 8f,
+        maxTiltY: Float = 12f,
+        pressScale: Float = 0.93f,
+        sinkDp: Float = 2f,
+        onHaptic: (() -> Unit)? = null,
+    ) {
+        val density = v.resources.displayMetrics.density
+        v.cameraDistance = 6000f * density
+        v.isHapticFeedbackEnabled = false
+        val w = v.width.toFloat().coerceAtLeast(1f)
+        val h = v.height.toFloat().coerceAtLeast(1f)
+        val normX = ((event.x - w / 2f) / (w / 2f)).coerceIn(-1.5f, 1.5f)
+        val normY = ((event.y - h / 2f) / (h / 2f)).coerceIn(-1.5f, 1.5f)
+        val sinkPx = (sinkDp * density).roundToInt().toFloat()
+        val clampedNormX = normX.coerceIn(-1f, 1f)
+        val clampedNormY = normY.coerceIn(-1f, 1f)
+        v.animate().cancel()
+        v.animate()
+            .rotationX(-clampedNormY * maxTiltX)
+            .rotationY(clampedNormX * maxTiltY)
+            .scaleX(pressScale)
+            .scaleY(pressScale)
+            .translationY(sinkPx)
+            .setDuration(70)
+            .setInterpolator(decelerate)
+            .start()
+        onHaptic?.invoke()
+    }
+
+    fun applyButtonMove(
+        v: View,
+        event: MotionEvent,
+        maxTiltX: Float = 8f,
+        maxTiltY: Float = 12f,
+        pressScale: Float = 0.93f,
+        sinkDp: Float = 2f,
+    ) {
+        val density = v.resources.displayMetrics.density
+        val w = v.width.toFloat().coerceAtLeast(1f)
+        val h = v.height.toFloat().coerceAtLeast(1f)
+        val normX = ((event.x - w / 2f) / (w / 2f)).coerceIn(-1.5f, 1.5f)
+        val normY = ((event.y - h / 2f) / (h / 2f)).coerceIn(-1.5f, 1.5f)
+        val sinkPx = (sinkDp * density).roundToInt().toFloat()
+        val inside = event.x in -w * 0.25f..w * 1.25f && event.y in -h * 0.25f..h * 1.25f
+        if (inside) {
+            val clampedNormX = normX.coerceIn(-1f, 1f)
+            val clampedNormY = normY.coerceIn(-1f, 1f)
+            v.animate()
+                .rotationX(-clampedNormY * maxTiltX)
+                .rotationY(clampedNormX * maxTiltY)
+                .scaleX(pressScale)
+                .scaleY(pressScale)
+                .translationY(sinkPx)
+                .setDuration(35)
+                .start()
+        } else {
+            // 手指拖移出按钮较远区域，平滑复原
+            v.animate().cancel()
+            v.animate()
+                .rotationX(0f)
+                .rotationY(0f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .translationY(0f)
+                .setDuration(160)
+                .setInterpolator(decelerate)
+                .start()
+        }
+    }
+
+    fun applyButtonRelease(v: View) {
+        v.animate().cancel()
+        v.animate()
+            .rotationX(0f)
+            .rotationY(0f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .translationY(0f)
+            .setDuration(180)
+            .setInterpolator(overshoot)
+            .start()
     }
 
     /**

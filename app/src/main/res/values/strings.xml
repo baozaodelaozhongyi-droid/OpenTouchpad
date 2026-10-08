@@ -166,4 +166,6 @@
     <string name="switch_touch_ring">Click halo feedback</string>
     <string name="switch_touch_ring_hint">Show visual halo ripple on cursor click and long press</string>
     <string name="set_touch_ring_color">Halo colour</string>
+    <string name="set_button_customize_hold">Button customize hold duration</string>
+    <string name="button_customize_hold_hint">Hold a panel button this long to open the action picker. Up to 3 seconds to prevent accidental triggers.</string>
 </resources>
