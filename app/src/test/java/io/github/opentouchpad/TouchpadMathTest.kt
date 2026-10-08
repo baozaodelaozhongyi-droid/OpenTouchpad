@@ -710,5 +710,79 @@ class TouchpadMathTest {
         assertEquals(darkenColor(customIvory, 0.06f), palette.padBg)
         assertEquals(0xFF141413.toInt(), palette.buttonText)
     }
+
+    @Test
+    fun resolvePadNormalizedCoordsCalculatesNormalizedCenterAndBounds() {
+        // Panel at (100, 200), pad at rect (20, 30, 200, 100)
+        // Center of pad is screen X: 100 + 20 + 100 = 220, screen Y: 200 + 30 + 50 = 280
+        val center = resolvePadNormalizedCoords(
+            rawX = 220f,
+            rawY = 280f,
+            panelX = 100,
+            panelY = 200,
+            padRectX = 20,
+            padRectY = 30,
+            padRectW = 200,
+            padRectH = 100,
+        )
+        assertEquals(0f, center.first, 0.001f)
+        assertEquals(0f, center.second, 0.001f)
+
+        // Top-left corner of pad: rawX = 120, rawY = 230
+        val topLeft = resolvePadNormalizedCoords(
+            rawX = 120f,
+            rawY = 230f,
+            panelX = 100,
+            panelY = 200,
+            padRectX = 20,
+            padRectY = 30,
+            padRectW = 200,
+            padRectH = 100,
+        )
+        assertEquals(-1f, topLeft.first, 0.001f)
+        assertEquals(-1f, topLeft.second, 0.001f)
+
+        // Bottom-right corner of pad: rawX = 320, rawY = 330
+        val bottomRight = resolvePadNormalizedCoords(
+            rawX = 320f,
+            rawY = 330f,
+            panelX = 100,
+            panelY = 200,
+            padRectX = 20,
+            padRectY = 30,
+            padRectW = 200,
+            padRectH = 100,
+        )
+        assertEquals(1f, bottomRight.first, 0.001f)
+        assertEquals(1f, bottomRight.second, 0.001f)
+
+        // Beyond bounds: clamped to [-1, 1]
+        val clamped = resolvePadNormalizedCoords(
+            rawX = 1000f,
+            rawY = -500f,
+            panelX = 100,
+            panelY = 200,
+            padRectX = 20,
+            padRectY = 30,
+            padRectW = 200,
+            padRectH = 100,
+        )
+        assertEquals(1f, clamped.first, 0.001f)
+        assertEquals(-1f, clamped.second, 0.001f)
+
+        // Zero width / height doesn't divide by zero
+        val zeroPad = resolvePadNormalizedCoords(
+            rawX = 100f,
+            rawY = 200f,
+            panelX = 100,
+            panelY = 200,
+            padRectX = 0,
+            padRectY = 0,
+            padRectW = 0,
+            padRectH = 0,
+        )
+        assertEquals(0f, zeroPad.first, 0.001f)
+        assertEquals(0f, zeroPad.second, 0.001f)
+    }
 }
 

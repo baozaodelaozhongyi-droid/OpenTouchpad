@@ -71,6 +71,7 @@ class TouchpadService : AccessibilityService() {
     private var panelParams: WindowManager.LayoutParams? = null
     private var padArea: View? = null
     private var padWell: View? = null
+    private var padControlRect = ControlRect(0, 0, 0, 0)
     private var miniBallView: View? = null
     private val actionViews = mutableListOf<View>()
     private val actionSlots = mutableListOf<Int>()
@@ -678,6 +679,7 @@ class TouchpadService : AccessibilityService() {
         ballIconView = null
         padArea = null
         padWell = null
+        padControlRect = ControlRect(0, 0, 0, 0)
         actionViews.clear()
         actionSlots.clear()
         main.removeCallbacks(restoreTouchRunnable)
@@ -853,6 +855,7 @@ class TouchpadService : AccessibilityService() {
         val layout = computeControlLayout(
             width, height, resources.displayMetrics.density, spacingPx(), buttonCount
         )
+        padControlRect = layout.pad
         val p = palette(isDarkTheme())
         padCornerRadius = layout.button * 0.42f
 
@@ -1216,11 +1219,21 @@ class TouchpadService : AccessibilityService() {
             if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) padTouchIgnored = false
             return
         }
+        val panelX = panelParams?.x ?: 0
+        val panelY = panelParams?.y ?: 0
+        val (normX, normY) = if (padControlRect.w > 0 && padControlRect.h > 0) {
+            resolvePadNormalizedCoords(e.rawX, e.rawY, panelX, panelY, padControlRect.x, padControlRect.y, padControlRect.w, padControlRect.h)
+        } else {
+            val pad = padArea
+            val w = pad?.width?.toFloat()?.coerceAtLeast(1f) ?: 1f
+            val h = pad?.height?.toFloat()?.coerceAtLeast(1f) ?: 1f
+            Pair(((e.x - w / 2f) / (w / 2f)).coerceIn(-1f, 1f), ((e.y - h / 2f) / (h / 2f)).coerceIn(-1f, 1f))
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (prefs.pressFeedback) {
                     padArea?.let { pad ->
-                        PressFeedback.applyPadDown(pad, e.x, e.y, resources.displayMetrics.density)
+                        PressFeedback.applyPadDown(pad, normX, normY, resources.displayMetrics.density)
                     }
                 }
                 downRawX = e.rawX; downRawY = e.rawY
@@ -1246,7 +1259,7 @@ class TouchpadService : AccessibilityService() {
             MotionEvent.ACTION_MOVE -> {
                 if (prefs.pressFeedback) {
                     padArea?.let { pad ->
-                        PressFeedback.applyPadMove(pad, e.x, e.y, resources.displayMetrics.density)
+                        PressFeedback.applyPadMove(pad, normX, normY, resources.displayMetrics.density)
                     }
                 }
                 val dx = e.rawX - lastRawX

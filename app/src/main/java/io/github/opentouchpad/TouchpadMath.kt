@@ -667,5 +667,25 @@ internal fun resolveTouchpadPalette(customColor: Int, isDark: Boolean = true): T
     }
 }
 
-
-
+/**
+ * 根据原始触摸屏幕绝对坐标 [rawX], [rawY]，以及触控板底座在屏幕上的绝对位置与尺寸，
+ * 计算无透视畸变、无反馈回路的归一化按压坐标 [-1f, 1f]。
+ */
+internal fun resolvePadNormalizedCoords(
+    rawX: Float,
+    rawY: Float,
+    panelX: Int,
+    panelY: Int,
+    padRectX: Int,
+    padRectY: Int,
+    padRectW: Int,
+    padRectH: Int,
+): Pair<Float, Float> {
+    val centerX = panelX + padRectX + padRectW / 2f
+    val centerY = panelY + padRectY + padRectH / 2f
+    val halfW = (padRectW / 2f).coerceAtLeast(1f)
+    val halfH = (padRectH / 2f).coerceAtLeast(1f)
+    val normX = ((rawX - centerX) / halfW).coerceIn(-1f, 1f)
+    val normY = ((rawY - centerY) / halfH).coerceIn(-1f, 1f)
+    return Pair(normX, normY)
+}

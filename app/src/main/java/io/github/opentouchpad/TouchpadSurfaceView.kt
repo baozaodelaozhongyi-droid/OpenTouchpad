@@ -138,7 +138,8 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         canvas.drawRect(boundsRect, lightingPaint)
 
         // 3. 动态 3D 按压倾斜光影：按下凹陷端受阴影，翘起翘起端迎光高光
-        if (tiltIntensity > 0.01f) {
+        val tiltLen = kotlin.math.hypot(tiltNormX, tiltNormY)
+        if (tiltIntensity > 0.01f && tiltLen > 0.01f) {
             val cx = w / 2f
             val cy = h / 2f
             // 按压点（凹陷点）

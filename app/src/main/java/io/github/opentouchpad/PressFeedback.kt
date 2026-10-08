@@ -1,5 +1,6 @@
 package io.github.opentouchpad
 
+import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
@@ -20,6 +21,8 @@ object PressFeedback {
 
     val decelerate = DecelerateInterpolator()
     val overshoot = OvershootInterpolator(1.25f)
+
+    private var padDownTimeMs: Long = 0L
 
     /**
      * 为按钮等普通 View 挂载 3D 倾斜下沉按压反馈。
@@ -139,34 +142,33 @@ object PressFeedback {
 
     /**
      * 触控板按下反馈：
-     * 计算落点相对触控板中心的相对位置，按住左边左侧下沉，按住右边右侧下沉。
+     * 基于归一化按压坐标 [normX], [normY]（-1f..1f），下沉并沿落点朝向微幅 3D 倾斜。
      */
     fun applyPadDown(
         pad: View,
-        localX: Float,
-        localY: Float,
+        normX: Float,
+        normY: Float,
         density: Float,
-        maxTiltX: Float = 8.5f,
-        maxTiltY: Float = 11.0f,
-        pressScale: Float = 0.94f,
-        sinkDp: Float = 4.5f,
+        maxTiltX: Float = 7.0f,
+        maxTiltY: Float = 9.0f,
+        pressScale: Float = 0.945f,
+        sinkDp: Float = 4.0f,
     ) {
-        val w = pad.width.toFloat().coerceAtLeast(1f)
-        val h = pad.height.toFloat().coerceAtLeast(1f)
-        val normX = ((localX - w / 2f) / (w / 2f)).coerceIn(-1f, 1f)
-        val normY = ((localY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
+        padDownTimeMs = SystemClock.uptimeMillis()
+        val clampedNormX = normX.coerceIn(-1f, 1f)
+        val clampedNormY = normY.coerceIn(-1f, 1f)
         val sinkPx = (sinkDp * density).roundToInt().toFloat()
 
-        (pad as? TouchpadSurfaceView)?.animateTilt(normX, normY, 1f, 70, decelerate)
+        (pad as? TouchpadSurfaceView)?.animateTilt(clampedNormX, clampedNormY, 1f, 65, decelerate)
 
         pad.animate().cancel()
         pad.animate()
-            .rotationX(-normY * maxTiltX)
-            .rotationY(normX * maxTiltY)
+            .rotationX(-clampedNormY * maxTiltX)
+            .rotationY(clampedNormX * maxTiltY)
             .scaleX(pressScale)
             .scaleY(pressScale)
             .translationY(sinkPx)
-            .setDuration(70)
+            .setDuration(65)
             .setInterpolator(decelerate)
             .start()
     }
@@ -174,40 +176,52 @@ object PressFeedback {
     /**
      * 触控板手指移动：
      * 保持下沉状态，动态更新 3D 倾斜角度跟随手指位置。
+     * 初始 65ms 下沉窗口过后直接以屏幕物理刷新率 1:1 跟随手指，无动画打断与延迟滞后。
      */
     fun applyPadMove(
         pad: View,
-        localX: Float,
-        localY: Float,
+        normX: Float,
+        normY: Float,
         density: Float,
-        maxTiltX: Float = 8.5f,
-        maxTiltY: Float = 11.0f,
-        pressScale: Float = 0.94f,
-        sinkDp: Float = 4.5f,
+        maxTiltX: Float = 7.0f,
+        maxTiltY: Float = 9.0f,
+        pressScale: Float = 0.945f,
+        sinkDp: Float = 4.0f,
     ) {
-        val w = pad.width.toFloat().coerceAtLeast(1f)
-        val h = pad.height.toFloat().coerceAtLeast(1f)
-        val normX = ((localX - w / 2f) / (w / 2f)).coerceIn(-1f, 1f)
-        val normY = ((localY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
+        val clampedNormX = normX.coerceIn(-1f, 1f)
+        val clampedNormY = normY.coerceIn(-1f, 1f)
         val sinkPx = (sinkDp * density).roundToInt().toFloat()
 
-        (pad as? TouchpadSurfaceView)?.setTilt(normX, normY, 1f)
-
-        pad.animate()
-            .rotationX(-normY * maxTiltX)
-            .rotationY(normX * maxTiltY)
-            .scaleX(pressScale)
-            .scaleY(pressScale)
-            .translationY(sinkPx)
-            .setDuration(35)
-            .start()
+        val elapsed = SystemClock.uptimeMillis() - padDownTimeMs
+        if (elapsed >= 65L) {
+            pad.animate().cancel()
+            pad.scaleX = pressScale
+            pad.scaleY = pressScale
+            pad.translationY = sinkPx
+            pad.rotationX = -clampedNormY * maxTiltX
+            pad.rotationY = clampedNormX * maxTiltY
+            (pad as? TouchpadSurfaceView)?.setTilt(clampedNormX, clampedNormY, 1f)
+        } else {
+            val remainingMs = (65L - elapsed).coerceAtLeast(10L)
+            pad.animate()
+                .rotationX(-clampedNormY * maxTiltX)
+                .rotationY(clampedNormX * maxTiltY)
+                .scaleX(pressScale)
+                .scaleY(pressScale)
+                .translationY(sinkPx)
+                .setDuration(remainingMs)
+                .setInterpolator(decelerate)
+                .start()
+            (pad as? TouchpadSurfaceView)?.setTilt(clampedNormX, clampedNormY, 1f)
+        }
     }
 
     /**
      * 触控板松开：微弹回弹恢复平整。
      */
     fun applyPadRelease(pad: View) {
-        (pad as? TouchpadSurfaceView)?.animateTilt(0f, 0f, 0f, 220, overshoot)
+        padDownTimeMs = 0L
+        (pad as? TouchpadSurfaceView)?.animateTilt(0f, 0f, 0f, 200, overshoot)
 
         pad.animate().cancel()
         pad.animate()
@@ -216,7 +230,7 @@ object PressFeedback {
             .scaleX(1f)
             .scaleY(1f)
             .translationY(0f)
-            .setDuration(220)
+            .setDuration(200)
             .setInterpolator(overshoot)
             .start()
     }
