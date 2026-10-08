@@ -151,8 +151,8 @@ object PressFeedback {
         density: Float,
         maxTiltX: Float = 7.0f,
         maxTiltY: Float = 9.0f,
-        pressScale: Float = 0.945f,
-        sinkDp: Float = 4.0f,
+        pressScale: Float = 0.985f,
+        sinkDp: Float = 2.0f,
     ) {
         padDownTimeMs = SystemClock.uptimeMillis()
         val clampedNormX = normX.coerceIn(-1f, 1f)
@@ -185,8 +185,8 @@ object PressFeedback {
         density: Float,
         maxTiltX: Float = 7.0f,
         maxTiltY: Float = 9.0f,
-        pressScale: Float = 0.945f,
-        sinkDp: Float = 4.0f,
+        pressScale: Float = 0.985f,
+        sinkDp: Float = 2.0f,
     ) {
         val clampedNormX = normX.coerceIn(-1f, 1f)
         val clampedNormY = normY.coerceIn(-1f, 1f)

@@ -70,7 +70,6 @@ class TouchpadService : AccessibilityService() {
     private var panel: View? = null
     private var panelParams: WindowManager.LayoutParams? = null
     private var padArea: View? = null
-    private var padWell: View? = null
     private var padControlRect = ControlRect(0, 0, 0, 0)
     private var miniBallView: View? = null
     private val actionViews = mutableListOf<View>()
@@ -693,7 +692,6 @@ class TouchpadService : AccessibilityService() {
         ballBgView = null
         ballIconView = null
         padArea = null
-        padWell = null
         padControlRect = ControlRect(0, 0, 0, 0)
         actionViews.clear()
         actionSlots.clear()
@@ -789,15 +787,6 @@ class TouchpadService : AccessibilityService() {
             contentDescription = getString(R.string.control_surface_content_description)
         }
 
-        // 触控板底座凹槽（固定在底座上，作为物理深度参照物）
-        val well = View(this).apply {
-            background = padWellBackground(dark, dp(22).toFloat())
-            isClickable = false
-            isFocusable = false
-        }
-        padWell = well
-        root.addView(well)
-
         val pad = TouchpadSurfaceView(this).apply {
             val p = palette(dark)
             contentDescription = getString(R.string.touchpad_content_description)
@@ -877,9 +866,6 @@ class TouchpadService : AccessibilityService() {
         padControlRect = layout.pad
         val p = palette(isDarkTheme())
         padCornerRadius = layout.button * 0.42f
-
-        padWell?.layoutParams = rectParams(layout.pad)
-        padWell?.background = padWellBackground(isDarkTheme(), padCornerRadius)
 
         padArea?.layoutParams = rectParams(layout.pad)
         (padArea as? TouchpadSurfaceView)?.apply {
@@ -1174,13 +1160,6 @@ class TouchpadService : AccessibilityService() {
                 else -> false
             }
         }
-    }
-
-    private fun padWellBackground(dark: Boolean, radiusPx: Float): GradientDrawable {
-        val p = palette(dark)
-        val wellBg = darkenColor(p.padBg, 0.45f)
-        val wellStroke = darkenColor(p.padStroke, 0.35f)
-        return solidBackground(GradientDrawable.RECTANGLE, wellBg, wellStroke, radiusPx)
     }
 
     private fun padBackground(dark: Boolean, radiusPx: Float): GradientDrawable {
