@@ -29,6 +29,7 @@ import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -256,6 +257,14 @@ class MainActivity : Activity() {
                     TouchpadService.instance?.updatePanelGeometry()
                 },
             ),
+            colorRow(
+                getString(R.string.set_touchpad_color),
+                TOUCHPAD_COLORS,
+                { prefs.touchpadColor },
+                { prefs.touchpadColor = it },
+                onServiceUpdate = { TouchpadService.instance?.updatePanelAppearance() },
+                allowCustomHex = true,
+            ),
             slider(
                 getString(R.string.set_opacity),
                 20,
@@ -350,6 +359,7 @@ class MainActivity : Activity() {
                 { prefs.floatingBallColor },
                 { prefs.floatingBallColor = it },
                 onServiceUpdate = { TouchpadService.instance?.updateBallAppearance() },
+                allowCustomHex = true,
             ),
             slider(
                 getString(R.string.set_ball_opacity),
@@ -425,6 +435,7 @@ class MainActivity : Activity() {
                 { prefs.cursorColor },
                 { prefs.cursorColor = it },
                 onServiceUpdate = { TouchpadService.instance?.updateCursorAppearance() },
+                allowCustomHex = true,
             ),
             switchRow(
                 getString(R.string.switch_touch_ring),
@@ -445,6 +456,7 @@ class MainActivity : Activity() {
                     { prefs.touchRingColor },
                     { prefs.touchRingColor = it },
                     onServiceUpdate = { TouchpadService.instance?.updateTouchRingAppearance(preview = true) },
+                    allowCustomHex = true,
                 )
             )
         }
@@ -874,13 +886,20 @@ class MainActivity : Activity() {
         get: () -> Int,
         set: (Int) -> Unit,
         onServiceUpdate: (() -> Unit)? = null,
+        allowCustomHex: Boolean = false,
     ): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(12), 0, dp(12), 0)
         }
-        palette.forEach { color ->
-            val selected = get() == color
+        val currentColor = get()
+        val allColors = if (allowCustomHex && currentColor != 0 && currentColor !in palette) {
+            palette + currentColor
+        } else {
+            palette
+        }
+        allColors.forEach { color ->
+            val selected = currentColor == color
             val fill = if (color == 0) 0xFFC96442.toInt() else color
             val swatch = TextView(this).apply {
                 gravity = Gravity.CENTER
@@ -919,6 +938,41 @@ class MainActivity : Activity() {
                 setMargins(dp(2), 0, dp(2), 0)
             })
         }
+        if (allowCustomHex) {
+            val customSwatch = TextView(this).apply {
+                gravity = Gravity.CENTER
+                textSize = 18f
+                text = "+"
+                setTextColor(textColor)
+                val inner = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(trackStrongColor)
+                    setStroke(maxOf(1, dp(1) / 2), 0x33000000)
+                }
+                val ring = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.TRANSPARENT)
+                    setStroke(dp(2), Color.TRANSPARENT)
+                }
+                background = LayerDrawable(arrayOf(ring, inner)).apply { setLayerInset(1, dp(4), dp(4), dp(4), dp(4)) }
+                contentDescription = getString(R.string.custom_color_title)
+                isClickable = true
+                setOnClickListener {
+                    showCustomColorDialog(currentColor) { picked ->
+                        set(picked)
+                        if (onServiceUpdate != null) {
+                            onServiceUpdate()
+                        } else {
+                            reload()
+                        }
+                        recreateKeepingScroll()
+                    }
+                }
+            }
+            row.addView(customSwatch, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+                setMargins(dp(2), 0, dp(2), 0)
+            })
+        }
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(12), 0, dp(10))
@@ -927,6 +981,83 @@ class MainActivity : Activity() {
                 isHorizontalScrollBarEnabled = false
                 addView(row)
             })
+        }
+    }
+
+    private fun showCustomColorDialog(
+        currentColor: Int,
+        onColorSelected: (Int) -> Unit,
+    ) {
+        val initialHex = if (currentColor != 0) {
+            String.format(java.util.Locale.US, "#%06X", currentColor and 0x00FFFFFF)
+        } else {
+            "#2A2A28"
+        }
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(16), dp(24), dp(8))
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val preview = TextView(this).apply {
+            val size = dp(40)
+            layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(14) }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                val parsed = runCatching { Color.parseColor(initialHex) }.getOrDefault(0xFF2A2A28.toInt())
+                setColor(parsed)
+                setStroke(dp(1), 0x33000000)
+            }
+        }
+        val edit = EditText(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setText(initialHex)
+            setSingleLine()
+            setTextColor(textColor)
+            setHintTextColor(tertiaryTextColor)
+            hint = "#RRGGBB"
+        }
+        row.addView(preview)
+        row.addView(edit)
+        layout.addView(row)
+        layout.addView(hintText(getString(R.string.custom_color_hint)).apply {
+            setPadding(0, dp(8), 0, 0)
+        })
+
+        val dialogTheme = if (darkUi) R.style.WarmDialog_Dark else R.style.WarmDialog
+        val dialog = AlertDialog.Builder(this, dialogTheme)
+            .setTitle(getString(R.string.custom_color_title))
+            .setView(layout)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+
+        edit.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                val text = s?.toString()?.trim().orEmpty()
+                val hex = if (!text.startsWith("#")) "#$text" else text
+                val parsed = runCatching { Color.parseColor(hex) }.getOrNull()
+                if (parsed != null) {
+                    (preview.background as? GradientDrawable)?.setColor(parsed)
+                }
+            }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+            val text = edit.text.toString().trim()
+            val hex = if (!text.startsWith("#")) "#$text" else text
+            val parsed = runCatching { Color.parseColor(hex) }.getOrNull()
+            if (parsed != null) {
+                onColorSelected(parsed)
+                dialog.dismiss()
+            } else {
+                toast(getString(R.string.custom_color_invalid))
+            }
         }
     }
 
@@ -1492,6 +1623,13 @@ class MainActivity : Activity() {
         val RING_COLORS = listOf(
             0, 0xFFFAF9F5.toInt(), 0xFFE8E6DC.toInt(), 0xFF87867F.toInt(), 0xFF30302E.toInt(), 0xFF141413.toInt(),
             0xFFD97757.toInt(), 0xFFB53333.toInt(), 0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
+        )
+        /** 0 = 跟随主题默认色。 */
+        val TOUCHPAD_COLORS = listOf(
+            0, 0xFF141413.toInt(), 0xFF2A2A28.toInt(), 0xFF30302E.toInt(), 0xFF87867F.toInt(),
+            0xFFE8E6DC.toInt(), 0xFFFAF9F5.toInt(), 0xFFD97757.toInt(), 0xFFB53333.toInt(),
+            0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
+            0xFF1E293B.toInt(), 0xFF1C3829.toInt(),
         )
     }
 }

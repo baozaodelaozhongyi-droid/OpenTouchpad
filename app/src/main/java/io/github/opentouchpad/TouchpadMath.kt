@@ -578,5 +578,94 @@ internal const val BUTTON_CUSTOMIZE_HOLD_DEFAULT_MS = 1000
 internal fun resolveButtonCustomizeHoldMs(configuredMs: Int): Int =
     configuredMs.coerceIn(BUTTON_CUSTOMIZE_HOLD_MIN_MS, BUTTON_CUSTOMIZE_HOLD_MAX_MS)
 
+internal data class TouchpadPalette(
+    val buttonBg: Int,
+    val buttonStroke: Int,
+    val buttonText: Int,
+    val padBg: Int,
+    val padStroke: Int,
+    val ripple: Int,
+)
+
+internal fun colorLuminance(color: Int): Float {
+    fun toLinear(c: Int): Float {
+        val s = c / 255f
+        return if (s <= 0.04045f) s / 12.92f else Math.pow((s + 0.055) / 1.055, 2.4).toFloat()
+    }
+    val r = toLinear((color ushr 16) and 0xFF)
+    val g = toLinear((color ushr 8) and 0xFF)
+    val b = toLinear(color and 0xFF)
+    return 0.2126f * r + 0.7152f * g + 0.0722f * b
+}
+
+internal fun lightenColor(color: Int, amount: Float): Int {
+    val a = (color ushr 24) and 0xFF
+    val r = (color ushr 16) and 0xFF
+    val g = (color ushr 8) and 0xFF
+    val b = color and 0xFF
+    fun ch(c: Int) = (c + (255 - c) * amount).roundToInt().coerceIn(0, 255)
+    return (a shl 24) or (ch(r) shl 16) or (ch(g) shl 8) or ch(b)
+}
+
+internal fun darkenColor(color: Int, amount: Float): Int {
+    val a = (color ushr 24) and 0xFF
+    val r = (color ushr 16) and 0xFF
+    val g = (color ushr 8) and 0xFF
+    val b = color and 0xFF
+    fun ch(c: Int) = (c * (1f - amount)).roundToInt().coerceIn(0, 255)
+    return (a shl 24) or (ch(r) shl 16) or (ch(g) shl 8) or ch(b)
+}
+
+/**
+ * 解析触控板调色板。
+ * 0 表示跟随主题默认配色（暗色采用 M3 暗灰与象牙白字，浅色采用暖灰与暗黑字）。
+ * 非 0 则根据自定义颜色自动计算板面凹陷底色、按钮浮起背景、高对比度图标前景及水波纹效果。
+ */
+internal fun resolveTouchpadPalette(customColor: Int, isDark: Boolean = true): TouchpadPalette {
+    if (customColor == 0) {
+        return if (isDark) {
+            TouchpadPalette(
+                buttonBg = 0xFF3A3936.toInt(),
+                buttonStroke = 0x33FAF9F5,
+                buttonText = 0xFFFAF9F5.toInt(),
+                padBg = 0xFF2A2A28.toInt(),
+                padStroke = 0x26FAF9F5,
+                ripple = 0x33FAF9F5,
+            )
+        } else {
+            TouchpadPalette(
+                buttonBg = 0xFFF5F4ED.toInt(),
+                buttonStroke = 0x40141413,
+                buttonText = 0xFF141413.toInt(),
+                padBg = 0xFFE8E6DC.toInt(),
+                padStroke = 0x40141413,
+                ripple = 0x26141413,
+            )
+        }
+    }
+
+    val opaqueColor = if ((customColor ushr 24) == 0) (customColor or 0xFF000000.toInt()) else customColor
+    val isLight = colorLuminance(opaqueColor) > 0.55f
+    return if (isLight) {
+        TouchpadPalette(
+            buttonBg = opaqueColor,
+            buttonStroke = 0x33141413,
+            buttonText = 0xFF141413.toInt(),
+            padBg = darkenColor(opaqueColor, 0.06f),
+            padStroke = 0x26141413,
+            ripple = 0x26141413,
+        )
+    } else {
+        TouchpadPalette(
+            buttonBg = lightenColor(opaqueColor, 0.12f),
+            buttonStroke = 0x33FAF9F5,
+            buttonText = 0xFFFAF9F5.toInt(),
+            padBg = opaqueColor,
+            padStroke = 0x26FAF9F5,
+            ripple = 0x33FAF9F5,
+        )
+    }
+}
+
 
 

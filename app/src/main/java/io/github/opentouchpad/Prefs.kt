@@ -107,6 +107,11 @@ class Prefs(ctx: Context) {
         set(v) = sp.edit().putInt("touchRingColor", v).apply()
 
     // ── 触控板 ──
+    /** 触控板颜色；0 表示跟随主题默认色。 */
+    var touchpadColor: Int
+        get() = sp.getInt("touchpadColor", 0)
+        set(v) = sp.edit().putInt("touchpadColor", v).apply()
+
     /** Legacy pad height retained for preference compatibility. */
     var padHeightDp: Int
         get() = sp.getInt("padHeight", 240)

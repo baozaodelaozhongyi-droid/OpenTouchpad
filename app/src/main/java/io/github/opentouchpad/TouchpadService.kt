@@ -399,13 +399,14 @@ class TouchpadService : AccessibilityService() {
         root.invalidate()
     }
 
-    /** 实时平滑更新触控板透明度与按键样式（零闪烁）。 */
+    /** 实时平滑更新触控板颜色、透明度与按键样式（零闪烁）。 */
     fun updatePanelAppearance() {
         prefs = Prefs(this)
         val root = panel as? FrameLayout ?: return
         if (root === miniBallView) return
         val window = panelParams ?: return
         layoutControlChildren(root, window.width, window.height)
+        refreshDragButtons()
         root.invalidate()
     }
 
@@ -858,6 +859,7 @@ class TouchpadService : AccessibilityService() {
             val padX = ((rect.w - iconPx) / 2).coerceAtLeast(0)
             val padY = ((rect.h - iconPx) / 2).coerceAtLeast(0)
             view.setPadding(padX, padY, padX, padY)
+            (view as? ImageView)?.setColorFilter(p.buttonText)
         }
         root.requestLayout()
     }
@@ -963,30 +965,8 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 外观 ─────────────────────────
 
-    /** 面板配色：Material 3 风格，纯色 + 细描边。 */
-    private class Palette(
-        val buttonBg: Int, val buttonStroke: Int, val buttonText: Int,
-        val padBg: Int, val padStroke: Int,
-        val ripple: Int,
-    )
-
-    private fun palette(dark: Boolean): Palette = if (dark) {
-        // M3 暗色：surface-variant
-        Palette(
-            buttonBg = 0xFF3A3936.toInt(),
-            buttonStroke = 0x33FAF9F5, buttonText = 0xFFFAF9F5.toInt(),
-            padBg = 0xFF2A2A28.toInt(), padStroke = 0x26FAF9F5,
-            ripple = 0x33FAF9F5,
-        )
-    } else {
-        // M3 浅色：surface
-        Palette(
-            buttonBg = 0xFFF5F4ED.toInt(),
-            buttonStroke = 0x40141413, buttonText = 0xFF141413.toInt(),
-            padBg = 0xFFE8E6DC.toInt(), padStroke = 0x40141413,
-            ripple = 0x26141413,
-        )
-    }
+    private fun palette(dark: Boolean): TouchpadPalette =
+        resolveTouchpadPalette(prefs.touchpadColor, dark)
 
     private fun solidBackground(shape: Int, color: Int, stroke: Int, radiusPx: Float = 0f): GradientDrawable =
         GradientDrawable().apply {

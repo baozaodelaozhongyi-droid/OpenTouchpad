@@ -168,4 +168,8 @@
     <string name="set_touch_ring_color">光圈颜色</string>
     <string name="set_button_customize_hold">长按自定义判定时长</string>
     <string name="button_customize_hold_hint">长按触控板按钮达到此时长后弹出动作选择器，防误触最长可设 3 秒</string>
+    <string name="set_touchpad_color">触控板颜色</string>
+    <string name="custom_color_title">自定义颜色</string>
+    <string name="custom_color_hint">输入 16 进制颜色代码（如 #2A2A28）</string>
+    <string name="custom_color_invalid">请输入有效的 16 进制颜色代码</string>
 </resources>

@@ -679,5 +679,36 @@ class TouchpadMathTest {
         assertEquals(3000, resolveButtonCustomizeHoldMs(4000))
         assertEquals(2500, resolveButtonCustomizeHoldMs(2500))
     }
+
+    @Test
+    fun resolveTouchpadPaletteDefaultThemes() {
+        val darkPalette = resolveTouchpadPalette(0, isDark = true)
+        assertEquals(0xFF3A3936.toInt(), darkPalette.buttonBg)
+        assertEquals(0xFF2A2A28.toInt(), darkPalette.padBg)
+        assertEquals(0xFFFAF9F5.toInt(), darkPalette.buttonText)
+
+        val lightPalette = resolveTouchpadPalette(0, isDark = false)
+        assertEquals(0xFFF5F4ED.toInt(), lightPalette.buttonBg)
+        assertEquals(0xFFE8E6DC.toInt(), lightPalette.padBg)
+        assertEquals(0xFF141413.toInt(), lightPalette.buttonText)
+    }
+
+    @Test
+    fun resolveTouchpadPaletteCustomDarkColor() {
+        val customBlue = 0xFF6A9BCC.toInt()
+        val palette = resolveTouchpadPalette(customBlue)
+        assertEquals(customBlue, palette.padBg)
+        assertEquals(lightenColor(customBlue, 0.12f), palette.buttonBg)
+        assertEquals(0xFFFAF9F5.toInt(), palette.buttonText)
+    }
+
+    @Test
+    fun resolveTouchpadPaletteCustomLightColor() {
+        val customIvory = 0xFFFAF9F5.toInt()
+        val palette = resolveTouchpadPalette(customIvory)
+        assertEquals(customIvory, palette.buttonBg)
+        assertEquals(darkenColor(customIvory, 0.06f), palette.padBg)
+        assertEquals(0xFF141413.toInt(), palette.buttonText)
+    }
 }
 
