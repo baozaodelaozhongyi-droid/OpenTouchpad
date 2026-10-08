@@ -651,4 +651,16 @@ class TouchpadMathTest {
         assertEquals(45, receivedH)
         TouchpadService.onPanelResized = null
     }
+
+    @Test
+    fun resolveTouchRingColorFollowsThemeOrUsesCustomColor() {
+        // 0 follows theme default
+        assertEquals(0xFFD97757.toInt(), resolveTouchRingColor(0, isDark = true))
+        assertEquals(0xFFC96442.toInt(), resolveTouchRingColor(0, isDark = false))
+        // Custom color overrides theme
+        val custom = 0xFF6A9BCC.toInt()
+        assertEquals(custom, resolveTouchRingColor(custom, isDark = true))
+        assertEquals(custom, resolveTouchRingColor(custom, isDark = false))
+    }
 }
+

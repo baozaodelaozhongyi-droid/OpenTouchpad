@@ -259,8 +259,10 @@ class TouchpadService : AccessibilityService() {
             customSwipeEndX = cursorX
             customSwipeEndY = cursorY
             cancelDwell()
-            moveTouchRing(cursorX, cursorY)
-            touchRing?.pressUntilRelease()
+            if (prefs.touchRingEnabled) {
+                moveTouchRing(cursorX, cursorY)
+                touchRing?.pressUntilRelease()
+            }
             haptic()
         }
     }
@@ -480,6 +482,22 @@ class TouchpadService : AccessibilityService() {
             runCatching { wm.updateViewLayout(cv, cp) }
         }
         cv.invalidate()
+    }
+
+    /** 实时平滑更新光圈样式与开关（零闪烁），可选播放预览动画。 */
+    fun updateTouchRingAppearance(preview: Boolean = false) {
+        prefs = Prefs(this)
+        val enabled = prefs.touchRingEnabled
+        val color = resolveTouchRingColor()
+        touchRing?.let { v ->
+            v.accent = color
+            if (!enabled) {
+                v.clear()
+            }
+        }
+        if (enabled && preview) {
+            showTouchRing(cursorX, cursorY, 0L)
+        }
     }
 
     fun toggleMinimize() {
@@ -1142,11 +1160,15 @@ class TouchpadService : AccessibilityService() {
                 if (customSwipeArmed) {
                     customSwipeEndX = cursorX
                     customSwipeEndY = cursorY
-                    moveTouchRing(cursorX, cursorY)
+                    if (prefs.touchRingEnabled) {
+                        moveTouchRing(cursorX, cursorY)
+                    }
                 }
                 if (dragging) {
                     appendTrailPoint(dragTrail, cursorX, cursorY, dp(4).toFloat())
-                    moveTouchRing(cursorX, cursorY)
+                    if (prefs.touchRingEnabled) {
+                        moveTouchRing(cursorX, cursorY)
+                    }
                 }
                 // 长按已触发（正在做自定义滑动）时不再停留点击：中途停一下不能把滑动变成一次点击。
                 // 停留点击触发过之后，光标要先离开触发点才重新计时，手指搁着微微抖动不会原地连点。
@@ -1881,8 +1903,10 @@ class TouchpadService : AccessibilityService() {
         dragTrail.clear()
         dragTrail += TrailPoint(cursorX, cursorY)
         // 起点显示长按圆环，之后跟着光标走（handlePadTouch 的 ACTION_MOVE）
-        moveTouchRing(cursorX, cursorY)
-        touchRing?.pressUntilRelease()
+        if (prefs.touchRingEnabled) {
+            moveTouchRing(cursorX, cursorY)
+            touchRing?.pressUntilRelease()
+        }
         refreshDragButtons()
     }
 
@@ -1902,7 +1926,9 @@ class TouchpadService : AccessibilityService() {
     private fun endDrag() {
         appendTrailPoint(dragTrail, cursorX, cursorY, 0.5f)
         val trail = dragTrail.toList()
-        touchRing?.let { moveTouchRing(cursorX, cursorY) }
+        if (prefs.touchRingEnabled) {
+            touchRing?.let { moveTouchRing(cursorX, cursorY) }
+        }
         cancelDrag()
         val start = trail.firstOrNull() ?: return
         // 没移动就再按一次 = 取消
@@ -1946,6 +1972,9 @@ class TouchpadService : AccessibilityService() {
     private var touchRing: TouchRingView? = null
     private var touchRingParams: WindowManager.LayoutParams? = null
 
+    private fun resolveTouchRingColor(): Int =
+        resolveTouchRingColor(prefs.touchRingColor, isDarkTheme())
+
     /** 常驻的反馈圆环窗口（透明、不可触摸），只移动位置，不反复 add/remove。 */
     private fun ensureTouchRing(): Pair<TouchRingView, WindowManager.LayoutParams>? {
         touchRing?.let { v -> touchRingParams?.let { return v to it } }
@@ -1953,7 +1982,7 @@ class TouchpadService : AccessibilityService() {
         val stroke = (2.5f * resources.displayMetrics.density)
         val size = ((radius + stroke) * 2).roundToInt() + dp(4)
         val v = TouchRingView(this).apply {
-            accent = if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+            accent = resolveTouchRingColor()
             maxRadius = radius
             strokeWidthPx = stroke
         }
@@ -1984,10 +2013,11 @@ class TouchpadService : AccessibilityService() {
     }
 
     /**
-     * 光标处点击 / 长按的视觉反馈：陶土色圆环从内向外展开，结束时从外向内收缩消失。
+     * 光标处点击 / 长按的视觉反馈：圆环从内向外展开，结束时从外向内收缩消失。
      * [holdMs] < 250 视为点击，否则圆环保持展开直到按住结束。
      */
     private fun showTouchRing(x: Float, y: Float, holdMs: Long) {
+        if (!prefs.touchRingEnabled) return
         // 拖拽锁定进行中，圆环正跟着光标标记拖拽；别的点击不抢走它
         if (dragging) return
         moveTouchRing(x, y)
@@ -2007,7 +2037,7 @@ class TouchpadService : AccessibilityService() {
             runCatching { wm.removeViewImmediate(v) }
             runCatching { wm.addView(v, lp) }
         }
-        if (dragging) {
+        if (dragging && prefs.touchRingEnabled) {
             moveTouchRing(cursorX, cursorY)
             touchRing?.holdExpanded()
         }

@@ -322,7 +322,13 @@ class MainActivity : Activity() {
                     TouchpadService.instance?.updateBallAppearance()
                 },
             ),
-            colorRow(getString(R.string.set_ball_color), BALL_COLORS, { prefs.floatingBallColor }, { prefs.floatingBallColor = it }),
+            colorRow(
+                getString(R.string.set_ball_color),
+                BALL_COLORS,
+                { prefs.floatingBallColor },
+                { prefs.floatingBallColor = it },
+                onServiceUpdate = { TouchpadService.instance?.updateBallAppearance() },
+            ),
             slider(
                 getString(R.string.set_ball_opacity),
                 20,
@@ -368,7 +374,7 @@ class MainActivity : Activity() {
 
         // ── 光标 ──
         col.addView(sectionHeader(getString(R.string.sec_cursor)))
-        col.addView(card(
+        val cursorRows = mutableListOf<View>(
             slider(
                 getString(R.string.set_cursor_size),
                 CURSOR_MIN_DP,
@@ -391,8 +397,36 @@ class MainActivity : Activity() {
                     TouchpadService.instance?.updateCursorAppearance()
                 },
             ),
-            colorRow(getString(R.string.set_cursor_color), CURSOR_COLORS, { prefs.cursorColor }, { prefs.cursorColor = it }),
-        ))
+            colorRow(
+                getString(R.string.set_cursor_color),
+                CURSOR_COLORS,
+                { prefs.cursorColor },
+                { prefs.cursorColor = it },
+                onServiceUpdate = { TouchpadService.instance?.updateCursorAppearance() },
+            ),
+            switchRow(
+                getString(R.string.switch_touch_ring),
+                prefs.touchRingEnabled,
+                hint = getString(R.string.switch_touch_ring_hint),
+                onChange = {
+                    prefs.touchRingEnabled = it
+                    TouchpadService.instance?.updateTouchRingAppearance(preview = it)
+                    recreateKeepingScroll()
+                },
+            ),
+        )
+        if (prefs.touchRingEnabled) {
+            cursorRows.add(
+                colorRow(
+                    getString(R.string.set_touch_ring_color),
+                    RING_COLORS,
+                    { prefs.touchRingColor },
+                    { prefs.touchRingColor = it },
+                    onServiceUpdate = { TouchpadService.instance?.updateTouchRingAppearance(preview = true) },
+                )
+            )
+        }
+        col.addView(card(*cursorRows.toTypedArray()))
 
         // ── 手感 ──
         col.addView(sectionHeader(getString(R.string.sec_feel)))
@@ -812,7 +846,13 @@ class MainActivity : Activity() {
      * 标题 + 一排颜色色块。[palette] 里的 0 代表「跟随主题默认色」，显示为陶土色渐变色块。
      * 选中的色块外圈加强调色描边并显示对勾；色块多时可以横向滑动。
      */
-    private fun colorRow(title: String, palette: List<Int>, get: () -> Int, set: (Int) -> Unit): View {
+    private fun colorRow(
+        title: String,
+        palette: List<Int>,
+        get: () -> Int,
+        set: (Int) -> Unit,
+        onServiceUpdate: (() -> Unit)? = null,
+    ): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(12), 0, dp(12), 0)
@@ -845,7 +885,11 @@ class MainActivity : Activity() {
                 isClickable = true
                 setOnClickListener {
                     set(color)
-                    reload()
+                    if (onServiceUpdate != null) {
+                        onServiceUpdate()
+                    } else {
+                        reload()
+                    }
                     recreateKeepingScroll()
                 }
             }
@@ -1419,6 +1463,11 @@ class MainActivity : Activity() {
         )
         /** 0 = 跟随主题的默认陶土色。 */
         val BALL_COLORS = listOf(
+            0, 0xFFFAF9F5.toInt(), 0xFFE8E6DC.toInt(), 0xFF87867F.toInt(), 0xFF30302E.toInt(), 0xFF141413.toInt(),
+            0xFFD97757.toInt(), 0xFFB53333.toInt(), 0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
+        )
+        /** 0 = 跟随主题的默认陶土色。 */
+        val RING_COLORS = listOf(
             0, 0xFFFAF9F5.toInt(), 0xFFE8E6DC.toInt(), 0xFF87867F.toInt(), 0xFF30302E.toInt(), 0xFF141413.toInt(),
             0xFFD97757.toInt(), 0xFFB53333.toInt(), 0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
         )

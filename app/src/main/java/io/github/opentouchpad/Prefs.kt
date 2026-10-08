@@ -96,6 +96,16 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("cursorColor", 0xFF141413.toInt())
         set(v) = sp.edit().putInt("cursorColor", v).apply()
 
+    /** 点击光圈视觉反馈开关。默认开启。 */
+    var touchRingEnabled: Boolean
+        get() = sp.getBoolean("touchRingEnabled", true)
+        set(v) = sp.edit().putBoolean("touchRingEnabled", v).apply()
+
+    /** 点击光圈颜色；0 表示跟随主题默认陶土色。 */
+    var touchRingColor: Int
+        get() = sp.getInt("touchRingColor", 0)
+        set(v) = sp.edit().putInt("touchRingColor", v).apply()
+
     // ── 触控板 ──
     /** Legacy pad height retained for preference compatibility. */
     var padHeightDp: Int

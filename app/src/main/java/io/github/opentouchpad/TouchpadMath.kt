@@ -554,5 +554,12 @@ internal fun lerpAngleDeg(from: Float, to: Float, factor: Float): Float {
     return (from + diff * factor.coerceIn(0f, 1f)) % 360f
 }
 
+/**
+ * 解析光圈颜色：0 表示跟随主题默认色（深色模式 0xFFD97757 珊瑚陶土，浅色模式 0xFFC96442 暖陶土）。
+ */
+internal fun resolveTouchRingColor(customColor: Int, isDark: Boolean): Int {
+    return if (customColor != 0) customColor else if (isDark) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+}
+
 
 

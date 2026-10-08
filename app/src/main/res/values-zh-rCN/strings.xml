@@ -163,4 +163,7 @@
     <string name="slot_bottom_indexed">下 %d</string>
     <string name="slot_left_indexed">左 %d</string>
     <string name="slot_right_indexed">右 %d</string>
+    <string name="switch_touch_ring">点击光圈反馈</string>
+    <string name="switch_touch_ring_hint">在光标点击或长按位置显示视觉光圈</string>
+    <string name="set_touch_ring_color">光圈颜色</string>
 </resources>
