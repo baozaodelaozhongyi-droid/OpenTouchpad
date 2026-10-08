@@ -662,5 +662,14 @@ class TouchpadMathTest {
         assertEquals(custom, resolveTouchRingColor(custom, isDark = true))
         assertEquals(custom, resolveTouchRingColor(custom, isDark = false))
     }
+
+    @Test
+    fun resolveBallRestingAlphaClampsAndMaintainsConfiguredOpacity() {
+        assertEquals(0.9f, resolveBallRestingAlpha(90), 0.001f)
+        assertEquals(0.2f, resolveBallRestingAlpha(20), 0.001f)
+        assertEquals(1.0f, resolveBallRestingAlpha(100), 0.001f)
+        assertEquals(0.2f, resolveBallRestingAlpha(5), 0.001f)
+        assertEquals(1.0f, resolveBallRestingAlpha(120), 0.001f)
+    }
 }
 

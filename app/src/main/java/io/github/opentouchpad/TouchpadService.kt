@@ -177,7 +177,6 @@ class TouchpadService : AccessibilityService() {
                 ?.scaleY(1.10f)
                 ?.setDuration(180)
                 ?.start()
-            miniBallView?.animate()?.alpha(1f)?.setDuration(120)?.start()
         } else if (act != PadAction.NONE) {
             performAction(act, withHaptic = false)
         }
@@ -953,7 +952,8 @@ class TouchpadService : AccessibilityService() {
     }
 
 
-    private fun ballRestingAlpha(): Float = prefs.floatingBallOpacityPercent.coerceIn(20, 100) / 100f
+    private fun ballRestingAlpha(): Float =
+        resolveBallRestingAlpha(prefs.floatingBallOpacityPercent)
 
     /** 把颜色往白色方向提亮一点，用于渐变顶部。 */
     private fun lighten(color: Int, amount: Float): Int {
@@ -1335,7 +1335,6 @@ class TouchpadService : AccessibilityService() {
         resetBallDeformation(animated = true, duration = 220L)
 
         if (startX == targetX && startY == targetY) {
-            miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(150)?.start()
             onComplete?.invoke()
             return
         }
@@ -1363,7 +1362,6 @@ class TouchpadService : AccessibilityService() {
                         p.y = targetY
                         panel?.let { runCatching { wm.updateViewLayout(it, p) } }
                     }
-                    miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(150)?.start()
                     onComplete?.invoke()
                 }
 
@@ -1393,7 +1391,6 @@ class TouchpadService : AccessibilityService() {
                 ballFromY = e.rawY
                 ballDragStartX = panelParams?.x ?: prefs.ballX.coerceAtLeast(0)
                 ballDragStartY = panelParams?.y ?: prefs.ballY.coerceAtLeast(0)
-                miniBallView?.animate()?.alpha(1f)?.setDuration(100)?.start()
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = e.rawX - ballFromX
@@ -1420,7 +1417,6 @@ class TouchpadService : AccessibilityService() {
                 }
             }
             MotionEvent.ACTION_UP -> {
-                miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(200)?.start()
                 if (!ballMoved) {
                     haptic()
                     toggleMinimize()
@@ -1429,7 +1425,6 @@ class TouchpadService : AccessibilityService() {
                 }
             }
             MotionEvent.ACTION_CANCEL -> {
-                miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(200)?.start()
                 keepBallInBounds()
             }
         }
@@ -1457,7 +1452,6 @@ class TouchpadService : AccessibilityService() {
                         panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
                     }
                 }
-                miniBallView?.animate()?.alpha(1f)?.setDuration(100)?.start()
 
                 val ballSize = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
                 val swipeThreshold = maxOf(dp(16).toFloat(), ballSize * 0.4f)
@@ -1601,7 +1595,6 @@ class TouchpadService : AccessibilityService() {
                         ?.scaleY(1f)
                         ?.setDuration(200)
                         ?.start()
-                    miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(200)?.start()
                     keepBallInBounds()
                 } else if (ballLongPressTriggered) {
                     ballLongPressTriggered = false
@@ -1675,7 +1668,6 @@ class TouchpadService : AccessibilityService() {
                     ballIconView?.animate()?.cancel()
                     ballBgView?.animate()?.rotation(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(180)?.start()
                     ballIconView?.animate()?.translationX(0f)?.translationY(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(180)?.start()
-                    miniBallView?.animate()?.alpha(ballRestingAlpha())?.setDuration(180)?.start()
                     keepBallInBounds()
                 } else {
                     snapBallBackToAnchor()

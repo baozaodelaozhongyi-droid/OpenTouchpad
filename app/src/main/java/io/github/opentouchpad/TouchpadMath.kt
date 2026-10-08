@@ -561,5 +561,12 @@ internal fun resolveTouchRingColor(customColor: Int, isDark: Boolean): Int {
     return if (customColor != 0) customColor else if (isDark) 0xFFD97757.toInt() else 0xFFC96442.toInt()
 }
 
+/**
+ * 解析悬浮球静止与交互状态下的不透明度，始终保持用户设定的透明度（20%–100%），
+ * 杜绝在触摸、长按或拖拽时突然跳变至 100% 满透明度导致画面刺眼变亮。
+ */
+internal fun resolveBallRestingAlpha(opacityPercent: Int): Float =
+    opacityPercent.coerceIn(20, 100) / 100f
+
 
 
