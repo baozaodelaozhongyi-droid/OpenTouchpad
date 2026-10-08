@@ -682,3 +682,16 @@ internal fun resolvePadNormalizedCoords(
     val normY = ((rawY - centerY) / halfH).coerceIn(-1f, 1f)
     return Pair(normX, normY)
 }
+
+/** 根据横竖屏朝向生成独立的偏好设置存储键名 */
+internal fun floatingBallPrefKey(isLandscape: Boolean, isY: Boolean): String {
+    val suffix = if (isLandscape) "landscape" else "portrait"
+    val axis = if (isY) "Y" else "X"
+    return "ball${axis}_$suffix"
+}
+
+internal fun panelPrefKey(isLandscape: Boolean, isY: Boolean): String {
+    val suffix = if (isLandscape) "landscape" else "portrait"
+    val axis = if (isY) "Y" else "X"
+    return "pad${axis}_$suffix"
+}

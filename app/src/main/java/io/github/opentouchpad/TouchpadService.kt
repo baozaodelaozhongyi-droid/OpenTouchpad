@@ -350,7 +350,7 @@ class TouchpadService : AccessibilityService() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        refreshScreenMetrics()
+        refreshScreenMetrics(newConfig)
         cursorX = cursorX.coerceIn(0f, screenW.toFloat())
         cursorY = cursorY.coerceIn(0f, screenH.toFloat())
         buildPanel()
@@ -451,8 +451,9 @@ class TouchpadService : AccessibilityService() {
             val position = clampFloatingBallPosition(lp.x, lp.y, size, screenW, screenH)
             lp.x = position.x
             lp.y = position.y
-            prefs.ballX = position.x
-            prefs.ballY = position.y
+            val land = isLandscape()
+            prefs.setBallX(land, position.x)
+            prefs.setBallY(land, position.y)
             ballAnchorX = position.x
             ballAnchorY = position.y
             runCatching { wm.updateViewLayout(dot, lp) }
@@ -501,14 +502,37 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 视图构建 ─────────────────────────
 
-    private fun refreshScreenMetrics() {
-        val dm = resources.displayMetrics
-        screenW = dm.widthPixels
-        screenH = dm.heightPixels
+    private fun refreshScreenMetrics(config: Configuration? = null) {
+        val conf = config ?: resources.configuration
+        if (::wm.isInitialized) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bounds = wm.currentWindowMetrics.bounds
+                screenW = bounds.width()
+                screenH = bounds.height()
+            } else {
+                val dm = android.util.DisplayMetrics()
+                @Suppress("DEPRECATION")
+                wm.defaultDisplay.getRealMetrics(dm)
+                screenW = dm.widthPixels
+                screenH = dm.heightPixels
+            }
+        } else {
+            val dm = resources.displayMetrics
+            screenW = dm.widthPixels
+            screenH = dm.heightPixels
+        }
+        val isLand = isLandscape(conf)
+        if (isLand && screenW < screenH) {
+            val temp = screenW; screenW = screenH; screenH = temp
+        } else if (!isLand && screenW > screenH) {
+            val temp = screenW; screenW = screenH; screenH = temp
+        }
     }
 
-    private fun isLandscape(): Boolean =
-        resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    private fun isLandscape(config: Configuration? = null): Boolean {
+        val orient = config?.orientation ?: resources.configuration.orientation
+        return orient == Configuration.ORIENTATION_LANDSCAPE
+    }
 
     private fun isDarkTheme(): Boolean = true
 
@@ -709,8 +733,9 @@ class TouchpadService : AccessibilityService() {
         // 关掉系统默认的窗口进出动画：它会给被移除的窗口拍一帧快照再淡出，
         // 和我们自己的缩放动画叠在一起就是「残影」。
         lp.windowAnimations = 0
-        val storedX = prefs.padX
-        val storedY = prefs.padY
+        val land = isLandscape()
+        val storedX = prefs.getPadX(land)
+        val storedY = prefs.getPadY(land)
         if (storedX >= 0 && storedY >= 0) {
             val position = clampPanelPosition(storedX, storedY, w, h, screenW, screenH)
             lp.x = position.x
@@ -733,8 +758,11 @@ class TouchpadService : AccessibilityService() {
         )
         lp.gravity = Gravity.TOP or Gravity.START
         lp.windowAnimations = 0
-        val position = if (prefs.ballX >= 0 && prefs.ballY >= 0) {
-            clampFloatingBallPosition(prefs.ballX, prefs.ballY, size, screenW, screenH)
+        val land = isLandscape()
+        val storedX = prefs.getBallX(land)
+        val storedY = prefs.getBallY(land)
+        val position = if (storedX >= 0 && storedY >= 0) {
+            clampFloatingBallPosition(storedX, storedY, size, screenW, screenH)
         } else {
             PanelPosition(screenW - size - dp(18), screenH / 2 - size / 2)
         }
@@ -812,7 +840,8 @@ class TouchpadService : AccessibilityService() {
         panelParams = lp
         root.post {
             if (panel === root) {
-                if (prefs.padX < 0 || prefs.padY < 0) {
+                val land = isLandscape()
+                if (prefs.getPadX(land) < 0 || prefs.getPadY(land) < 0) {
                     val position = clampPanelPosition((screenW - root.width) / 2, screenH - root.height - dp(12), root.width, root.height, screenW, screenH)
                     lp.x = position.x
                     lp.y = position.y
@@ -1344,8 +1373,9 @@ class TouchpadService : AccessibilityService() {
                 lp.x = position.x
                 lp.y = position.y
                 panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
-                prefs.padX = lp.x
-                prefs.padY = lp.y
+                val land = isLandscape()
+                prefs.setPadX(land, lp.x)
+                prefs.setPadY(land, lp.y)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> movingPanel = false
         }
@@ -1463,8 +1493,9 @@ class TouchpadService : AccessibilityService() {
                 ballMoved = false
                 ballFromX = e.rawX
                 ballFromY = e.rawY
-                ballDragStartX = panelParams?.x ?: prefs.ballX.coerceAtLeast(0)
-                ballDragStartY = panelParams?.y ?: prefs.ballY.coerceAtLeast(0)
+                val land = isLandscape()
+                ballDragStartX = panelParams?.x ?: prefs.getBallX(land).coerceAtLeast(0)
+                ballDragStartY = panelParams?.y ?: prefs.getBallY(land).coerceAtLeast(0)
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = e.rawX - ballFromX
@@ -1485,8 +1516,9 @@ class TouchpadService : AccessibilityService() {
                         lp.x = position.x
                         lp.y = position.y
                         panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
-                        prefs.ballX = position.x
-                        prefs.ballY = position.y
+                        val currentLand = isLandscape()
+                        prefs.setBallX(currentLand, position.x)
+                        prefs.setBallY(currentLand, position.y)
                     }
                 }
             }
@@ -1516,8 +1548,9 @@ class TouchpadService : AccessibilityService() {
                 ballSnapAnimator = null
                 resetBallDeformation(animated = false)
                 if (ballAnchorX == 0 && ballAnchorY == 0 && (panelParams?.x ?: 0) != 0) {
-                    ballAnchorX = panelParams?.x ?: prefs.ballX.coerceAtLeast(0)
-                    ballAnchorY = panelParams?.y ?: prefs.ballY.coerceAtLeast(0)
+                    val land = isLandscape()
+                    ballAnchorX = panelParams?.x ?: prefs.getBallX(land).coerceAtLeast(0)
+                    ballAnchorY = panelParams?.y ?: prefs.getBallY(land).coerceAtLeast(0)
                 }
                 panelParams?.let { lp ->
                     if (lp.x != ballAnchorX || lp.y != ballAnchorY) {
@@ -1577,8 +1610,9 @@ class TouchpadService : AccessibilityService() {
                         lp.x = position.x
                         lp.y = position.y
                         panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
-                        prefs.ballX = position.x
-                        prefs.ballY = position.y
+                        val land = isLandscape()
+                        prefs.setBallX(land, position.x)
+                        prefs.setBallY(land, position.y)
                     }
 
                     // 长按移动动效：速度感应果冻形变、跟手倾斜与内核图标视差动效
@@ -1766,8 +1800,9 @@ class TouchpadService : AccessibilityService() {
         if (position.x == lp.x && position.y == lp.y) return
         lp.x = position.x
         lp.y = position.y
-        prefs.padX = position.x
-        prefs.padY = position.y
+        val land = isLandscape()
+        prefs.setPadX(land, position.x)
+        prefs.setPadY(land, position.y)
         panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
     }
 
@@ -1778,8 +1813,9 @@ class TouchpadService : AccessibilityService() {
         val position = clampFloatingBallPosition(lp.x, lp.y, size, screenW, screenH)
         lp.x = position.x
         lp.y = position.y
-        prefs.ballX = position.x
-        prefs.ballY = position.y
+        val land = isLandscape()
+        prefs.setBallX(land, position.x)
+        prefs.setBallY(land, position.y)
         ballAnchorX = position.x
         ballAnchorY = position.y
         panel?.let { runCatching { wm.updateViewLayout(it, lp) } }

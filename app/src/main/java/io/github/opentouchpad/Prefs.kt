@@ -172,6 +172,30 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("padY", -1)
         set(v) = sp.edit().putInt("padY", v).apply()
 
+    fun getPadX(landscape: Boolean): Int {
+        val key = panelPrefKey(landscape, isY = false)
+        val v = sp.getInt(key, -1)
+        if (v >= 0) return v
+        return if (landscape) sp.getInt("padX_portrait", sp.getInt("padX", -1)) else sp.getInt("padX", -1)
+    }
+
+    fun setPadX(landscape: Boolean, v: Int) {
+        val key = panelPrefKey(landscape, isY = false)
+        sp.edit().putInt(key, v).putInt("padX", v).apply()
+    }
+
+    fun getPadY(landscape: Boolean): Int {
+        val key = panelPrefKey(landscape, isY = true)
+        val v = sp.getInt(key, -1)
+        if (v >= 0) return v
+        return if (landscape) sp.getInt("padY_portrait", sp.getInt("padY", -1)) else sp.getInt("padY", -1)
+    }
+
+    fun setPadY(landscape: Boolean, v: Int) {
+        val key = panelPrefKey(landscape, isY = true)
+        sp.edit().putInt(key, v).putInt("padY", v).apply()
+    }
+
     /** Floating ball top-left coordinates; -1 means the default right-center position. */
     var ballX: Int
         get() = sp.getInt("ballX", -1)
@@ -180,6 +204,47 @@ class Prefs(ctx: Context) {
     var ballY: Int
         get() = sp.getInt("ballY", -1)
         set(v) = sp.edit().putInt("ballY", v).apply()
+
+    fun getBallX(landscape: Boolean): Int {
+        val key = floatingBallPrefKey(landscape, isY = false)
+        val v = sp.getInt(key, -1)
+        if (v >= 0) return v
+        return if (landscape) sp.getInt("ballX_portrait", sp.getInt("ballX", -1)) else sp.getInt("ballX", -1)
+    }
+
+    fun setBallX(landscape: Boolean, v: Int) {
+        val key = floatingBallPrefKey(landscape, isY = false)
+        sp.edit().putInt(key, v).putInt("ballX", v).apply()
+    }
+
+    fun getBallY(landscape: Boolean): Int {
+        val key = floatingBallPrefKey(landscape, isY = true)
+        val v = sp.getInt(key, -1)
+        if (v >= 0) return v
+        return if (landscape) sp.getInt("ballY_portrait", sp.getInt("ballY", -1)) else sp.getInt("ballY", -1)
+    }
+
+    fun setBallY(landscape: Boolean, v: Int) {
+        val key = floatingBallPrefKey(landscape, isY = true)
+        sp.edit().putInt(key, v).putInt("ballY", v).apply()
+    }
+
+    fun resetPositions() {
+        sp.edit()
+            .putInt("padX", -1)
+            .putInt("padY", -1)
+            .putInt("ballX", -1)
+            .putInt("ballY", -1)
+            .remove("ballX_portrait")
+            .remove("ballX_landscape")
+            .remove("ballY_portrait")
+            .remove("ballY_landscape")
+            .remove("padX_portrait")
+            .remove("padX_landscape")
+            .remove("padY_portrait")
+            .remove("padY_landscape")
+            .apply()
+    }
 
     var minimized: Boolean
         get() = sp.getBoolean("minimized", false)

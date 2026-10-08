@@ -286,10 +286,7 @@ class MainActivity : Activity() {
                 }
             },
             actionRow(getString(R.string.btn_reset_position)) {
-                prefs.padX = -1
-                prefs.padY = -1
-                prefs.ballX = -1
-                prefs.ballY = -1
+                prefs.resetPositions()
                 reload()
             },
         ))

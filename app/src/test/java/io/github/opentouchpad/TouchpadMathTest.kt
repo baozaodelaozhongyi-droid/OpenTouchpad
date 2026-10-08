@@ -770,5 +770,18 @@ class TouchpadMathTest {
         assertEquals(0f, zeroPad.first, 0.001f)
         assertEquals(0f, zeroPad.second, 0.001f)
     }
+
+    @Test
+    fun orientationPrefKeysAreDistinctForPortraitAndLandscape() {
+        assertEquals("ballX_portrait", floatingBallPrefKey(isLandscape = false, isY = false))
+        assertEquals("ballY_portrait", floatingBallPrefKey(isLandscape = false, isY = true))
+        assertEquals("ballX_landscape", floatingBallPrefKey(isLandscape = true, isY = false))
+        assertEquals("ballY_landscape", floatingBallPrefKey(isLandscape = true, isY = true))
+
+        assertEquals("padX_portrait", panelPrefKey(isLandscape = false, isY = false))
+        assertEquals("padY_portrait", panelPrefKey(isLandscape = false, isY = true))
+        assertEquals("padX_landscape", panelPrefKey(isLandscape = true, isY = false))
+        assertEquals("padY_landscape", panelPrefKey(isLandscape = true, isY = true))
+    }
 }
 
