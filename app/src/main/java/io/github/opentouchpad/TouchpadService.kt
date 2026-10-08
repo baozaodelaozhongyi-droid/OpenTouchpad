@@ -70,6 +70,7 @@ class TouchpadService : AccessibilityService() {
     private var panel: View? = null
     private var panelParams: WindowManager.LayoutParams? = null
     private var padArea: View? = null
+    private var padWell: View? = null
     private var miniBallView: View? = null
     private val actionViews = mutableListOf<View>()
     private val actionSlots = mutableListOf<Int>()
@@ -676,6 +677,7 @@ class TouchpadService : AccessibilityService() {
         ballBgView = null
         ballIconView = null
         padArea = null
+        padWell = null
         actionViews.clear()
         actionSlots.clear()
         main.removeCallbacks(restoreTouchRunnable)
@@ -767,11 +769,24 @@ class TouchpadService : AccessibilityService() {
             contentDescription = getString(R.string.control_surface_content_description)
         }
 
-        val pad = View(this).apply {
-            background = padBackground(dark, dp(22).toFloat())
+        // 触控板底座凹槽（固定在底座上，作为物理深度参照物）
+        val well = View(this).apply {
+            background = padWellBackground(dark, dp(22).toFloat())
+            isClickable = false
+            isFocusable = false
+        }
+        padWell = well
+        root.addView(well)
+
+        val pad = TouchpadSurfaceView(this).apply {
+            val p = palette(dark)
             contentDescription = getString(R.string.touchpad_content_description)
-            cameraDistance = 8000f * resources.displayMetrics.density
+            cameraDistance = 1400f * resources.displayMetrics.density
             isHapticFeedbackEnabled = false
+            cornerRadiusPx = dp(22).toFloat()
+            baseColor = p.padBg
+            strokeColor = p.padStroke
+            opacityPercent = prefs.opacityPercent
             setOnTouchListener { _, e -> handlePadTouch(e); true }
         }
         padArea = pad
@@ -838,12 +853,19 @@ class TouchpadService : AccessibilityService() {
         val layout = computeControlLayout(
             width, height, resources.displayMetrics.density, spacingPx(), buttonCount
         )
-        padArea?.layoutParams = rectParams(layout.pad)
-        // 触控板圆角随按钮大小变化，保持和按钮的视觉比例
-        padCornerRadius = layout.button * 0.42f
-        padArea?.background = padBackground(isDarkTheme(), padCornerRadius)
-
         val p = palette(isDarkTheme())
+        padCornerRadius = layout.button * 0.42f
+
+        padWell?.layoutParams = rectParams(layout.pad)
+        padWell?.background = padWellBackground(isDarkTheme(), padCornerRadius)
+
+        padArea?.layoutParams = rectParams(layout.pad)
+        (padArea as? TouchpadSurfaceView)?.apply {
+            cornerRadiusPx = padCornerRadius
+            baseColor = p.padBg
+            strokeColor = p.padStroke
+            opacityPercent = prefs.opacityPercent
+        }
 
         actionViews.forEachIndexed { index, view ->
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
@@ -990,6 +1012,7 @@ class TouchpadService : AccessibilityService() {
     private fun makeHandle(iconRes: Int, dark: Boolean, onTouch: (View, MotionEvent) -> Boolean): View =
         ImageView(this).apply {
             val p = palette(dark)
+            cameraDistance = 1400f * resources.displayMetrics.density
             setImageResource(iconRes)
             setColorFilter(p.buttonText)
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -1009,6 +1032,7 @@ class TouchpadService : AccessibilityService() {
 
     private fun makeActionButton(slot: Int, action: PadAction, dark: Boolean): View = ImageView(this).apply {
         val p = palette(dark)
+        cameraDistance = 1400f * resources.displayMetrics.density
         setImageResource(action.iconRes)
         setColorFilter(p.buttonText)
         scaleType = ImageView.ScaleType.FIT_CENTER
@@ -1059,7 +1083,7 @@ class TouchpadService : AccessibilityService() {
                         PressFeedback.applyButtonDown(
                             v, event,
                             maxTiltX = 8f, maxTiltY = 12f,
-                            pressScale = 0.92f, sinkDp = 2f,
+                            pressScale = 0.92f, sinkDp = 3f,
                         )
                     }
                     if (prefs.longPressButtonToCustomize) {
@@ -1087,7 +1111,7 @@ class TouchpadService : AccessibilityService() {
                         PressFeedback.applyButtonMove(
                             v, event,
                             maxTiltX = 8f, maxTiltY = 12f,
-                            pressScale = 0.92f, sinkDp = 2f,
+                            pressScale = 0.92f, sinkDp = 3f,
                         )
                     }
                     true
@@ -1128,6 +1152,13 @@ class TouchpadService : AccessibilityService() {
                 else -> false
             }
         }
+    }
+
+    private fun padWellBackground(dark: Boolean, radiusPx: Float): GradientDrawable {
+        val p = palette(dark)
+        val wellBg = darkenColor(p.padBg, 0.45f)
+        val wellStroke = darkenColor(p.padStroke, 0.35f)
+        return solidBackground(GradientDrawable.RECTANGLE, wellBg, wellStroke, radiusPx)
     }
 
     private fun padBackground(dark: Boolean, radiusPx: Float): GradientDrawable {

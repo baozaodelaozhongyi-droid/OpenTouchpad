@@ -35,7 +35,7 @@ object PressFeedback {
         onHaptic: (() -> Unit)? = null,
     ) {
         val density = view.resources.displayMetrics.density
-        view.cameraDistance = 6000f * density
+        view.cameraDistance = 1400f * density
         view.isHapticFeedbackEnabled = false
 
         view.setOnTouchListener { v, event ->
@@ -57,11 +57,11 @@ object PressFeedback {
         maxTiltX: Float = 8f,
         maxTiltY: Float = 12f,
         pressScale: Float = 0.93f,
-        sinkDp: Float = 2f,
+        sinkDp: Float = 3f,
         onHaptic: (() -> Unit)? = null,
     ) {
         val density = v.resources.displayMetrics.density
-        v.cameraDistance = 6000f * density
+        v.cameraDistance = 1400f * density
         v.isHapticFeedbackEnabled = false
         val w = v.width.toFloat().coerceAtLeast(1f)
         val h = v.height.toFloat().coerceAtLeast(1f)
@@ -89,7 +89,7 @@ object PressFeedback {
         maxTiltX: Float = 8f,
         maxTiltY: Float = 12f,
         pressScale: Float = 0.93f,
-        sinkDp: Float = 2f,
+        sinkDp: Float = 3f,
     ) {
         val density = v.resources.displayMetrics.density
         val w = v.width.toFloat().coerceAtLeast(1f)
@@ -146,16 +146,18 @@ object PressFeedback {
         localX: Float,
         localY: Float,
         density: Float,
-        maxTiltX: Float = 4.5f,
-        maxTiltY: Float = 6.0f,
-        pressScale: Float = 0.985f,
-        sinkDp: Float = 2.0f,
+        maxTiltX: Float = 8.5f,
+        maxTiltY: Float = 11.0f,
+        pressScale: Float = 0.94f,
+        sinkDp: Float = 4.5f,
     ) {
         val w = pad.width.toFloat().coerceAtLeast(1f)
         val h = pad.height.toFloat().coerceAtLeast(1f)
         val normX = ((localX - w / 2f) / (w / 2f)).coerceIn(-1f, 1f)
         val normY = ((localY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
         val sinkPx = (sinkDp * density).roundToInt().toFloat()
+
+        (pad as? TouchpadSurfaceView)?.animateTilt(normX, normY, 1f, 70, decelerate)
 
         pad.animate().cancel()
         pad.animate()
@@ -178,16 +180,18 @@ object PressFeedback {
         localX: Float,
         localY: Float,
         density: Float,
-        maxTiltX: Float = 4.5f,
-        maxTiltY: Float = 6.0f,
-        pressScale: Float = 0.985f,
-        sinkDp: Float = 2.0f,
+        maxTiltX: Float = 8.5f,
+        maxTiltY: Float = 11.0f,
+        pressScale: Float = 0.94f,
+        sinkDp: Float = 4.5f,
     ) {
         val w = pad.width.toFloat().coerceAtLeast(1f)
         val h = pad.height.toFloat().coerceAtLeast(1f)
         val normX = ((localX - w / 2f) / (w / 2f)).coerceIn(-1f, 1f)
         val normY = ((localY - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
         val sinkPx = (sinkDp * density).roundToInt().toFloat()
+
+        (pad as? TouchpadSurfaceView)?.setTilt(normX, normY, 1f)
 
         pad.animate()
             .rotationX(-normY * maxTiltX)
@@ -203,6 +207,8 @@ object PressFeedback {
      * 触控板松开：微弹回弹恢复平整。
      */
     fun applyPadRelease(pad: View) {
+        (pad as? TouchpadSurfaceView)?.animateTilt(0f, 0f, 0f, 220, overshoot)
+
         pad.animate().cancel()
         pad.animate()
             .rotationX(0f)
@@ -210,7 +216,7 @@ object PressFeedback {
             .scaleX(1f)
             .scaleY(1f)
             .translationY(0f)
-            .setDuration(200)
+            .setDuration(220)
             .setInterpolator(overshoot)
             .start()
     }
