@@ -1172,12 +1172,11 @@ class TouchpadService : AccessibilityService() {
                     return
                 }
                 val outcome = resolvePadTouchOutcome(longPressFired, dwellFired, moved, distance, dp(12).toFloat())
-                // 原地长按：圆环从当前大小接着走完注入的长按再收缩（longPressAt），不先收起再长出来；
-                // 其他情况（自定义滑动、移动太短）在终点收缩
-                if (customSwipeArmed && outcome != PadTouchOutcome.LONG_PRESS) touchRing?.release()
+                // 松手即收缩：触控板长按松手时圆环立即收缩，不再在松手后强行多停留
+                if (customSwipeArmed) touchRing?.release()
                 when (outcome) {
                     PadTouchOutcome.CUSTOM_SWIPE -> customSwipeAt(customSwipeStartX, customSwipeStartY, customSwipeEndX, customSwipeEndY)
-                    PadTouchOutcome.LONG_PRESS -> longPressAt(cursorX, cursorY)
+                    PadTouchOutcome.LONG_PRESS -> longPressAt(cursorX, cursorY, showFeedbackRing = false)
                     PadTouchOutcome.CLICK -> tapOrDouble()
                     PadTouchOutcome.DWELL_CLICK, PadTouchOutcome.MOVE_ONLY -> Unit
                 }
@@ -1824,8 +1823,8 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
-    private fun tapAt(x: Float, y: Float, ms: Long = 50) {
-        showTouchRing(x, y, ms)
+    private fun tapAt(x: Float, y: Float, ms: Long = 50, showFeedbackRing: Boolean = true) {
+        if (showFeedbackRing) showTouchRing(x, y, ms)
         val overPanel = isPointInsidePanel(x, y)
         val path = Path().apply { moveTo(x, y) }
         dispatch(
@@ -1838,7 +1837,8 @@ class TouchpadService : AccessibilityService() {
     }
 
     /** 光标处长按：按住时长可在设置里调（300–3000 ms）。 */
-    private fun longPressAt(x: Float, y: Float) = tapAt(x, y, prefs.cursorHoldMs.toLong())
+    private fun longPressAt(x: Float, y: Float, showFeedbackRing: Boolean = true) =
+        tapAt(x, y, prefs.cursorHoldMs.toLong(), showFeedbackRing)
 
     private fun customSwipeAt(startX: Float, startY: Float, endX: Float, endY: Float, ms: Long = 320) {
         val swipe = customSwipeFrom(startX, startY, endX, endY, dp(12).toFloat()) ?: return

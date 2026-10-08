@@ -133,11 +133,15 @@ class TouchRingView(context: Context) : View(context) {
         }
     }
 
-    /** [ms] < 0：一直保持到 [release]。 */
+    /** [ms] <= 0：松手即收缩，立即向内收缩淡出；[ms] < 0：一直保持到 [release]。 */
     private fun hold(ms: Long) {
         phase = Phase.HOLDING
         animator = null
-        if (ms >= 0L) postDelayed(autoCollapse, ms)
+        if (ms == 0L) {
+            collapse()
+        } else if (ms > 0L) {
+            postDelayed(autoCollapse, ms)
+        }
     }
 
     private fun collapse() {
@@ -200,7 +204,7 @@ class TouchRingView(context: Context) : View(context) {
 
     companion object {
         const val EXPAND_MS = 280L
-        const val TAP_HOLD_MS = 60L
+        const val TAP_HOLD_MS = 0L
         const val COLLAPSE_MS = 180L
         private const val MIN_COLLAPSE_MS = 80L
         private const val FILL_ALPHA = 0.18f
