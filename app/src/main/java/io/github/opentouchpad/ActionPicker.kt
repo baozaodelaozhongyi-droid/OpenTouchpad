@@ -92,7 +92,6 @@ internal object ActionPicker {
             .create()
 
         dialog.setOnShowListener {
-            TouchpadService.instance?.setOverlaySuppressed(true)
             dialog.getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(accent)
             dialog.listView?.apply {
                 clipToPadding = false
@@ -104,9 +103,6 @@ internal object ActionPicker {
                     }
                 }
             }
-        }
-        dialog.setOnDismissListener {
-            TouchpadService.instance?.setOverlaySuppressed(false)
         }
         return dialog
     }

@@ -402,29 +402,6 @@ class TouchpadService : AccessibilityService() {
         root.invalidate()
     }
 
-    var isOverlaySuppressed = false
-        private set
-
-    /** 弹窗期间暂时隐去悬浮球与触控板浮层，避免挡住选项和文字。 */
-    fun setOverlaySuppressed(suppressed: Boolean) {
-        if (isOverlaySuppressed == suppressed) return
-        isOverlaySuppressed = suppressed
-        val p = panel
-        val lp = panelParams
-        if (p != null && lp != null) {
-            if (suppressed) {
-                p.visibility = View.GONE
-                lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            } else {
-                p.visibility = View.VISIBLE
-                lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-            }
-            runCatching { wm.updateViewLayout(p, lp) }
-        }
-        cursorView?.visibility = if (suppressed || prefs.minimized) View.GONE else View.VISIBLE
-        touchRing?.visibility = if (suppressed) View.GONE else View.VISIBLE
-    }
-
     /** 实时平滑更新悬浮球尺寸、透明度与颜色（零闪烁）。 */
     fun updateBallAppearance() {
         prefs = Prefs(this)
@@ -604,15 +581,6 @@ class TouchpadService : AccessibilityService() {
         enteringWithTransition = false
         raiseTouchRing()
         if (outgoing != null) playTransition(outgoing)
-        if (isOverlaySuppressed) {
-            panel?.visibility = View.GONE
-            panelParams?.let { lp ->
-                lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
-            }
-            cursorView?.visibility = View.GONE
-            touchRing?.visibility = View.GONE
-        }
     }
 
     // ───────────────────────── 展开／收起过渡 ─────────────────────────

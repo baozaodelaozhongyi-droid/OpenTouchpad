@@ -1070,12 +1070,8 @@ class MainActivity : Activity() {
         })
 
         dialog.setOnShowListener {
-            TouchpadService.instance?.setOverlaySuppressed(true)
             dialog.getButton(DialogInterface.BUTTON_POSITIVE)?.setTextColor(accentColor)
             dialog.getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(accentColor)
-        }
-        dialog.setOnDismissListener {
-            TouchpadService.instance?.setOverlaySuppressed(false)
         }
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
@@ -1310,11 +1306,7 @@ class MainActivity : Activity() {
             .setPositiveButton(android.R.string.ok, null)
             .create()
         dialog.setOnShowListener {
-            TouchpadService.instance?.setOverlaySuppressed(true)
             dialog.getButton(DialogInterface.BUTTON_POSITIVE)?.setTextColor(accentColor)
-        }
-        dialog.setOnDismissListener {
-            TouchpadService.instance?.setOverlaySuppressed(false)
         }
         dialog.show()
     }
