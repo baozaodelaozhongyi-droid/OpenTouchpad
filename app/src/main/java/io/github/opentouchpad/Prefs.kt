@@ -79,6 +79,11 @@ class Prefs(ctx: Context) {
         }
         set(v) = sp.edit().putString("themeMode", v.id).apply()
 
+    /** 设置界面强调色（按钮与滑动条）；0 表示跟随主题默认色。 */
+    var uiAccentColor: Int
+        get() = sp.getInt("uiAccentColor", 0)
+        set(v) = sp.edit().putInt("uiAccentColor", v).apply()
+
     // ── 光标 ──
     var sensitivity: Float
         get() = sp.getFloat("sensitivity", 1.4f)

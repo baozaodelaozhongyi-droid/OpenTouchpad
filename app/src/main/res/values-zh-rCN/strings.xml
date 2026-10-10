@@ -172,4 +172,5 @@
     <string name="custom_color_title">自定义十六进制颜色</string>
     <string name="custom_color_hint">请输入十六进制颜色代码（例如 #2A2A28）</string>
     <string name="custom_color_invalid">请输入有效的十六进制颜色代码（格式：#RRGGBB）</string>
+    <string name="set_ui_accent_color">按钮与滑动条颜色</string>
 </resources>

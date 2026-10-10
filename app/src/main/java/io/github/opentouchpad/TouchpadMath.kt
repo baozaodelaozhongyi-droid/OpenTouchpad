@@ -556,6 +556,34 @@ internal fun resolveTouchRingColor(customColor: Int, isDark: Boolean): Int {
 }
 
 /**
+ * 解析设置界面强调色（按钮与滑动条）：0 表示跟随主题默认色（深色模式 0xFFD97757 珊瑚陶土，浅色模式 0xFFC96442 暖陶土）。
+ */
+internal fun resolveUiAccentColor(customColor: Int, isDark: Boolean): Int {
+    return if (customColor != 0) {
+        if ((customColor ushr 24) == 0) (customColor or 0xFF000000.toInt()) else customColor
+    } else {
+        if (isDark) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+    }
+}
+
+/**
+ * 根据强调色解析前景文字/图标高对比度颜色（象牙白或暖黑）。
+ */
+internal fun resolveOnAccentColor(accentColor: Int): Int {
+    return if (colorLuminance(accentColor) > 0.55f) 0xFF141413.toInt() else 0xFFFAF9F5.toInt()
+}
+
+/**
+ * 根据强调色解析半透明柔和色与柔和强调描边色（用于开关轨道、选框高亮背景等）。
+ */
+internal fun resolveUiAccentSoftColors(accentColor: Int, isDark: Boolean): Pair<Int, Int> {
+    val rgb = accentColor and 0x00FFFFFF
+    val softAlpha = if (isDark) 0x33 else 0x1F
+    val strongAlpha = if (isDark) 0x80 else 0x66
+    return Pair((softAlpha shl 24) or rgb, (strongAlpha shl 24) or rgb)
+}
+
+/**
  * 解析悬浮球静止与交互状态下的不透明度，始终保持用户设定的透明度（20%–100%），
  * 杜绝在触摸、长按或拖拽时突然跳变至 100% 满透明度导致画面刺眼变亮。
  */

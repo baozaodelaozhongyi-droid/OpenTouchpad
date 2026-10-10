@@ -172,4 +172,5 @@
     <string name="custom_color_title">Custom Hex Color</string>
     <string name="custom_color_hint">Enter hex color code (e.g. #2A2A28)</string>
     <string name="custom_color_invalid">Please enter a valid hex color code (format: #RRGGBB)</string>
+    <string name="set_ui_accent_color">Buttons &amp; Sliders Color</string>
 </resources>

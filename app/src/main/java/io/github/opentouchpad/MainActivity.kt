@@ -82,10 +82,10 @@ class MainActivity : Activity() {
     private val secondaryTextColor get() = if (darkUi) 0xFFB0AEA5.toInt() else 0xFF5E5D59.toInt()
     private val tertiaryTextColor get() = if (darkUi) 0xFF87867F.toInt() else 0xFF87867F.toInt()
     private val borderColor get() = if (darkUi) 0xFF3D3D3A.toInt() else 0xFFE8E6DC.toInt()
-    private val accentColor get() = if (darkUi) 0xFFD97757.toInt() else 0xFFC96442.toInt()
-    private val onAccentColor get() = 0xFFFAF9F5.toInt()
-    private val accentSoftColor get() = if (darkUi) 0x33D97757 else 0x1FC96442
-    private val accentSoftStrongColor get() = if (darkUi) 0x80D97757.toInt() else 0x66C96442
+    private val accentColor get() = resolveUiAccentColor(prefs.uiAccentColor, darkUi)
+    private val onAccentColor get() = resolveOnAccentColor(accentColor)
+    private val accentSoftColor get() = resolveUiAccentSoftColors(accentColor, darkUi).first
+    private val accentSoftStrongColor get() = resolveUiAccentSoftColors(accentColor, darkUi).second
     private val rippleColor get() = if (darkUi) 0x1FFAF9F5 else 0x14141413
     private val dangerColor get() = if (darkUi) 0xFFE5826F.toInt() else 0xFFB53333.toInt()
 
@@ -227,7 +227,17 @@ class MainActivity : Activity() {
 
         // ── 外观 ──
         col.addView(sectionHeader(getString(R.string.sec_appearance)))
-        col.addView(card(themeModeRow()))
+        col.addView(card(
+            themeModeRow(),
+            colorRow(
+                getString(R.string.set_ui_accent_color),
+                UI_ACCENT_COLORS,
+                { prefs.uiAccentColor },
+                { prefs.uiAccentColor = it },
+                onServiceUpdate = null,
+                allowCustomHex = true,
+            ),
+        ))
 
         // ── 触控板 ──
         val maxPanelWidth = pixelsToDp(resources.displayMetrics.widthPixels, resources.displayMetrics.density)
@@ -996,7 +1006,7 @@ class MainActivity : Activity() {
         val initialHex = if (currentColor != 0) {
             String.format(java.util.Locale.US, "#%06X", currentColor and 0x00FFFFFF)
         } else {
-            "#2A2A28"
+            String.format(java.util.Locale.US, "#%06X", accentColor and 0x00FFFFFF)
         }
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1642,6 +1652,13 @@ class MainActivity : Activity() {
             0xFFE8E6DC.toInt(), 0xFFFAF9F5.toInt(), 0xFFD97757.toInt(), 0xFFB53333.toInt(),
             0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
             0xFF1E293B.toInt(), 0xFF1C3829.toInt(),
+        )
+        /** 0 = 跟随主题默认色（深色模式珊瑚陶土，浅色模式暖陶土）。 */
+        val UI_ACCENT_COLORS = listOf(
+            0, 0xFFD97757.toInt(), 0xFFC96442.toInt(), 0xFFD4A27F.toInt(), 0xFFD97706.toInt(),
+            0xFF7A9A5B.toInt(), 0xFF10B981.toInt(), 0xFF6A9BCC.toInt(), 0xFF3B82F6.toInt(),
+            0xFF8E7CC3.toInt(), 0xFFE5826F.toInt(), 0xFFB53333.toInt(), 0xFF30302E.toInt(),
+            0xFF141413.toInt(), 0xFFFAF9F5.toInt(),
         )
     }
 }

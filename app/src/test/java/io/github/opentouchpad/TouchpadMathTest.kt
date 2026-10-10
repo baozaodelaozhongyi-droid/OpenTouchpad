@@ -876,5 +876,35 @@ class TouchpadMathTest {
         assertEquals(0f, end.blurRadius, 0.0001f)
         assertEquals(0f, end.blurAlpha, 0.0001f)
     }
+
+    @Test
+    fun uiAccentColorResolvesDefaultTerracottaWhenZero() {
+        assertEquals(0xFFD97757.toInt(), resolveUiAccentColor(0, isDark = true))
+        assertEquals(0xFFC96442.toInt(), resolveUiAccentColor(0, isDark = false))
+    }
+
+    @Test
+    fun uiAccentColorResolvesCustomColorWhenNonZero() {
+        assertEquals(0xFF3B82F6.toInt(), resolveUiAccentColor(0xFF3B82F6.toInt(), isDark = true))
+        assertEquals(0xFF3B82F6.toInt(), resolveUiAccentColor(0x3B82F6, isDark = false))
+    }
+
+    @Test
+    fun onAccentColorAdaptsBasedOnLuminance() {
+        assertEquals(0xFF141413.toInt(), resolveOnAccentColor(0xFFFFFFFF.toInt())) // white needs dark text
+        assertEquals(0xFFFAF9F5.toInt(), resolveOnAccentColor(0xFF000000.toInt())) // black needs light text
+        assertEquals(0xFFFAF9F5.toInt(), resolveOnAccentColor(0xFFD97757.toInt())) // terracotta needs light text
+    }
+
+    @Test
+    fun uiAccentSoftColorsApplyExpectedAlphaTints() {
+        val (darkSoft, darkStrong) = resolveUiAccentSoftColors(0xFFD97757.toInt(), isDark = true)
+        assertEquals(0x33D97757, darkSoft)
+        assertEquals(0x80D97757.toInt(), darkStrong)
+
+        val (lightSoft, lightStrong) = resolveUiAccentSoftColors(0xFFC96442.toInt(), isDark = false)
+        assertEquals(0x1FC96442, lightSoft)
+        assertEquals(0x66C96442, lightStrong)
+    }
 }
 
