@@ -4,19 +4,17 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
-import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.view.View
 import android.view.animation.DecelerateInterpolator
-import kotlin.math.roundToInt
 
 /**
  * 点击 / 长按反馈圆环，整个圆环用 Canvas 画：
  * - 视图不设背景，窗口用半透明格式，空闲时什么都不画（完全透明），所以不会出现方形图块；
  * - 半径永远不超过视图短边的一半，描边画在半径内侧，不会被窗口边界裁切；
  * - 窗口由服务常驻，只移动位置，不随每次点击 add/remove；
- * - 展开与缩放过程中叠加一层动态模糊（径向运动拖影与高斯羽化层），静止时保持清晰凝聚。
+ * - 展开与缩放过程中采用硬件加速多重采样径向动态模糊（Motion Blur），无额外图层暗斑与方形底衬，静止时保持清晰凝聚。
  *
  * 动画：
  * - [tap]：从内向外展开 [EXPAND_MS] → 停留 [TAP_HOLD_MS] → 从外向内收缩并淡出 [COLLAPSE_MS]
@@ -26,11 +24,8 @@ import kotlin.math.roundToInt
 class TouchRingView(context: Context) : View(context) {
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-
-    // 动态模糊专用画笔：环体动态模糊、径向拖尾与填充光晕
-    private val blurRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val blurTrailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val blurFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    // 动态模糊采样画笔（仅描边模式，无任何多余填充与背景）
+    private val motionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
 
     var accent: Int = 0xFFC96442.toInt()
         set(value) { field = value; invalidate() }
@@ -51,39 +46,9 @@ class TouchRingView(context: Context) : View(context) {
     private var token = 0
     private val autoCollapse = Runnable { collapse() }
 
-    // BlurMaskFilter 缓存，按 0.5px 量化对齐，避免每帧高频分配
-    private var lastRingBlurRadius = -1f
-    private var cachedRingBlurFilter: BlurMaskFilter? = null
-    private var lastTrailBlurRadius = -1f
-    private var cachedTrailBlurFilter: BlurMaskFilter? = null
-
     init {
         background = null
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-        // 软件图层确保 BlurMaskFilter 在全平台与所有 Android 版本稳定高保真渲染
-        setLayerType(LAYER_TYPE_SOFTWARE, null)
-    }
-
-    private fun getRingBlurFilter(radiusPx: Float): BlurMaskFilter? {
-        if (radiusPx < 0.5f) return null
-        val q = (radiusPx * 2f).roundToInt() / 2f
-        if (q < 0.5f) return null
-        if (q != lastRingBlurRadius || cachedRingBlurFilter == null) {
-            lastRingBlurRadius = q
-            cachedRingBlurFilter = BlurMaskFilter(q, BlurMaskFilter.Blur.NORMAL)
-        }
-        return cachedRingBlurFilter
-    }
-
-    private fun getTrailBlurFilter(radiusPx: Float): BlurMaskFilter? {
-        if (radiusPx < 0.5f) return null
-        val q = (radiusPx * 2f).roundToInt() / 2f
-        if (q < 0.5f) return null
-        if (q != lastTrailBlurRadius || cachedTrailBlurFilter == null) {
-            lastTrailBlurRadius = q
-            cachedTrailBlurFilter = BlurMaskFilter(q, BlurMaskFilter.Blur.NORMAL)
-        }
-        return cachedTrailBlurFilter
     }
 
     /** 点击：展开 → 停留 → 收缩淡出。 */
@@ -232,7 +197,7 @@ class TouchRingView(context: Context) : View(context) {
         val cx = width / 2f
         val cy = height / 2f
 
-        // ── 动态模糊层 (Motion Blur Layer) ──
+        // ── 动态模糊计算 (Motion Blur Calculation) ──
         val blurParams = calculateTouchRingMotionBlur(
             isExpanding = expanding,
             isCollapsing = collapsing,
@@ -244,42 +209,31 @@ class TouchRingView(context: Context) : View(context) {
             density = resources.displayMetrics.density,
         )
 
-        if (blurParams.blurAlpha > 0.01f && blurParams.blurRadius >= 0.5f) {
-            val ringFilter = getRingBlurFilter(blurParams.blurRadius)
-            val trailFilter = getTrailBlurFilter((blurParams.blurRadius * 0.75f).coerceAtLeast(0.5f))
-
-            // 1. 径向运动拖影带：展开时向内落后，收缩时向外落后
-            val trailR = if (blurParams.isExpanding) {
-                (r - blurParams.trailLag).coerceAtLeast(0f)
-            } else {
-                minOf(r + blurParams.trailLag, limit)
-            }
-            if (trailR > 0f && trailFilter != null) {
-                blurTrailPaint.strokeWidth = blurParams.blurStrokeWidth * 0.85f
-                blurTrailPaint.color = withAlpha(accent, blurParams.blurAlpha * 0.60f)
-                blurTrailPaint.maskFilter = trailFilter
-                canvas.drawCircle(cx, cy, trailR, blurTrailPaint)
-            }
-
-            // 2. 动态高斯羽化模糊主环：随动速扩散
-            if (ringFilter != null) {
-                blurRingPaint.strokeWidth = blurParams.blurStrokeWidth
-                blurRingPaint.color = withAlpha(accent, blurParams.blurAlpha)
-                blurRingPaint.maskFilter = ringFilter
-                canvas.drawCircle(cx, cy, (r - sw / 2f).coerceAtLeast(0f), blurRingPaint)
-            }
-
-            // 3. 内部填充动态羽化扩散
-            if (blurParams.isExpanding && r > blurParams.blurRadius) {
-                blurFillPaint.color = withAlpha(accent, blurParams.blurAlpha * FILL_ALPHA * 0.75f)
-                blurFillPaint.maskFilter = ringFilter
-                canvas.drawCircle(cx, cy, r, blurFillPaint)
+        // 仅在展开与缩放有动速时绘制径向运动拖影微步（纯描边微差采样，绝不画额外填充圆盘，无任何多余图层）
+        if (blurParams.speed > 0.03f && blurParams.blurAlpha > 0.02f) {
+            val lag = blurParams.trailLag
+            // 沿径向运动轨迹做 3 级高斯微步积分采样，形成纯净平滑的运动模糊拖影
+            for (step in 1..3) {
+                val frac = step / 4f // 0.25f, 0.50f, 0.75f
+                val sampleR = if (blurParams.isExpanding) {
+                    (r - lag * (1f - frac)).coerceAtLeast(0f)
+                } else {
+                    minOf(r + lag * (1f - frac), limit)
+                }
+                if (sampleR > 0f) {
+                    val sampleSw = sw * (0.85f + 0.15f * frac)
+                    val sampleAlpha = blurParams.blurAlpha * (0.15f + 0.25f * frac)
+                    motionPaint.strokeWidth = sampleSw
+                    motionPaint.color = withAlpha(accent, sampleAlpha)
+                    canvas.drawCircle(cx, cy, (sampleR - sampleSw / 2f).coerceAtLeast(0f), motionPaint)
+                }
             }
         }
 
         // ── 清晰主体层 (Sharp Core Ring & Fill) ──
+        // 动速较高时主体环稍加微透光晕，静止或低速时 100% 锐利凝聚
         val coreAlpha = if (blurParams.speed > 0f) {
-            alpha * (1f - 0.18f * blurParams.speed)
+            alpha * (1f - 0.15f * blurParams.speed)
         } else {
             alpha
         }
