@@ -1,159 +1,158 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OpenTouchpad</string>
-    <string name="app_description">Touchpad, cursor and large buttons for people who cannot reach the whole screen. Offline, no ads, no analytics.</string>
-    <string name="service_label">OpenTouchpad touchpad</string>
-    <string name="service_description">Shows a touchpad, an on-screen cursor and large buttons so you can control the whole screen with small movements. No internet, no ads, no tracking.</string>
+    <string name="app_description">Accessibility tool designed for one-handed operation and reachability: on-screen touchpad, precision cursor, and customizable shortcut buttons. Offline, ad-free, and no tracking.</string>
+    <string name="service_label">OpenTouchpad Accessibility Service</string>
+    <string name="service_description">Provides an on-screen touchpad and cursor overlay to control the entire display with minimal finger movements. Fully offline with zero network requests.</string>
 
     <!-- 状态 / 引导 -->
-    <string name="status_on">Service running</string>
-    <string name="status_off">Service off</string>
-    <string name="open_a11y_settings">Open accessibility settings</string>
-    <string name="cannot_open_settings">Could not open accessibility settings</string>
-    <string name="steps_title">Setup</string>
-    <string name="steps_body">1. Enable the service in Settings → Accessibility → OpenTouchpad.\n2. If Android blocks it ("restricted setting"), open App info → ⋮ → Allow restricted settings, then try again.\n3. Come back here and adjust the size, speed and buttons to fit the user.</string>
+    <string name="status_on">Accessibility service is running</string>
+    <string name="status_off">Accessibility service is inactive</string>
+    <string name="open_a11y_settings">Open Accessibility Settings</string>
+    <string name="cannot_open_settings">Unable to open system settings automatically. Please navigate to Accessibility manually.</string>
+    <string name="steps_title">Accessibility Setup Guide</string>
+    <string name="steps_body">1. Navigate to System Settings → Accessibility → Installed apps, then enable OpenTouchpad.\n2. If restricted by the system ("Restricted setting"), go to App info → ⋮ (top-right) → Allow restricted settings, then enable the service.\n3. Return to this app to customize panel dimensions, cursor sensitivity, and button mappings.</string>
 
     <!-- 面板把手 -->
-    <string name="handle_move">⣿ move</string>
-    <string name="handle_resize">⤡ resize</string>
-    <string name="handle_minimize">⌄ hide</string>
-    <string name="cursor_content_description">Arrow cursor</string>
-    <string name="control_surface_content_description">OpenTouchpad controls</string>
-    <string name="touchpad_content_description">Touchpad area. Hold until the long-press vibration, move, then release for a custom swipe.</string>
-    <string name="custom_swipe_hint">Custom swipe: hold still until long press, move the cursor, then release.</string>
-    <string name="floating_ball_content_description">Expand OpenTouchpad</string>
-    <string name="pick_action">Choose an action</string>
+    <string name="handle_move">⣿ Move</string>
+    <string name="handle_resize">⤡ Resize</string>
+    <string name="handle_minimize">⌄ Collapse</string>
+    <string name="cursor_content_description">Screen pointer cursor</string>
+    <string name="control_surface_content_description">OpenTouchpad control panel</string>
+    <string name="touchpad_content_description">Touchpad area. Slide to move cursor; press and hold until haptic feedback, then drag and release to execute a custom swipe gesture.</string>
+    <string name="custom_swipe_hint">Custom swipe gesture: Hold on the touchpad until haptic feedback triggers, move to the destination point, and release to perform the swipe.</string>
+    <string name="floating_ball_content_description">Expand touchpad panel</string>
+    <string name="pick_action">Select Action</string>
 
     <!-- 动作名 -->
-    <string name="act_click">Left click</string>
-    <string name="act_long_press">Long press at cursor</string>
-    <string name="act_drag_lock">Drag lock (tap start / tap end)</string>
-    <string name="act_scroll_up">Scroll up</string>
-    <string name="act_scroll_down">Scroll down</string>
-    <string name="act_scroll_left">Scroll left</string>
-    <string name="act_scroll_right">Scroll right</string>
-    <string name="act_swipe_up">Long swipe up</string>
-    <string name="act_swipe_down">Long swipe down</string>
-    <string name="act_swipe_left">Long swipe left</string>
-    <string name="act_swipe_right">Long swipe right</string>
-    <string name="act_notifications">Notification panel</string>
-    <string name="act_power">Power menu</string>
-    <string name="act_volume_up">Volume up</string>
-    <string name="act_volume_down">Volume down</string>
+    <string name="act_click">Tap</string>
+    <string name="act_long_press">Long Press</string>
+    <string name="act_drag_lock">Drag Lock</string>
+    <string name="act_scroll_up">Scroll Up</string>
+    <string name="act_scroll_down">Scroll Down</string>
+    <string name="act_scroll_left">Scroll Left</string>
+    <string name="act_scroll_right">Scroll Right</string>
+    <string name="act_swipe_up">Swipe Up</string>
+    <string name="act_swipe_down">Swipe Down</string>
+    <string name="act_swipe_left">Swipe Left</string>
+    <string name="act_swipe_right">Swipe Right</string>
+    <string name="act_notifications">Open Notifications</string>
+    <string name="act_power">Power Menu</string>
+    <string name="act_volume_up">Volume Up</string>
+    <string name="act_volume_down">Volume Down</string>
     <string name="act_screenshot">Screenshot</string>
-    <string name="act_keyboard">Keyboard (focus input field)</string>
+    <string name="act_keyboard">Focus Input Field</string>
     <string name="act_back">Back</string>
-    <string name="act_home">Home</string>
-    <string name="act_recents">Recent apps</string>
-    <string name="act_settings">OpenTouchpad settings</string>
-    <string name="act_minimize">Toggle touchpad</string>
-    <string name="act_move_ball">Drag floating ball</string>
-    <string name="act_none">Empty slot</string>
-    <string name="act_none_gesture">No action</string>
-
+    <string name="act_home">Home Screen</string>
+    <string name="act_recents">Recent Apps</string>
+    <string name="act_settings">Open App Settings</string>
+    <string name="act_minimize">Expand / Collapse Panel</string>
+    <string name="act_move_ball">Drag Floating Ball</string>
+    <string name="act_none">Unassigned</string>
+    <string name="act_none_gesture">No Action</string>
 
     <!-- 设置项 -->
-    <string name="sec_appearance">Appearance</string>
-    <string name="sec_pad">Touchpad</string>
-    <string name="sec_ball">Floating ball</string>
-    <string name="sec_cursor">Cursor</string>
-    <string name="sec_feel">Feel</string>
-    <string name="sec_buttons">Buttons</string>
-    <string name="sec_about">About</string>
+    <string name="sec_appearance">Appearance &amp; Theme</string>
+    <string name="sec_pad">Touchpad Panel</string>
+    <string name="sec_ball">Floating Ball</string>
+    <string name="sec_cursor">Screen Cursor</string>
+    <string name="sec_feel">Handling &amp; Feedback</string>
+    <string name="sec_buttons">Control Buttons</string>
+    <string name="sec_about">About &amp; Reset</string>
 
-    <string name="theme_system">Follow system</string>
-    <string name="theme_light">White mode</string>
-    <string name="theme_dark">Black mode</string>
+    <string name="theme_system">Follow System</string>
+    <string name="theme_light">Light Mode</string>
+    <string name="theme_dark">Dark Mode</string>
 
-    <string name="set_pad_height">Extra touchpad height</string>
-    <string name="set_pad_width">Touchpad control area width</string>
-    <string name="set_opacity">Touchpad opacity</string>
-    <string name="set_ball_size">Floating ball size</string>
-    <string name="set_ball_opacity">Floating ball opacity</string>
-    <string name="set_cursor_size">Cursor size</string>
-    <string name="set_cursor_color">Cursor colour</string>
-    <string name="set_sensitivity">Cursor speed</string>
-    <string name="set_long_press">Touchpad long-press threshold</string>
-    <string name="set_scroll_distance">Scroll distance</string>
-    <string name="set_swipe_distance">Long swipe distance</string>
-    <string name="set_button_radius">Button corner radius</string>
-    <string name="set_button_spacing">Space between buttons</string>
+    <string name="set_pad_height">Touchpad Extra Height</string>
+    <string name="set_pad_width">Total Panel Width</string>
+    <string name="set_opacity">Panel Opacity</string>
+    <string name="set_ball_size">Floating Ball Diameter</string>
+    <string name="set_ball_opacity">Floating Ball Opacity</string>
+    <string name="set_cursor_size">Cursor Size</string>
+    <string name="set_cursor_color">Cursor Color</string>
+    <string name="set_sensitivity">Cursor Sensitivity</string>
+    <string name="set_long_press">Touchpad Long-Press Threshold</string>
+    <string name="set_scroll_distance">Scroll Step Distance</string>
+    <string name="set_swipe_distance">Swipe Gesture Distance</string>
+    <string name="set_button_radius">Button Corner Radius</string>
+    <string name="set_button_spacing">Button Spacing</string>
 
-    <string name="switch_haptics">Vibration feedback</string>
-    <string name="switch_press_feedback">Press sink feedback</string>
-    <string name="switch_autohide_landscape">Hide touchpad in landscape</string>
-    <string name="switch_minimize_keyboard">Minimize when keyboard opens</string>
-    <string name="btn_reset_position">Reset touchpad position</string>
-    <string name="btn_reset_all">Reset all settings</string>
-    <string name="btn_setup">Setup steps</string>
-    <string name="btn_github">Source code on GitHub</string>
-    <string name="btn_edit_buttons">Tap a button to change its action</string>
+    <string name="switch_haptics">Haptic Vibration Feedback</string>
+    <string name="switch_press_feedback">3D Press Sink &amp; Tilt Animation</string>
+    <string name="switch_autohide_landscape">Auto-Hide in Landscape Mode</string>
+    <string name="switch_minimize_keyboard">Auto-Minimize when Keyboard Opens</string>
+    <string name="btn_reset_position">Reset Panel &amp; Ball Positions</string>
+    <string name="btn_reset_all">Reset All Settings to Defaults</string>
+    <string name="btn_setup">Accessibility Setup &amp; Troubleshooting</string>
+    <string name="btn_github">Source Code Repository (GitHub)</string>
+    <string name="btn_edit_buttons">Tap a slot below to configure action (or long-press buttons on the floating panel)</string>
 
-    <string name="screenshot_needs_p">Screenshot needs Android 9 or newer</string>
-    <string name="no_input_field">No text field focused yet — tap a text box first</string>
-    <string name="label_off">off</string>
-    <string name="reset_done">Settings reset</string>
+    <string name="screenshot_needs_p">Screenshot capture requires Android 9 (API 28) or newer</string>
+    <string name="no_input_field">No input field currently focused. Tap a text field with the cursor first.</string>
+    <string name="label_off">Disabled</string>
+    <string name="reset_done">All settings restored to defaults</string>
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
-    <string name="switch_hide_ball">Hide floating ball</string>
-    <string name="hide_ball_hint">When on, collapsing leaves no floating ball. Turn on "Show touchpad" here to expand again.</string>
-    <string name="sec_ball_gestures">Floating ball gestures</string>
-    <string name="switch_ball_gestures">Enable gesture actions</string>
-    <string name="switch_ball_gestures_hint">When off, tap the ball to expand the touchpad directly, and drag to move the ball.</string>
-    <string name="gesture_single_tap">Single tap</string>
-    <string name="gesture_double_tap">Double tap</string>
-    <string name="gesture_long_press">Long press</string>
-    <string name="gesture_swipe_up">Swipe up</string>
-    <string name="gesture_swipe_down">Swipe down</string>
-    <string name="gesture_swipe_left">Swipe left</string>
-    <string name="gesture_swipe_right">Swipe right</string>
-    <string name="btn_reset_ball_gestures">Reset gestures to default</string>
-    <string name="set_cursor_opacity">Cursor opacity</string>
-    <string name="set_ball_color">Floating ball colour</string>
-    <string name="color_default">Theme default</string>
+    <string name="switch_hide_ball">Hide Floating Ball when Collapsed</string>
+    <string name="hide_ball_hint">When enabled, collapsing the touchpad hides the floating ball icon. Toggle "Show Touchpad Panel" here to re-expand.</string>
+    <string name="sec_ball_gestures">Floating Ball Gestures</string>
+    <string name="switch_ball_gestures">Enable Floating Ball Gestures</string>
+    <string name="switch_ball_gestures_hint">When disabled, tapping the ball expands the panel immediately without double-tap delay, and dragging repositions the ball.</string>
+    <string name="gesture_single_tap">Single Tap</string>
+    <string name="gesture_double_tap">Double Tap</string>
+    <string name="gesture_long_press">Long Press</string>
+    <string name="gesture_swipe_up">Swipe Up</string>
+    <string name="gesture_swipe_down">Swipe Down</string>
+    <string name="gesture_swipe_left">Swipe Left</string>
+    <string name="gesture_swipe_right">Swipe Right</string>
+    <string name="btn_reset_ball_gestures">Reset Ball Gestures to Defaults</string>
+    <string name="set_cursor_opacity">Cursor Opacity</string>
+    <string name="set_ball_color">Floating Ball Color</string>
+    <string name="color_default">Follow Theme</string>
     <string-array name="slot_positions">
-        <item>Top 1</item>
-        <item>Top 2</item>
-        <item>Top 3</item>
-        <item>Top 4</item>
-        <item>Bottom 1</item>
-        <item>Bottom 2</item>
-        <item>Bottom 3</item>
-        <item>Bottom 4</item>
-        <item>Left 1</item>
-        <item>Left 2</item>
-        <item>Right 1</item>
-        <item>Right 2</item>
-        <item>Top-left corner</item>
-        <item>Top-right corner</item>
-        <item>Bottom-left corner</item>
-        <item>Bottom-right corner</item>
-        <item>Left column, upper (default: move)</item>
-        <item>Right column, lower (default: resize)</item>
+        <item>Top Button 1</item>
+        <item>Top Button 2</item>
+        <item>Top Button 3</item>
+        <item>Top Button 4</item>
+        <item>Bottom Button 1</item>
+        <item>Bottom Button 2</item>
+        <item>Bottom Button 3</item>
+        <item>Bottom Button 4</item>
+        <item>Left Button 1</item>
+        <item>Left Button 2</item>
+        <item>Right Button 1</item>
+        <item>Right Button 2</item>
+        <item>Top-Left Corner Button</item>
+        <item>Top-Right Corner Button</item>
+        <item>Bottom-Left Corner Button</item>
+        <item>Bottom-Right Corner Button</item>
+        <item>Left Upper (Default: Move Handle)</item>
+        <item>Right Lower (Default: Resize Handle)</item>
     </string-array>
-    <string name="pad_height_hint">Width sets the button size. At 0 extra height the panel is a compact grid with equal gaps everywhere; more height only makes the touchpad taller.</string>
-    <string name="set_cursor_hold">Long press at cursor: hold time</string>
-    <string name="cursor_hold_hint">How long "Long press at cursor" holds. Drag lock also holds this long at the start point before moving. Up to 3 s.</string>
-    <string name="drag_lock_hint">Drag lock: tap once to mark the start; a terracotta ring appears at the cursor and follows it. Move to the end point and tap again to drag; the ring shrinks there. Tap again without moving to cancel.</string>
-    <string name="switch_show_panel">Show touchpad</string>
-    <string name="switch_show_panel_hint">Off collapses it to the floating ball; tap the ball to expand again.</string>
-    <string name="act_move_panel">Move touchpad</string>
-    <string name="act_resize_panel">Resize touchpad</string>
-    <string name="need_move_key">This is the last move key and can\'t be changed. Set another position to “Move touchpad” first.</string>
-    <string name="set_pad_dead_zone">Edge trigger width</string>
-    <string name="pad_dead_zone_hint">A touch that starts in this band along the touchpad edge (including outside the rounded corners) is ignored entirely, so pressing a nearby button doesn\'t hit the pad. 0 = off.</string>
-    <string name="switch_long_press_customize">Long press button to customize action</string>
-    <string name="switch_long_press_customize_hint">When enabled, long-pressing panel buttons opens the action picker to reassign their actions.</string>
-    <string name="set_button_layout_mode">Button layout mode</string>
-    <string name="btn_mode_4">4 Keys</string>
-    <string name="btn_mode_8">8 Keys</string>
-    <string name="btn_mode_12">12 Keys</string>
-    <string name="btn_mode_16">16 Keys</string>
-    <string name="btn_mode_18">18 Keys</string>
-    <string name="btn_mode_4_desc">4 Keys: 1 bubble / capsule button on each of the 4 edges</string>
-    <string name="btn_mode_8_desc">8 Keys: 2 smaller bubble / capsule buttons on each edge</string>
-    <string name="btn_mode_12_desc">12 Keys: 3 compact bubble / capsule buttons on each edge</string>
-    <string name="btn_mode_16_desc">16 Keys: 4 buttons on each edge, compressed to circular shape</string>
-    <string name="btn_mode_18_desc">18 Keys: Classic ring layout with corners, move and resize keys</string>
+    <string name="pad_height_hint">Panel width sets the button scale. At 0 extra height, buttons form a compact equidistant grid; extra height expands the touchpad surface vertically while keeping button size constant.</string>
+    <string name="set_cursor_hold">Cursor Long-Press Duration</string>
+    <string name="cursor_hold_hint">Hold duration for the "Long Press" action on the screen; also used as anchor hold time before dragging in Drag Lock.</string>
+    <string name="drag_lock_hint">Drag Lock guide: Tap the button to lock the starting point and show an anchor halo at the cursor; slide to the destination and tap again to perform drag. Tap without moving to cancel.</string>
+    <string name="switch_show_panel">Show Touchpad Panel</string>
+    <string name="switch_show_panel_hint">When disabled, minimizes the panel into a floating ball; tap the floating ball to expand at any time.</string>
+    <string name="act_move_panel">Move Touchpad</string>
+    <string name="act_resize_panel">Resize Touchpad</string>
+    <string name="need_move_key">This is the only move handle on the panel and cannot be reassigned. Designate another button as "Move Touchpad" first.</string>
+    <string name="set_pad_dead_zone">Edge Palm/Touch Rejection Band</string>
+    <string name="pad_dead_zone_hint">Touch events starting within this perimeter margin are rejected to prevent accidental touches when reaching for adjacent buttons. Set to 0 to disable.</string>
+    <string name="switch_long_press_customize">Long-Press Button to Customize Action</string>
+    <string name="switch_long_press_customize_hint">When enabled, long-pressing any button on the floating panel opens the action picker to reassign its function.</string>
+    <string name="set_button_layout_mode">Button Layout Scheme</string>
+    <string name="btn_mode_4">4-Button Scheme</string>
+    <string name="btn_mode_8">8-Button Scheme</string>
+    <string name="btn_mode_12">12-Button Scheme</string>
+    <string name="btn_mode_16">16-Button Scheme</string>
+    <string name="btn_mode_18">18-Button Scheme</string>
+    <string name="btn_mode_4_desc">4-Button: 1 large capsule button on each edge.</string>
+    <string name="btn_mode_8_desc">8-Button: 2 capsule buttons on each edge.</string>
+    <string name="btn_mode_12_desc">12-Button: 3 compact buttons on each edge.</string>
+    <string name="btn_mode_16_desc">16-Button: 4 mini circular buttons on each edge for high density.</string>
+    <string name="btn_mode_18_desc">18-Button: Full ring array with 4 corners, panel move handle, and resize handle.</string>
     <string name="slot_top_single">Top</string>
     <string name="slot_bottom_single">Bottom</string>
     <string name="slot_left_single">Left</string>
@@ -162,13 +161,13 @@
     <string name="slot_bottom_indexed">Bottom %d</string>
     <string name="slot_left_indexed">Left %d</string>
     <string name="slot_right_indexed">Right %d</string>
-    <string name="switch_touch_ring">Click halo feedback</string>
-    <string name="switch_touch_ring_hint">Show visual halo ripple on cursor click and long press</string>
-    <string name="set_touch_ring_color">Halo colour</string>
-    <string name="set_button_customize_hold">Button customize hold duration</string>
-    <string name="button_customize_hold_hint">Hold a panel button this long to open the action picker. Up to 3 seconds to prevent accidental triggers.</string>
-    <string name="set_touchpad_color">Touchpad colour</string>
-    <string name="custom_color_title">Custom colour</string>
-    <string name="custom_color_hint">Enter hex colour code (e.g. #2A2A28)</string>
-    <string name="custom_color_invalid">Please enter a valid hex colour code</string>
+    <string name="switch_touch_ring">Cursor Click Halo Effect</string>
+    <string name="switch_touch_ring_hint">Displays an animated ripple halo at cursor coordinates during clicks, long presses, and drags.</string>
+    <string name="set_touch_ring_color">Halo Ripple Color</string>
+    <string name="set_button_customize_hold">Button Long-Press Trigger Duration</string>
+    <string name="button_customize_hold_hint">Hold duration required on a panel button to trigger the action assignment menu (200ms to 3000ms to prevent accidental triggers).</string>
+    <string name="set_touchpad_color">Touchpad Surface Color</string>
+    <string name="custom_color_title">Custom Hex Color</string>
+    <string name="custom_color_hint">Enter hex color code (e.g. #2A2A28)</string>
+    <string name="custom_color_invalid">Please enter a valid hex color code (format: #RRGGBB)</string>
 </resources>

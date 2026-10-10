@@ -1,159 +1,158 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OpenTouchpad</string>
-    <string name="app_description">给无法够到整块屏幕的人：触控板、屏幕光标和大按钮。离线、无广告、无统计。</string>
+    <string name="app_description">专为单手操作与触控受限场景设计的辅助工具：提供屏幕触控板、指针光标与便捷功能按键。离线运行，无广告，无数据统计。</string>
     <string name="service_label">OpenTouchpad 触控板</string>
-    <string name="service_description">在屏幕一角显示触控板、光标和大按钮，用很小的动作操作整块屏幕。不联网、无广告、无统计。</string>
+    <string name="service_description">通过屏幕悬浮触控板与指针光标，以微小操作幅度精准控制整个屏幕。无网络请求、无广告，完全离线运行。</string>
 
     <!-- 状态 / 引导 -->
-    <string name="status_on">服务运行中</string>
-    <string name="status_off">服务未开启</string>
-    <string name="open_a11y_settings">打开无障碍设置</string>
-    <string name="cannot_open_settings">无法打开无障碍设置</string>
-    <string name="steps_title">开启步骤</string>
-    <string name="steps_body">1. 设置 → 无障碍 → OpenTouchpad，打开开关。\n2. 如果被系统拦下（"受限设置"），去 应用信息 → 右上角 ⋮ → 允许受限设置，再试一次。\n3. 回到本页调大小、速度和按钮，调到使用者顺手为止。</string>
+    <string name="status_on">无障碍服务运行中</string>
+    <string name="status_off">无障碍服务未开启</string>
+    <string name="open_a11y_settings">前往系统无障碍设置</string>
+    <string name="cannot_open_settings">无法自动跳转至无障碍设置，请手动前往系统设置开启</string>
+    <string name="steps_title">无障碍服务开启指引</string>
+    <string name="steps_body">1. 前往「系统设置 → 无障碍 → 已安装的服务」，启用 OpenTouchpad 服务开关。\n2. 若系统提示「受限设置」，请前往「系统设置 → 应用信息 → OpenTouchpad」，点击右上角菜单选择「允许受限设置」，随后返回重新开启无障碍开关。\n3. 开启后返回本应用，根据个人操作习惯调整面板尺寸、光标速度与功能按键布局。</string>
 
     <!-- 面板把手 -->
     <string name="handle_move">⣿ 移动</string>
-    <string name="handle_resize">⤡ 调整大小</string>
+    <string name="handle_resize">⤡ 缩放</string>
     <string name="handle_minimize">⌄ 收起</string>
-    <string name="cursor_content_description">箭头光标</string>
-    <string name="control_surface_content_description">OpenTouchpad 控制区</string>
-    <string name="touchpad_content_description">触控板区域。长按到震动后移动光标，松手执行自定义滑动。</string>
-    <string name="custom_swipe_hint">自定义滑动：长按到震动，移动光标，松手执行滑动。</string>
-    <string name="floating_ball_content_description">展开 OpenTouchpad</string>
-    <string name="pick_action">选择动作</string>
+    <string name="cursor_content_description">屏幕指针光标</string>
+    <string name="control_surface_content_description">OpenTouchpad 控制面板</string>
+    <string name="touchpad_content_description">触控板操作区域。滑动可移动屏幕光标；长按至震动反馈后移动并释放，可执行自定义滑动轨迹。</string>
+    <string name="custom_swipe_hint">自定义手势滑动：在触控板上按住至产生震动反馈，拖动光标至目标终点后松手，即可在屏幕上执行对应路径的滑动手势。</string>
+    <string name="floating_ball_content_description">展开触控板面板</string>
+    <string name="pick_action">选择功能动作</string>
 
     <!-- 动作名 -->
-    <string name="act_click">左键单击</string>
-    <string name="act_long_press">光标处长按</string>
-    <string name="act_drag_lock">拖拽锁定（点起点／点终点）</string>
+    <string name="act_click">单击</string>
+    <string name="act_long_press">原地长按</string>
+    <string name="act_drag_lock">拖拽锁定</string>
     <string name="act_scroll_up">向上滚动</string>
     <string name="act_scroll_down">向下滚动</string>
     <string name="act_scroll_left">向左滚动</string>
     <string name="act_scroll_right">向右滚动</string>
-    <string name="act_swipe_up">长距离上滑</string>
-    <string name="act_swipe_down">长距离下滑</string>
-    <string name="act_swipe_left">长距离左滑</string>
-    <string name="act_swipe_right">长距离右滑</string>
-    <string name="act_notifications">下拉通知栏</string>
+    <string name="act_swipe_up">快速上滑</string>
+    <string name="act_swipe_down">快速下滑</string>
+    <string name="act_swipe_left">快速左滑</string>
+    <string name="act_swipe_right">快速右滑</string>
+    <string name="act_notifications">展开通知面板</string>
     <string name="act_power">电源菜单</string>
-    <string name="act_volume_up">音量 +</string>
-    <string name="act_volume_down">音量 −</string>
-    <string name="act_screenshot">截图</string>
-    <string name="act_keyboard">键盘（聚焦输入框）</string>
-    <string name="act_back">返回</string>
-    <string name="act_home">主屏</string>
-    <string name="act_recents">最近任务</string>
-    <string name="act_settings">打开 OpenTouchpad 设置</string>
-    <string name="act_minimize">展开/收起触控板</string>
-    <string name="act_move_ball">拖动悬浮球</string>
-    <string name="act_none">空槽位</string>
+    <string name="act_volume_up">增加音量</string>
+    <string name="act_volume_down">减小音量</string>
+    <string name="act_screenshot">屏幕截图</string>
+    <string name="act_keyboard">唤起输入法（聚焦输入框）</string>
+    <string name="act_back">返回键</string>
+    <string name="act_home">返回主屏幕</string>
+    <string name="act_recents">多任务概览</string>
+    <string name="act_settings">打开应用设置</string>
+    <string name="act_minimize">展开 / 收起面板</string>
+    <string name="act_move_ball">拖拽移动悬浮球</string>
+    <string name="act_none">未分配</string>
     <string name="act_none_gesture">无动作</string>
 
-
-    <!-- 设置项 -->
-    <string name="sec_appearance">外观</string>
-    <string name="sec_pad">触控板</string>
-    <string name="sec_ball">悬浮球</string>
-    <string name="sec_cursor">光标</string>
-    <string name="sec_feel">手感</string>
-    <string name="sec_buttons">按钮</string>
-    <string name="sec_about">关于</string>
+    <!-- 设置分组 -->
+    <string name="sec_appearance">外观与主题</string>
+    <string name="sec_pad">触控板面板</string>
+    <string name="sec_ball">悬浮球设置</string>
+    <string name="sec_cursor">屏幕光标</string>
+    <string name="sec_feel">操作手感与反馈</string>
+    <string name="sec_buttons">功能按键</string>
+    <string name="sec_about">关于与重置</string>
 
     <string name="theme_system">跟随系统</string>
-    <string name="theme_light">白色模式</string>
-    <string name="theme_dark">黑色模式</string>
+    <string name="theme_light">浅色模式</string>
+    <string name="theme_dark">深色模式</string>
 
-    <string name="set_pad_height">触控板加高</string>
-    <string name="set_pad_width">触控板控制区宽度</string>
-    <string name="set_opacity">触控板透明度</string>
-    <string name="set_ball_size">悬浮球大小</string>
-    <string name="set_ball_opacity">悬浮球透明度</string>
-    <string name="set_cursor_size">光标大小</string>
+    <string name="set_pad_height">触控板额外高度</string>
+    <string name="set_pad_width">面板总宽度</string>
+    <string name="set_opacity">面板不透明度</string>
+    <string name="set_ball_size">悬浮球直径尺寸</string>
+    <string name="set_ball_opacity">悬浮球不透明度</string>
+    <string name="set_cursor_size">光标尺寸</string>
     <string name="set_cursor_color">光标颜色</string>
-    <string name="set_sensitivity">光标速度</string>
-    <string name="set_long_press">触控板长按判定时长</string>
-    <string name="set_scroll_distance">滚动距离</string>
-    <string name="set_swipe_distance">长滑动距离</string>
-    <string name="set_button_radius">按钮圆角</string>
-    <string name="set_button_spacing">按钮间距</string>
+    <string name="set_sensitivity">光标移动灵敏度</string>
+    <string name="set_long_press">触控板长按手势识别时长</string>
+    <string name="set_scroll_distance">单次滚动模拟距离</string>
+    <string name="set_swipe_distance">快速滑动手势距离</string>
+    <string name="set_button_radius">按键圆角半径</string>
+    <string name="set_button_spacing">按键间距</string>
 
-    <string name="switch_haptics">震动反馈</string>
-    <string name="switch_press_feedback">按压下沉反馈</string>
-    <string name="switch_autohide_landscape">横屏时隐藏触控板</string>
-    <string name="switch_minimize_keyboard">键盘弹出时最小化</string>
-    <string name="btn_reset_position">重置触控板位置</string>
-    <string name="btn_reset_all">恢复默认设置</string>
-    <string name="btn_setup">开启步骤</string>
-    <string name="btn_github">GitHub 源码</string>
-    <string name="btn_edit_buttons">点按钮可改动作（长按面板上的按钮也行）</string>
+    <string name="switch_haptics">触感震动反馈</string>
+    <string name="switch_press_feedback">3D 按压下沉与倾斜动效</string>
+    <string name="switch_autohide_landscape">屏幕横向旋转时自动隐藏</string>
+    <string name="switch_minimize_keyboard">软键盘弹出时自动最小化</string>
+    <string name="btn_reset_position">重置面板与悬浮球位置</string>
+    <string name="btn_reset_all">恢复应用全部默认设置</string>
+    <string name="btn_setup">无障碍配置与排查指引</string>
+    <string name="btn_github">开源代码仓库 (GitHub)</string>
+    <string name="btn_edit_buttons">点击按键槽位配置动作（亦可在悬浮面板上长按直接更改）</string>
 
-    <string name="screenshot_needs_p">截图需要 Android 9 及以上</string>
-    <string name="no_input_field">还没有输入框获得焦点 —— 先用触控板点一下文本框</string>
-    <string name="label_off">关闭</string>
-    <string name="reset_done">已恢复默认设置</string>
+    <string name="screenshot_needs_p">系统截屏功能需要 Android 9 (API 28) 及以上系统版本支持</string>
+    <string name="no_input_field">未检测到获得焦点的输入框，请先使用光标点击目标文本框</string>
+    <string name="label_off">已关闭</string>
+    <string name="reset_done">已恢复全部默认设置</string>
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
-    <string name="switch_hide_ball">隐藏悬浮球</string>
-    <string name="hide_ball_hint">开启后收起触控板不显示悬浮球，可在本页打开「显示触控板」重新展开。</string>
-    <string name="sec_ball_gestures">悬浮球手势动作</string>
-    <string name="switch_ball_gestures">开启手势动作</string>
-    <string name="switch_ball_gestures_hint">关闭后，点击悬浮球直接展开触控板，拖动直接移动悬浮球位置。</string>
-    <string name="gesture_single_tap">单击</string>
-    <string name="gesture_double_tap">双击</string>
-    <string name="gesture_long_press">长按</string>
-    <string name="gesture_swipe_up">上滑</string>
-    <string name="gesture_swipe_down">下滑</string>
-    <string name="gesture_swipe_left">左滑</string>
-    <string name="gesture_swipe_right">右滑</string>
-    <string name="btn_reset_ball_gestures">恢复悬浮球默认手势</string>
-    <string name="set_cursor_opacity">光标透明度</string>
+    <string name="switch_hide_ball">收起面板时隐藏悬浮球</string>
+    <string name="hide_ball_hint">开启后，面板收起时不显示悬浮球图标；可随时在设置界面开启「显示触控板面板」重新展开。</string>
+    <string name="sec_ball_gestures">悬浮球快捷手势</string>
+    <string name="switch_ball_gestures">启用悬浮球快捷手势</string>
+    <string name="switch_ball_gestures_hint">关闭手势交互后，点击悬浮球将立即展开面板（无需等待双击判定超时），拖拽操作仅用于调整屏幕位置。</string>
+    <string name="gesture_single_tap">单击手势</string>
+    <string name="gesture_double_tap">双击手势</string>
+    <string name="gesture_long_press">长按手势</string>
+    <string name="gesture_swipe_up">上滑手势</string>
+    <string name="gesture_swipe_down">下滑手势</string>
+    <string name="gesture_swipe_left">左滑手势</string>
+    <string name="gesture_swipe_right">右滑手势</string>
+    <string name="btn_reset_ball_gestures">重置悬浮球手势为默认值</string>
+    <string name="set_cursor_opacity">光标不透明度</string>
     <string name="set_ball_color">悬浮球颜色</string>
-    <string name="color_default">跟随主题</string>
+    <string name="color_default">跟随主题配色</string>
     <string-array name="slot_positions">
-        <item>上 1</item>
-        <item>上 2</item>
-        <item>上 3</item>
-        <item>上 4</item>
-        <item>下 1</item>
-        <item>下 2</item>
-        <item>下 3</item>
-        <item>下 4</item>
-        <item>左 1</item>
-        <item>左 2</item>
-        <item>右 1</item>
-        <item>右 2</item>
-        <item>左上角</item>
-        <item>右上角</item>
-        <item>左下角</item>
-        <item>右下角</item>
-        <item>左列上方（默认移动键）</item>
-        <item>右列下方（默认缩放键）</item>
+        <item>顶部按键 1</item>
+        <item>顶部按键 2</item>
+        <item>顶部按键 3</item>
+        <item>顶部按键 4</item>
+        <item>底部按键 1</item>
+        <item>底部按键 2</item>
+        <item>底部按键 3</item>
+        <item>底部按键 4</item>
+        <item>左侧按键 1</item>
+        <item>左侧按键 2</item>
+        <item>右侧按键 1</item>
+        <item>右侧按键 2</item>
+        <item>左上角按键</item>
+        <item>右上角按键</item>
+        <item>左下角按键</item>
+        <item>右下角按键</item>
+        <item>左列上方（默认移动把手）</item>
+        <item>右列下方（默认缩放把手）</item>
     </string-array>
-    <string name="pad_height_hint">宽度决定按钮大小。加高为 0 时是最紧凑的等间距网格；加高只让中间触控板变高，按钮间距不变。</string>
-    <string name="set_cursor_hold">光标处长按时长</string>
-    <string name="cursor_hold_hint">「光标处长按」按住的时间；拖拽锁定也会先在起点按住这么久再拖动。最长 3 秒。</string>
-    <string name="drag_lock_hint">拖拽锁定：按一次记下起点，光标处出现陶土色圆环并跟着光标走；移动到终点再按一次执行拖动，圆环在终点收缩。没移动就再按一次 = 取消。</string>
-    <string name="switch_show_panel">显示触控板</string>
-    <string name="switch_show_panel_hint">关闭后收起成悬浮球；点悬浮球也能重新展开。</string>
+    <string name="pad_height_hint">面板总宽度决定外围功能键的基础尺寸。额外高度为 0 时呈最紧凑等距网格；增加高度仅纵向拉伸触控滑动区域，按键尺寸与间距保持恒定。</string>
+    <string name="set_cursor_hold">光标长按触发时长</string>
+    <string name="cursor_hold_hint">执行「原地长按」动作时在屏幕上保持按压的持续时间；「拖拽锁定」手势在起点锚定时亦采用此时长。</string>
+    <string name="drag_lock_hint">拖拽锁定操作指南：点击按键锁定当前坐标为起始点，光标处显示锚定反馈光圈；滑动光标至目标位置后再次点击按键执行拖拽手势。若未移动光标再次点击则直接取消本次操作。</string>
+    <string name="switch_show_panel">显示触控板面板</string>
+    <string name="switch_show_panel_hint">关闭后将面板最小化收起并显示悬浮球；点击悬浮球可随时重新展开。</string>
     <string name="act_move_panel">移动触控板</string>
     <string name="act_resize_panel">缩放触控板</string>
-    <string name="need_move_key">这是最后一个移动键，不能换成其他动作。先把别的位置设成「移动触控板」再改这里。</string>
-    <string name="set_pad_dead_zone">边缘触发宽度</string>
-    <string name="pad_dead_zone_hint">手指落在触控板边缘这一圈（包括圆角外侧）里，这一整次触摸都忽略，按旁边的按钮时不会误碰。0 = 关闭。</string>
-    <string name="switch_long_press_customize">长按按钮自定义动作</string>
-    <string name="switch_long_press_customize_hint">开启后长按触控板按钮可弹出动作选择器，自由更换按钮功能。</string>
-    <string name="set_button_layout_mode">自选键位模式</string>
-    <string name="btn_mode_4">4 键</string>
-    <string name="btn_mode_8">8 键</string>
-    <string name="btn_mode_12">12 键</string>
-    <string name="btn_mode_16">16 键</string>
-    <string name="btn_mode_18">18 键</string>
-    <string name="btn_mode_4_desc">4 键位：上下左右四条边气泡型/胶囊型按钮</string>
-    <string name="btn_mode_8_desc">8 键位：上下左右四条边小一点的气泡型/胶囊型按钮</string>
-    <string name="btn_mode_12_desc">12 键位：上下左右四条边紧凑气泡型/胶囊型按钮</string>
-    <string name="btn_mode_16_desc">16 键位：上下左右四条边各四个按钮，压缩成圆形</string>
-    <string name="btn_mode_18_desc">18 键位：经典环形布局（含四角、移动键与缩放键）</string>
+    <string name="need_move_key">此按键为面板唯一的移动控制把手，无法直接替换。请先将其他槽位指定为「移动触控板」后再更改此按键。</string>
+    <string name="set_pad_dead_zone">触控板边缘防误触死区</string>
+    <string name="pad_dead_zone_hint">触控板四周边缘的防误触缓冲区。起始落在此区域内的触摸事件将被直接忽略，以避免操作相邻按键时产生误触。设为 0 表示关闭防误触保护。</string>
+    <string name="switch_long_press_customize">长按按键自定义功能</string>
+    <string name="switch_long_press_customize_hint">开启后，长按触控板面板上的任意按键即可直接弹出功能选择菜单重新配置。</string>
+    <string name="set_button_layout_mode">按键布局方案</string>
+    <string name="btn_mode_4">4 键布局</string>
+    <string name="btn_mode_8">8 键布局</string>
+    <string name="btn_mode_12">12 键布局</string>
+    <string name="btn_mode_16">16 键布局</string>
+    <string name="btn_mode_18">18 键布局</string>
+    <string name="btn_mode_4_desc">4 键布局：上下左右四边各分布 1 个大尺寸胶囊功能键。</string>
+    <string name="btn_mode_8_desc">8 键布局：上下左右四边各分布 2 个胶囊功能键。</string>
+    <string name="btn_mode_12_desc">12 键布局：上下左右四边各分布 3 个紧凑型功能键。</string>
+    <string name="btn_mode_16_desc">16 键布局：上下左右四边各分布 4 个微型按键，提供高密度功能映射。</string>
+    <string name="btn_mode_18_desc">18 键布局：全功能环形阵列，包含四角扩展槽位及面板移动与缩放调节把手。</string>
     <string name="slot_top_single">上</string>
     <string name="slot_bottom_single">下</string>
     <string name="slot_left_single">左</string>
@@ -162,13 +161,13 @@
     <string name="slot_bottom_indexed">下 %d</string>
     <string name="slot_left_indexed">左 %d</string>
     <string name="slot_right_indexed">右 %d</string>
-    <string name="switch_touch_ring">点击光圈反馈</string>
-    <string name="switch_touch_ring_hint">在光标点击或长按位置显示视觉光圈</string>
-    <string name="set_touch_ring_color">光圈颜色</string>
-    <string name="set_button_customize_hold">长按自定义判定时长</string>
-    <string name="button_customize_hold_hint">长按触控板按钮达到此时长后弹出动作选择器，防误触最长可设 3 秒</string>
-    <string name="set_touchpad_color">触控板颜色</string>
-    <string name="custom_color_title">自定义颜色</string>
-    <string name="custom_color_hint">输入 16 进制颜色代码（如 #2A2A28）</string>
-    <string name="custom_color_invalid">请输入有效的 16 进制颜色代码</string>
+    <string name="switch_touch_ring">光标点击波纹光圈</string>
+    <string name="switch_touch_ring_hint">在光标执行点击、长按或拖拽手势时，在屏幕落点显示动画波纹光圈反馈。</string>
+    <string name="set_touch_ring_color">波纹光圈颜色</string>
+    <string name="set_button_customize_hold">长按按键触发菜单时长</string>
+    <string name="button_customize_hold_hint">长按面板按键达到设定时长后触发动作选择菜单，支持设置 200ms 至 3000ms 以避免误触。</string>
+    <string name="set_touchpad_color">触控板表面颜色</string>
+    <string name="custom_color_title">自定义十六进制颜色</string>
+    <string name="custom_color_hint">请输入十六进制颜色代码（例如 #2A2A28）</string>
+    <string name="custom_color_invalid">请输入有效的十六进制颜色代码（格式：#RRGGBB）</string>
 </resources>
