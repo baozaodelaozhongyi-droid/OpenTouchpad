@@ -82,6 +82,8 @@
     <string name="switch_press_feedback">3D 按压下沉与倾斜动效</string>
     <string name="switch_autohide_landscape">屏幕横向旋转时自动隐藏</string>
     <string name="switch_minimize_keyboard">软键盘弹出时自动最小化</string>
+    <string name="switch_exclude_from_recents">隐藏后台</string>
+    <string name="switch_exclude_from_recents_hint">开启后，在系统的多任务与最近任务列表中隐藏本应用界面卡片。</string>
     <string name="btn_reset_position">重置面板与悬浮球位置</string>
     <string name="btn_reset_all">恢复应用全部默认设置</string>
     <string name="btn_setup">无障碍配置与排查指引</string>

@@ -2236,6 +2236,9 @@ class TouchpadService : AccessibilityService() {
     private fun openSettings() {
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (prefs.excludeFromRecents) {
+                addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+            }
         }
         runCatching { startActivity(intent) }
     }

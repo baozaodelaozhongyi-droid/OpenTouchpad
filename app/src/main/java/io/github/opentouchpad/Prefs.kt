@@ -258,6 +258,10 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("minimizeOnKeyboard", true)
         set(v) = sp.edit().putBoolean("minimizeOnKeyboard", v).apply()
 
+    var excludeFromRecents: Boolean
+        get() = sp.getBoolean("excludeFromRecents", false)
+        set(v) = sp.edit().putBoolean("excludeFromRecents", v).apply()
+
     /** 当前的收起是不是「键盘弹出自动收起」造成的（键盘收起时据此自动还原；存下来，服务重启后也有效）。 */
     var minimizedByKeyboard: Boolean
         get() = sp.getBoolean("minimizedByKeyboard", false)

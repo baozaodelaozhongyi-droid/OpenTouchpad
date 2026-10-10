@@ -82,6 +82,8 @@
     <string name="switch_press_feedback">3D Press Sink &amp; Tilt Animation</string>
     <string name="switch_autohide_landscape">Auto-Hide in Landscape Mode</string>
     <string name="switch_minimize_keyboard">Auto-Minimize when Keyboard Opens</string>
+    <string name="switch_exclude_from_recents">Hide from Recent Tasks</string>
+    <string name="switch_exclude_from_recents_hint">When enabled, hides this app from the system\'s overview and recent apps list.</string>
     <string name="btn_reset_position">Reset Panel &amp; Ball Positions</string>
     <string name="btn_reset_all">Reset All Settings to Defaults</string>
     <string name="btn_setup">Accessibility Setup &amp; Troubleshooting</string>

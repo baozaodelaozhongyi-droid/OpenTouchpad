@@ -4,7 +4,9 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.content.res.Configuration
@@ -95,6 +97,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         prefs = Prefs(this)
+        applyExcludeFromRecents(prefs.excludeFromRecents)
         baseThemeDark = prefs.themeMode.resolvesToDark(systemIsDark())
         darkUi = baseThemeDark
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
@@ -178,6 +181,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        applyExcludeFromRecents(prefs.excludeFromRecents)
         updateStatus()
         // 用户可能在面板上点了收起/展开，回到设置页时同步开关（不触发回调）
         showPanelSwitch?.let { sw ->
@@ -477,6 +481,10 @@ class MainActivity : Activity() {
                 prefs.minimizeOnKeyboard = it
                 TouchpadService.instance?.syncKeyboardMinimize()
             }),
+            switchRow(getString(R.string.switch_exclude_from_recents), prefs.excludeFromRecents, hint = getString(R.string.switch_exclude_from_recents_hint), onChange = {
+                prefs.excludeFromRecents = it
+                applyExcludeFromRecents(it)
+            }),
         ))
 
         // ── 关于 ──
@@ -488,6 +496,7 @@ class MainActivity : Activity() {
             },
             actionRow(getString(R.string.btn_reset_all), destructive = true) {
                 prefs.resetAll()
+                applyExcludeFromRecents(false)
                 toast(getString(R.string.reset_done))
                 reload()
                 recreateKeepingScroll()
@@ -1599,6 +1608,13 @@ class MainActivity : Activity() {
 
     private fun pixelsToDp(v: Int, density: Float): Int =
         if (density > 0f) (v / density).roundToInt() else v
+
+    private fun applyExcludeFromRecents(exclude: Boolean) {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return
+        am.appTasks?.forEach { task ->
+            runCatching { task.setExcludeFromRecents(exclude) }
+        }
+    }
 
     private companion object {
         const val KEY_SCROLL_Y = "settings_scroll_y"
