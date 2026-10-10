@@ -2061,7 +2061,9 @@ class TouchpadService : AccessibilityService() {
         touchRing?.let { v -> touchRingParams?.let { return v to it } }
         val radius = dp(TOUCH_RING_RADIUS_DP).toFloat()
         val stroke = (2.5f * resources.displayMetrics.density)
-        val size = ((radius + stroke) * 2).roundToInt() + dp(4)
+        // 预留充分 padding 容纳高斯动态模糊光晕，确保光晕在窗口内完全自然羽化衰减至 0，绝不发生窗口边缘裁切
+        val blurPadding = dp(16)
+        val size = ((radius + stroke) * 2).roundToInt() + blurPadding * 2
         val v = TouchRingView(this).apply {
             accent = resolveTouchRingColor()
             maxRadius = radius

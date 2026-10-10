@@ -24,8 +24,8 @@ import android.view.animation.DecelerateInterpolator
 class TouchRingView(context: Context) : View(context) {
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    // 动态模糊采样画笔（仅描边模式，无任何多余填充与背景）
-    private val motionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    // 纯硬件加速高斯动态模糊采样画笔（仅描边模式，无离屏软件图层，无额外圆盘与背景）
+    private val blurPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
 
     var accent: Int = 0xFFC96442.toInt()
         set(value) { field = value; invalidate() }
@@ -209,25 +209,59 @@ class TouchRingView(context: Context) : View(context) {
             density = resources.displayMetrics.density,
         )
 
-        // 仅在展开与缩放有动速时绘制径向运动拖影微步（纯描边微差采样，绝不画额外填充圆盘，无任何多余图层）
-        if (blurParams.speed > 0.03f && blurParams.blurAlpha > 0.02f) {
+        // ── 硬件加速高斯动态模糊与径向拖尾层 (Gaussian Motion Blur Layer) ──
+        // 仅在动速 > 0 时激活，使用多级高斯柔光卷积叠加，呈现与 v0.5.52 相同的高级发光与羽化感，
+        // 纯硬件加速直接绘制，仅对描边环体采样，绝不画全填充模糊圆盘，彻底消除多余图层与方框暗影。
+        if (blurParams.speed > 0.02f && blurParams.blurAlpha > 0.01f) {
+            val speed = blurParams.speed
+            val blurAlpha = blurParams.blurAlpha
             val lag = blurParams.trailLag
-            // 沿径向运动轨迹做 3 级高斯微步积分采样，形成纯净平滑的运动模糊拖影
-            for (step in 1..3) {
-                val frac = step / 4f // 0.25f, 0.50f, 0.75f
-                val sampleR = if (blurParams.isExpanding) {
-                    (r - lag * (1f - frac)).coerceAtLeast(0f)
-                } else {
-                    minOf(r + lag * (1f - frac), limit)
-                }
-                if (sampleR > 0f) {
-                    val sampleSw = sw * (0.85f + 0.15f * frac)
-                    val sampleAlpha = blurParams.blurAlpha * (0.15f + 0.25f * frac)
-                    motionPaint.strokeWidth = sampleSw
-                    motionPaint.color = withAlpha(accent, sampleAlpha)
-                    canvas.drawCircle(cx, cy, (sampleR - sampleSw / 2f).coerceAtLeast(0f), motionPaint)
+            val sigma = blurParams.blurRadius // 高斯羽化扩散半径
+
+            // 1. 径向运动拖影：沿运动轨迹绘制 2 级半透明渐变微步拖影
+            if (lag > 0.5f) {
+                val lagSteps = 2
+                for (step in 1..lagSteps) {
+                    val frac = step / (lagSteps + 1f) // 0.33f, 0.67f
+                    val sampleR = if (blurParams.isExpanding) {
+                        (r - lag * (1f - frac)).coerceAtLeast(0f)
+                    } else {
+                        minOf(r + lag * (1f - frac), limit)
+                    }
+                    if (sampleR > 0f) {
+                        val lagSw = sw + 0.8f * sigma * frac
+                        val lagAlpha = blurAlpha * (0.16f + 0.18f * frac)
+                        blurPaint.strokeWidth = lagSw
+                        blurPaint.color = withAlpha(accent, lagAlpha)
+                        canvas.drawCircle(cx, cy, (sampleR - lagSw / 2f).coerceAtLeast(0f), blurPaint)
+                    }
                 }
             }
+
+            // 2. 多级高斯羽化柔光晕染：4 级向外平滑递减的高斯卷积描边，产生饱满的高级光学模糊
+            // Level 1: 最外层柔光光晕 (Outer Soft Aura)
+            val sw1 = sw + 2.6f * sigma
+            blurPaint.strokeWidth = sw1
+            blurPaint.color = withAlpha(accent, blurAlpha * 0.10f)
+            canvas.drawCircle(cx, cy, (r - sw1 / 2f).coerceAtLeast(0f), blurPaint)
+
+            // Level 2: 中层羽化漫射 (Mid Glow)
+            val sw2 = sw + 1.8f * sigma
+            blurPaint.strokeWidth = sw2
+            blurPaint.color = withAlpha(accent, blurAlpha * 0.18f)
+            canvas.drawCircle(cx, cy, (r - sw2 / 2f).coerceAtLeast(0f), blurPaint)
+
+            // Level 3: 内层高斯光晕 (Inner Bloom)
+            val sw3 = sw + 1.0f * sigma
+            blurPaint.strokeWidth = sw3
+            blurPaint.color = withAlpha(accent, blurAlpha * 0.30f)
+            canvas.drawCircle(cx, cy, (r - sw3 / 2f).coerceAtLeast(0f), blurPaint)
+
+            // Level 4: 近核高密羽化 (Near Core Bloom)
+            val sw4 = sw + 0.4f * sigma
+            blurPaint.strokeWidth = sw4
+            blurPaint.color = withAlpha(accent, blurAlpha * 0.42f)
+            canvas.drawCircle(cx, cy, (r - sw4 / 2f).coerceAtLeast(0f), blurPaint)
         }
 
         // ── 清晰主体层 (Sharp Core Ring & Fill) ──
