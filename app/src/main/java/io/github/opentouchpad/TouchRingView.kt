@@ -284,7 +284,7 @@ class TouchRingView(context: Context) : View(context) {
         (c and 0x00FFFFFF) or ((a * 255f).toInt().coerceIn(0, 255) shl 24)
 
     companion object {
-        const val EXPAND_MS = 280L
+        const val EXPAND_MS = 220L
         const val TAP_HOLD_MS = 0L
         const val COLLAPSE_MS = 180L
         private const val MIN_COLLAPSE_MS = 80L
