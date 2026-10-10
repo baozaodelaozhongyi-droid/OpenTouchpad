@@ -2,6 +2,7 @@ package io.github.opentouchpad
 
 import android.app.AlertDialog
 import android.content.Context
+import android.content.DialogInterface
 import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
@@ -14,7 +15,7 @@ import android.widget.TextView
 import kotlin.math.roundToInt
 
 /**
- * 动作选择对话框：每行是「线条图标 + 名称」，当前动作用陶土色标出。
+ * 动作选择对话框：每行是「线条图标 + 名称」，当前动作用强调色标出。
  * 设置页和面板长按共用，保证两处样式一致。
  */
 internal object ActionPicker {
@@ -25,13 +26,16 @@ internal object ActionPicker {
         actions: List<PadAction> = PadAction.ALL,
         titleRes: Int = R.string.pick_action,
         noneLabelRes: Int = R.string.act_none,
+        accentColor: Int? = null,
         onPick: (PadAction) -> Unit
     ): AlertDialog {
         val themed = android.view.ContextThemeWrapper(context, if (dark) R.style.WarmDialog_Dark else R.style.WarmDialog)
         val density = context.resources.displayMetrics.density
         fun dp(v: Int) = (v * density).roundToInt()
         val text = if (dark) 0xFFFAF9F5.toInt() else 0xFF141413.toInt()
-        val accent = if (dark) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+        val prefs = Prefs(context)
+        val accent = accentColor?.takeIf { it != 0 } ?: resolveUiAccentColor(prefs.uiAccentColor, dark)
+        val (accentSoft, accentSoftStrong) = resolveUiAccentSoftColors(accent, dark)
         val chip = if (dark) 0xFF30302E.toInt() else 0xFFF0EEE6.toInt()
         val effectiveActions = if (current in actions) actions else listOf(current) + actions
         val adapter = object : BaseAdapter() {
@@ -47,7 +51,10 @@ internal object ActionPicker {
                     setPadding(dp(8), dp(8), dp(8), dp(8))
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(if (selected) (accent and 0x00FFFFFF) or 0x26000000 else chip)
+                        setColor(if (selected) accentSoft else chip)
+                        if (selected) {
+                            setStroke(dp(1), accentSoftStrong)
+                        }
                     }
                 }
                 val labelText = if (action == PadAction.NONE) {
@@ -75,7 +82,7 @@ internal object ActionPicker {
                 }
             }
         }
-        return AlertDialog.Builder(themed)
+        val dialog = AlertDialog.Builder(themed)
             .setTitle(titleRes)
             .setAdapter(adapter) { d, which ->
                 onPick(effectiveActions[which])
@@ -83,5 +90,24 @@ internal object ActionPicker {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .create()
+
+        dialog.setOnShowListener {
+            TouchpadService.instance?.setOverlaySuppressed(true)
+            dialog.getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(accent)
+            dialog.listView?.apply {
+                clipToPadding = false
+                setPadding(0, dp(6), 0, dp(6))
+                val idx = effectiveActions.indexOf(current)
+                if (idx >= 0) {
+                    post {
+                        setSelection(idx)
+                    }
+                }
+            }
+        }
+        dialog.setOnDismissListener {
+            TouchpadService.instance?.setOverlaySuppressed(false)
+        }
+        return dialog
     }
 }

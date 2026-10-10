@@ -7,6 +7,7 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.app.AlertDialog
 import android.content.Context
+import android.content.DialogInterface
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.content.res.Configuration
@@ -665,6 +666,7 @@ class MainActivity : Activity() {
                     currentAction,
                     actions = availableActions,
                     noneLabelRes = R.string.act_none_gesture,
+                    accentColor = accentColor,
                 ) { picked ->
                     onPicked(picked)
                     reload()
@@ -1067,6 +1069,14 @@ class MainActivity : Activity() {
             override fun afterTextChanged(s: android.text.Editable?) {}
         })
 
+        dialog.setOnShowListener {
+            TouchpadService.instance?.setOverlaySuppressed(true)
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE)?.setTextColor(accentColor)
+            dialog.getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(accentColor)
+        }
+        dialog.setOnDismissListener {
+            TouchpadService.instance?.setOverlaySuppressed(false)
+        }
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
             val text = edit.text.toString().trim()
@@ -1280,7 +1290,7 @@ class MainActivity : Activity() {
     }
 
     private fun pickAction(index: Int, current: PadAction) {
-        ActionPicker.build(this, darkUi, current, actions = PadAction.TOUCHPAD_ACTIONS) { picked ->
+        ActionPicker.build(this, darkUi, current, actions = PadAction.TOUCHPAD_ACTIONS, accentColor = accentColor) { picked ->
             val list = replaceSlot(prefs.buttons, index, picked, prefs.buttonCount)
             if (list == null) {
                 toast(getString(R.string.need_move_key))
@@ -1294,11 +1304,19 @@ class MainActivity : Activity() {
 
     private fun showDialog(title: String, body: String) {
         val dialogTheme = if (darkUi) R.style.WarmDialog_Dark else R.style.WarmDialog
-        AlertDialog.Builder(this, dialogTheme)
+        val dialog = AlertDialog.Builder(this, dialogTheme)
             .setTitle(title)
             .setMessage(body)
             .setPositiveButton(android.R.string.ok, null)
-            .show()
+            .create()
+        dialog.setOnShowListener {
+            TouchpadService.instance?.setOverlaySuppressed(true)
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE)?.setTextColor(accentColor)
+        }
+        dialog.setOnDismissListener {
+            TouchpadService.instance?.setOverlaySuppressed(false)
+        }
+        dialog.show()
     }
 
     // ───────────────────────── 杂项 ─────────────────────────
