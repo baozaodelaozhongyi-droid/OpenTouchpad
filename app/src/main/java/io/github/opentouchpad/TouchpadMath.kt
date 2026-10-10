@@ -1,5 +1,6 @@
 package io.github.opentouchpad
 
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
@@ -695,3 +696,83 @@ internal fun panelPrefKey(isLandscape: Boolean, isY: Boolean): String {
     val axis = if (isY) "Y" else "X"
     return "pad${axis}_$suffix"
 }
+
+/**
+ * 光圈动态模糊参数：
+ * 展开与缩放过程中计算动态模糊、径向拖尾与边缘羽化参数。
+ */
+internal data class TouchRingMotionBlur(
+    val speed: Float,            // 0f (静止) .. 1f (极速)
+    val blurRadius: Float,       // 动态模糊羽化半径 (px)
+    val trailLag: Float,         // 径向拖影位移量 (px)，展开时向内落后，收缩时向外落后
+    val blurStrokeWidth: Float,  // 模糊环描边宽度 (px)
+    val blurAlpha: Float,        // 模糊层不透明度 0f .. 1f
+    val isExpanding: Boolean,    // true: 正在展开, false: 正在收缩
+)
+
+internal fun calculateTouchRingMotionBlur(
+    isExpanding: Boolean,
+    isCollapsing: Boolean,
+    progress: Float,
+    collapseFromProgress: Float = 1f,
+    baseAlpha: Float = 1f,
+    maxRadius: Float = 0f,
+    strokeWidthPx: Float = 0f,
+    density: Float = 1f,
+): TouchRingMotionBlur {
+    if (!isExpanding && !isCollapsing) {
+        return TouchRingMotionBlur(
+            speed = 0f,
+            blurRadius = 0f,
+            trailLag = 0f,
+            blurStrokeWidth = 0f,
+            blurAlpha = 0f,
+            isExpanding = false,
+        )
+    }
+
+    val safeProgress = progress.coerceIn(0f, 1f)
+    val speed = if (isExpanding) {
+        (1f - safeProgress).pow(0.7f).coerceIn(0f, 1f)
+    } else {
+        val safeCollapseFrom = collapseFromProgress.coerceIn(0.01f, 1f)
+        val shrink = (1f - safeProgress / safeCollapseFrom).coerceIn(0f, 1f)
+        (1f - shrink).pow(0.7f).coerceIn(0f, 1f)
+    }
+
+    if (speed <= 0.02f) {
+        return TouchRingMotionBlur(
+            speed = 0f,
+            blurRadius = 0f,
+            trailLag = 0f,
+            blurStrokeWidth = 0f,
+            blurAlpha = 0f,
+            isExpanding = isExpanding,
+        )
+    }
+
+    val safeDensity = density.coerceAtLeast(1f)
+    // 动态模糊半径：随动速放大，最高可达 ~1.5 倍描边加 2dp 弥散羽化
+    val maxBlurRadius = strokeWidthPx * 1.5f + 2f * safeDensity
+    val blurRadius = maxBlurRadius * speed
+
+    // 径向拖影位移：展开时向内落后，收缩时向外落后
+    val maxTrailLag = strokeWidthPx * 0.8f + maxRadius * 0.12f
+    val trailLag = maxTrailLag * speed
+
+    // 模糊描边宽度覆盖径向运动轨迹
+    val blurStrokeWidth = strokeWidthPx + trailLag * 1.2f
+
+    // 模糊层透明度随动速动态渐变
+    val blurAlpha = (baseAlpha * speed * 0.72f).coerceIn(0f, 1f)
+
+    return TouchRingMotionBlur(
+        speed = speed,
+        blurRadius = blurRadius,
+        trailLag = trailLag,
+        blurStrokeWidth = blurStrokeWidth,
+        blurAlpha = blurAlpha,
+        isExpanding = isExpanding,
+    )
+}
+

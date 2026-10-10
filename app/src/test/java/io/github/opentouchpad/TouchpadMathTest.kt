@@ -783,5 +783,98 @@ class TouchpadMathTest {
         assertEquals("padX_landscape", panelPrefKey(isLandscape = true, isY = false))
         assertEquals("padY_landscape", panelPrefKey(isLandscape = true, isY = true))
     }
+
+    @Test
+    fun touchRingMotionBlurInactiveWhenHoldingOrIdle() {
+        val holding = calculateTouchRingMotionBlur(
+            isExpanding = false,
+            isCollapsing = false,
+            progress = 1f,
+            baseAlpha = 1f,
+            maxRadius = 33f,
+            strokeWidthPx = 7.5f,
+            density = 3f,
+        )
+        assertEquals(0f, holding.speed, 0.0001f)
+        assertEquals(0f, holding.blurRadius, 0.0001f)
+        assertEquals(0f, holding.blurAlpha, 0.0001f)
+        assertEquals(0f, holding.trailLag, 0.0001f)
+        assertFalse(holding.isExpanding)
+    }
+
+    @Test
+    fun touchRingMotionBlurExpandingStartsHighAndEndsAtZero() {
+        val start = calculateTouchRingMotionBlur(
+            isExpanding = true,
+            isCollapsing = false,
+            progress = 0f,
+            baseAlpha = 0.8f,
+            maxRadius = 33f,
+            strokeWidthPx = 7.5f,
+            density = 3f,
+        )
+        assertEquals(1f, start.speed, 0.0001f)
+        assertTrue(start.blurRadius > 10f)
+        assertTrue(start.blurAlpha > 0.5f)
+        assertTrue(start.trailLag > 5f)
+        assertTrue(start.isExpanding)
+
+        val mid = calculateTouchRingMotionBlur(
+            isExpanding = true,
+            isCollapsing = false,
+            progress = 0.5f,
+            baseAlpha = 0.8f,
+            maxRadius = 33f,
+            strokeWidthPx = 7.5f,
+            density = 3f,
+        )
+        assertTrue(mid.speed in 0.5f..0.7f)
+        assertTrue(mid.blurRadius < start.blurRadius)
+        assertTrue(mid.blurAlpha < start.blurAlpha)
+
+        val end = calculateTouchRingMotionBlur(
+            isExpanding = true,
+            isCollapsing = false,
+            progress = 1f,
+            baseAlpha = 1f,
+            maxRadius = 33f,
+            strokeWidthPx = 7.5f,
+            density = 3f,
+        )
+        assertEquals(0f, end.speed, 0.0001f)
+        assertEquals(0f, end.blurRadius, 0.0001f)
+        assertEquals(0f, end.blurAlpha, 0.0001f)
+    }
+
+    @Test
+    fun touchRingMotionBlurCollapsingStartsHighAndEndsAtZero() {
+        val start = calculateTouchRingMotionBlur(
+            isExpanding = false,
+            isCollapsing = true,
+            progress = 1f,
+            collapseFromProgress = 1f,
+            baseAlpha = 1f,
+            maxRadius = 33f,
+            strokeWidthPx = 7.5f,
+            density = 3f,
+        )
+        assertEquals(1f, start.speed, 0.0001f)
+        assertTrue(start.blurRadius > 10f)
+        assertFalse(start.isExpanding)
+
+        val end = calculateTouchRingMotionBlur(
+            isExpanding = false,
+            isCollapsing = true,
+            progress = 0f,
+            collapseFromProgress = 1f,
+            baseAlpha = 0f,
+            maxRadius = 33f,
+            strokeWidthPx = 7.5f,
+            density = 3f,
+        )
+        assertEquals(0f, end.speed, 0.0001f)
+        assertEquals(0f, end.blurRadius, 0.0001f)
+        assertEquals(0f, end.blurAlpha, 0.0001f)
+    }
 }
 

@@ -4,16 +4,19 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import kotlin.math.roundToInt
 
 /**
  * 点击 / 长按反馈圆环，整个圆环用 Canvas 画：
  * - 视图不设背景，窗口用半透明格式，空闲时什么都不画（完全透明），所以不会出现方形图块；
  * - 半径永远不超过视图短边的一半，描边画在半径内侧，不会被窗口边界裁切；
- * - 窗口由服务常驻，只移动位置，不随每次点击 add/remove。
+ * - 窗口由服务常驻，只移动位置，不随每次点击 add/remove；
+ * - 展开与缩放过程中叠加一层动态模糊（径向运动拖影与高斯羽化层），静止时保持清晰凝聚。
  *
  * 动画：
  * - [tap]：从内向外展开 [EXPAND_MS] → 停留 [TAP_HOLD_MS] → 从外向内收缩并淡出 [COLLAPSE_MS]
@@ -23,6 +26,11 @@ import android.view.animation.DecelerateInterpolator
 class TouchRingView(context: Context) : View(context) {
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    // 动态模糊专用画笔：环体动态模糊、径向拖尾与填充光晕
+    private val blurRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val blurTrailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val blurFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
     var accent: Int = 0xFFC96442.toInt()
         set(value) { field = value; invalidate() }
@@ -43,9 +51,39 @@ class TouchRingView(context: Context) : View(context) {
     private var token = 0
     private val autoCollapse = Runnable { collapse() }
 
+    // BlurMaskFilter 缓存，按 0.5px 量化对齐，避免每帧高频分配
+    private var lastRingBlurRadius = -1f
+    private var cachedRingBlurFilter: BlurMaskFilter? = null
+    private var lastTrailBlurRadius = -1f
+    private var cachedTrailBlurFilter: BlurMaskFilter? = null
+
     init {
         background = null
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        // 软件图层确保 BlurMaskFilter 在全平台与所有 Android 版本稳定高保真渲染
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
+    }
+
+    private fun getRingBlurFilter(radiusPx: Float): BlurMaskFilter? {
+        if (radiusPx < 0.5f) return null
+        val q = (radiusPx * 2f).roundToInt() / 2f
+        if (q < 0.5f) return null
+        if (q != lastRingBlurRadius || cachedRingBlurFilter == null) {
+            lastRingBlurRadius = q
+            cachedRingBlurFilter = BlurMaskFilter(q, BlurMaskFilter.Blur.NORMAL)
+        }
+        return cachedRingBlurFilter
+    }
+
+    private fun getTrailBlurFilter(radiusPx: Float): BlurMaskFilter? {
+        if (radiusPx < 0.5f) return null
+        val q = (radiusPx * 2f).roundToInt() / 2f
+        if (q < 0.5f) return null
+        if (q != lastTrailBlurRadius || cachedTrailBlurFilter == null) {
+            lastTrailBlurRadius = q
+            cachedTrailBlurFilter = BlurMaskFilter(q, BlurMaskFilter.Blur.NORMAL)
+        }
+        return cachedTrailBlurFilter
     }
 
     /** 点击：展开 → 停留 → 收缩淡出。 */
@@ -186,16 +224,71 @@ class TouchRingView(context: Context) : View(context) {
         if (limit <= 0f) return
         val r = minOf(maxRadius, limit) * progress
         val collapsing = phase == Phase.COLLAPSING
+        val expanding = phase == Phase.EXPANDING
         val shrink = if (collapsing) 1f - progress / collapseFromProgress else 0f
         val alpha = if (collapsing) collapseFromAlpha * (1f - shrink) else expandAlpha(progress)
         // 收缩时线条略微变粗，像向内收拢；描边画在 r 内侧，外缘正好等于 r
         val sw = minOf(strokeWidthPx * (1f + 0.4f * shrink), r)
         val cx = width / 2f
         val cy = height / 2f
-        fillPaint.color = withAlpha(accent, alpha * FILL_ALPHA)
+
+        // ── 动态模糊层 (Motion Blur Layer) ──
+        val blurParams = calculateTouchRingMotionBlur(
+            isExpanding = expanding,
+            isCollapsing = collapsing,
+            progress = progress,
+            collapseFromProgress = collapseFromProgress,
+            baseAlpha = alpha,
+            maxRadius = maxRadius,
+            strokeWidthPx = strokeWidthPx,
+            density = resources.displayMetrics.density,
+        )
+
+        if (blurParams.blurAlpha > 0.01f && blurParams.blurRadius >= 0.5f) {
+            val ringFilter = getRingBlurFilter(blurParams.blurRadius)
+            val trailFilter = getTrailBlurFilter((blurParams.blurRadius * 0.75f).coerceAtLeast(0.5f))
+
+            // 1. 径向运动拖影带：展开时向内落后，收缩时向外落后
+            val trailR = if (blurParams.isExpanding) {
+                (r - blurParams.trailLag).coerceAtLeast(0f)
+            } else {
+                minOf(r + blurParams.trailLag, limit)
+            }
+            if (trailR > 0f && trailFilter != null) {
+                blurTrailPaint.strokeWidth = blurParams.blurStrokeWidth * 0.85f
+                blurTrailPaint.color = withAlpha(accent, blurParams.blurAlpha * 0.60f)
+                blurTrailPaint.maskFilter = trailFilter
+                canvas.drawCircle(cx, cy, trailR, blurTrailPaint)
+            }
+
+            // 2. 动态高斯羽化模糊主环：随动速扩散
+            if (ringFilter != null) {
+                blurRingPaint.strokeWidth = blurParams.blurStrokeWidth
+                blurRingPaint.color = withAlpha(accent, blurParams.blurAlpha)
+                blurRingPaint.maskFilter = ringFilter
+                canvas.drawCircle(cx, cy, (r - sw / 2f).coerceAtLeast(0f), blurRingPaint)
+            }
+
+            // 3. 内部填充动态羽化扩散
+            if (blurParams.isExpanding && r > blurParams.blurRadius) {
+                blurFillPaint.color = withAlpha(accent, blurParams.blurAlpha * FILL_ALPHA * 0.75f)
+                blurFillPaint.maskFilter = ringFilter
+                canvas.drawCircle(cx, cy, r, blurFillPaint)
+            }
+        }
+
+        // ── 清晰主体层 (Sharp Core Ring & Fill) ──
+        val coreAlpha = if (blurParams.speed > 0f) {
+            alpha * (1f - 0.18f * blurParams.speed)
+        } else {
+            alpha
+        }
+
+        fillPaint.color = withAlpha(accent, coreAlpha * FILL_ALPHA)
         canvas.drawCircle(cx, cy, r, fillPaint)
+
         ringPaint.strokeWidth = sw
-        ringPaint.color = withAlpha(accent, alpha)
+        ringPaint.color = withAlpha(accent, coreAlpha)
         canvas.drawCircle(cx, cy, (r - sw / 2f).coerceAtLeast(0f), ringPaint)
     }
 
