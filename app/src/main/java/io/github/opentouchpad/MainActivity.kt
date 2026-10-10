@@ -234,7 +234,12 @@ class MainActivity : Activity() {
                 UI_ACCENT_COLORS,
                 { prefs.uiAccentColor },
                 { prefs.uiAccentColor = it },
-                onServiceUpdate = null,
+                onServiceUpdate = {
+                    TouchpadService.instance?.let { svc ->
+                        svc.reload()
+                        svc.updateTouchRingAppearance()
+                    }
+                },
                 allowCustomHex = true,
             ),
         ))
@@ -915,7 +920,7 @@ class MainActivity : Activity() {
         }
         allColors.forEach { color ->
             val selected = currentColor == color
-            val fill = if (color == 0) 0xFFC96442.toInt() else color
+            val fill = if (color == 0) accentColor else color
             val swatch = TextView(this).apply {
                 gravity = Gravity.CENTER
                 textSize = 15f
@@ -925,7 +930,7 @@ class MainActivity : Activity() {
                     shape = GradientDrawable.OVAL
                     if (color == 0) {
                         orientation = GradientDrawable.Orientation.TL_BR
-                        colors = intArrayOf(0xFFC96442.toInt(), 0xFFD97757.toInt())
+                        colors = intArrayOf(accentColor, accentColor)
                     } else {
                         setColor(color)
                     }

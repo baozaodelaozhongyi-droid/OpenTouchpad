@@ -40,8 +40,13 @@ internal fun customSwipeFrom(
     return swipe.takeIf { it.distance >= minDistancePx }
 }
 
-internal fun cursorViewOrigin(cursorX: Float, cursorY: Float): PanelPosition =
-    PanelPosition(cursorX.roundToInt(), cursorY.roundToInt())
+internal fun cursorHotspotOffset(sizePx: Float): Float =
+    if (sizePx > 0f) (sizePx * 0.09f).coerceAtLeast(2f) else 0f
+
+internal fun cursorViewOrigin(cursorX: Float, cursorY: Float, sizePx: Float = 0f): PanelPosition {
+    val o = cursorHotspotOffset(sizePx)
+    return PanelPosition((cursorX - o).roundToInt(), (cursorY - o).roundToInt())
+}
 
 internal fun clampPanelPosition(
     x: Int,
@@ -550,9 +555,14 @@ internal fun lerpAngleDeg(from: Float, to: Float, factor: Float): Float {
 
 /**
  * 解析光圈颜色：0 表示跟随主题默认色（深色模式 0xFFD97757 珊瑚陶土，浅色模式 0xFFC96442 暖陶土）。
+ * 若配置了界面强调色 [fallbackAccent]，默认跟随界面强调色。
  */
-internal fun resolveTouchRingColor(customColor: Int, isDark: Boolean): Int {
-    return if (customColor != 0) customColor else if (isDark) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+internal fun resolveTouchRingColor(customColor: Int, isDark: Boolean, fallbackAccent: Int = 0): Int {
+    if (customColor != 0) return customColor
+    if (fallbackAccent != 0) {
+        return if ((fallbackAccent ushr 24) == 0) (fallbackAccent or 0xFF000000.toInt()) else fallbackAccent
+    }
+    return if (isDark) 0xFFD97757.toInt() else 0xFFC96442.toInt()
 }
 
 /**

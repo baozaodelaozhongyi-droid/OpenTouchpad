@@ -9,8 +9,12 @@ import org.junit.Test
 class TouchpadMathTest {
     @Test
     fun arrowCursorUsesTopLeftAsThePointerHotspot() {
-        assertEquals(100, cursorViewOrigin(100f, 100f).x)
-        assertEquals(100, cursorViewOrigin(100f, 100f).y)
+        assertEquals(100, cursorViewOrigin(100f, 100f, 0f).x)
+        assertEquals(100, cursorViewOrigin(100f, 100f, 0f).y)
+        val offset = cursorHotspotOffset(100f)
+        assertEquals(9f, offset, 0.001f)
+        assertEquals(91, cursorViewOrigin(100f, 100f, 100f).x)
+        assertEquals(91, cursorViewOrigin(100f, 100f, 100f).y)
     }
 
     @Test
@@ -905,6 +909,14 @@ class TouchpadMathTest {
         val (lightSoft, lightStrong) = resolveUiAccentSoftColors(0xFFC96442.toInt(), isDark = false)
         assertEquals(0x1FC96442, lightSoft)
         assertEquals(0x66C96442, lightStrong)
+    }
+
+    @Test
+    fun touchRingColorFollowsFallbackAccentWhenZero() {
+        assertEquals(0xFF3B82F6.toInt(), resolveTouchRingColor(0, isDark = true, fallbackAccent = 0xFF3B82F6.toInt()))
+        assertEquals(0xFFD97757.toInt(), resolveTouchRingColor(0, isDark = true, fallbackAccent = 0))
+        assertEquals(0xFFC96442.toInt(), resolveTouchRingColor(0, isDark = false, fallbackAccent = 0))
+        assertEquals(0xFF141413.toInt(), resolveTouchRingColor(0xFF141413.toInt(), isDark = true, fallbackAccent = 0xFF3B82F6.toInt()))
     }
 }
 

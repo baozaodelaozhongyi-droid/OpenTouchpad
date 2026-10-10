@@ -409,7 +409,7 @@ class TouchpadService : AccessibilityService() {
         val lp = panelParams ?: return
         val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
         val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
-            ?: if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+            ?: resolveUiAccentColor(prefs.uiAccentColor, isDarkTheme())
         val light = Color.luminance(ballColor) > 0.55f
         val ballSize = (size * 0.86f).roundToInt()
         val halo = (ballSize * 0.06f).roundToInt().coerceAtLeast(dp(1))
@@ -902,7 +902,7 @@ class TouchpadService : AccessibilityService() {
         }
         val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
         val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
-            ?: if (isDarkTheme()) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+            ?: resolveUiAccentColor(prefs.uiAccentColor, isDarkTheme())
         val light = Color.luminance(ballColor) > 0.55f
 
         val ballSize = (size * 0.86f).roundToInt()
@@ -1279,9 +1279,6 @@ class TouchpadService : AccessibilityService() {
                 }
                 if (dragging) {
                     appendTrailPoint(dragTrail, cursorX, cursorY, dp(4).toFloat())
-                    if (prefs.touchRingEnabled) {
-                        moveTouchRing(cursorX, cursorY)
-                    }
                 }
             }
 
@@ -1983,10 +1980,8 @@ class TouchpadService : AccessibilityService() {
         dragging = true
         dragTrail.clear()
         dragTrail += TrailPoint(cursorX, cursorY)
-        // 起点显示长按圆环，之后跟着光标走（handlePadTouch 的 ACTION_MOVE）
         if (prefs.touchRingEnabled) {
-            moveTouchRing(cursorX, cursorY)
-            touchRing?.pressUntilRelease()
+            showTouchRing(cursorX, cursorY, 180)
         }
         refreshDragButtons()
     }
@@ -2008,7 +2003,7 @@ class TouchpadService : AccessibilityService() {
         appendTrailPoint(dragTrail, cursorX, cursorY, 0.5f)
         val trail = dragTrail.toList()
         if (prefs.touchRingEnabled) {
-            touchRing?.let { moveTouchRing(cursorX, cursorY) }
+            showTouchRing(cursorX, cursorY, 180)
         }
         cancelDrag()
         val start = trail.firstOrNull() ?: return
@@ -2054,7 +2049,7 @@ class TouchpadService : AccessibilityService() {
     private var touchRingParams: WindowManager.LayoutParams? = null
 
     private fun resolveTouchRingColor(): Int =
-        resolveTouchRingColor(prefs.touchRingColor, isDarkTheme())
+        resolveTouchRingColor(prefs.touchRingColor, isDarkTheme(), prefs.uiAccentColor)
 
     /** 常驻的反馈圆环窗口（透明、不可触摸），只移动位置，不反复 add/remove。 */
     private fun ensureTouchRing(): Pair<TouchRingView, WindowManager.LayoutParams>? {
@@ -2099,10 +2094,8 @@ class TouchpadService : AccessibilityService() {
      * 光标处点击 / 长按的视觉反馈：圆环从内向外展开，结束时从外向内收缩消失。
      * [holdMs] < 250 视为点击，否则圆环保持展开直到按住结束。
      */
-    private fun showTouchRing(x: Float, y: Float, holdMs: Long) {
+    private fun showTouchRing(x: Float, y: Float, holdMs: Long = 0L) {
         if (!prefs.touchRingEnabled) return
-        // 拖拽锁定进行中，圆环正跟着光标标记拖拽；别的点击不抢走它
-        if (dragging) return
         moveTouchRing(x, y)
         val v = touchRing ?: return
         if (holdMs >= 250) v.press(holdMs) else v.tap()
@@ -2110,7 +2103,6 @@ class TouchpadService : AccessibilityService() {
 
     /**
      * 面板重建后把圆环窗口重新放到最上层（只在重建时做，平时不动它）。
-     * 拖拽锁定进行中时，圆环直接恢复成展开状态并留在光标处。
      */
     private fun raiseTouchRing() {
         val v = touchRing
@@ -2120,10 +2112,6 @@ class TouchpadService : AccessibilityService() {
             runCatching { wm.removeViewImmediate(v) }
             runCatching { wm.addView(v, lp) }
         }
-        if (dragging && prefs.touchRingEnabled) {
-            moveTouchRing(cursorX, cursorY)
-            touchRing?.holdExpanded()
-        }
     }
 
     private fun removeTouchRing() {
@@ -2132,20 +2120,20 @@ class TouchpadService : AccessibilityService() {
         touchRingParams = null
     }
 
-    /** 拖拽进行中，面板上的「拖拽锁定」按钮改成陶土色，提示再按一次结束。 */
+    /** 拖拽进行中，面板上的「拖拽锁定」按钮高亮为强调色，提示拖拽已激活、再按一次结束。 */
     private fun refreshDragButtons() {
         val dark = isDarkTheme()
         val p = palette(dark)
-        val accentBg = if (dark) 0xFF5A3A2E.toInt() else 0xFFF6E3DA.toInt()
-        val accentStroke = if (dark) 0x66D97757 else 0x66C96442
-        val accentText = if (dark) 0xFFF0B9A3.toInt() else 0xFFC96442.toInt()
+        val accent = resolveUiAccentColor(prefs.uiAccentColor, dark)
+        val accentText = resolveOnAccentColor(accent)
+        val (_, accentSoftStrong) = resolveUiAccentSoftColors(accent, dark)
         actionViews.forEachIndexed { index, view ->
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
             if (prefs.buttons.getOrNull(slot) != PadAction.DRAG_LOCK) return@forEachIndexed
             val iv = view as? ImageView ?: return@forEachIndexed
             val radius = minOf(view.width, view.height).takeIf { it > 0 }?.let { it / 2f } ?: dp(14).toFloat()
             if (dragging) {
-                iv.background = buttonBackground(accentBg, accentStroke, p.ripple, radius)
+                iv.background = buttonBackground(accent, accentSoftStrong, p.ripple, radius)
                 iv.setColorFilter(accentText)
             } else {
                 iv.background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, radius)
@@ -2253,7 +2241,7 @@ class TouchpadService : AccessibilityService() {
 
     private fun updateCursor() {
         val p = cursorParams ?: return
-        val origin = cursorViewOrigin(cursorX, cursorY)
+        val origin = cursorViewOrigin(cursorX, cursorY, p.width.toFloat())
         p.x = origin.x
         p.y = origin.y
         cursorView?.let { runCatching { wm.updateViewLayout(it, p) } }
