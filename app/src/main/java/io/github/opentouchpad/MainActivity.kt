@@ -79,6 +79,9 @@ class MainActivity : Activity() {
     private var lastInsetsBottom = 0
     private var activeAnimator: ValueAnimator? = null
     private var isSyncingScroll = false
+    private var settingsBgImageView: ImageView? = null
+    private var settingsBgScrimView: View? = null
+    private var settingsBgBitmap: android.graphics.Bitmap? = null
 
     private val currentTheme: SettingsTheme
         get() = resolveSettingsTheme(this, darkUi, prefs.dynamicColor, prefs.uiAccentColor)
@@ -123,10 +126,31 @@ class MainActivity : Activity() {
         attachScrollSync(baseScroller)
         rootContainer = FrameLayout(this).apply {
             setBackgroundColor(pageColor)
+
+            val bgIv = ImageView(this@MainActivity).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                visibility = View.GONE
+            }
+            settingsBgImageView = bgIv
+            addView(bgIv, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+
+            val scrimView = View(this@MainActivity).apply {
+                visibility = View.GONE
+            }
+            settingsBgScrimView = scrimView
+            addView(scrimView, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+
             addView(baseScroller, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
+            applySettingsBackground()
             // Android 15 起强制全面屏：内容会画到状态栏下面，这里按系统栏高度补内边距。
             setOnApplyWindowInsetsListener { _, insets ->
                 val top: Int
@@ -173,6 +197,68 @@ class MainActivity : Activity() {
         val oldAnim = activeAnimator
         activeAnimator = null
         oldAnim?.cancel()
+        settingsBgBitmap?.recycle()
+        settingsBgBitmap = null
+    }
+
+    private fun applySettingsBackground() {
+        val bgFile = CustomBackgroundManager.getSettingsBgFile(this)
+        if (bgFile.exists() && bgFile.length() > 0) {
+            if (settingsBgBitmap == null) {
+                val dm = resources.displayMetrics
+                val maxDim = maxOf(dm.widthPixels, dm.heightPixels).coerceAtLeast(1080)
+                settingsBgBitmap = CustomBackgroundManager.loadBackgroundBitmap(bgFile, maxDim)
+            }
+            val bmp = settingsBgBitmap
+            if (bmp != null) {
+                settingsBgImageView?.setImageBitmap(bmp)
+                settingsBgImageView?.visibility = View.VISIBLE
+                val scrimAlpha = (255 * prefs.settingsBgScrimPercent / 100).coerceIn(0, 255)
+                val scrimColor = Color.argb(scrimAlpha, Color.red(pageColor), Color.green(pageColor), Color.blue(pageColor))
+                settingsBgScrimView?.setBackgroundColor(scrimColor)
+                settingsBgScrimView?.visibility = View.VISIBLE
+                return
+            }
+        }
+        settingsBgImageView?.setImageDrawable(null)
+        settingsBgImageView?.visibility = View.GONE
+        settingsBgScrimView?.visibility = View.GONE
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode == RESULT_OK && data?.data != null) {
+            val uri = data.data ?: return
+            when (requestCode) {
+                REQUEST_CODE_PICK_TOUCHPAD_BG -> {
+                    val success = CustomBackgroundManager.saveBackgroundFromUri(
+                        this, uri, CustomBackgroundManager.getTouchpadBgFile(this), maxDim = 1200
+                    )
+                    if (success) {
+                        toast(getString(R.string.bg_image_applied))
+                        TouchpadService.instance?.reloadTouchpadBackground()
+                        recreateKeepingScroll()
+                    } else {
+                        toast(getString(R.string.bg_image_failed))
+                    }
+                }
+                REQUEST_CODE_PICK_SETTINGS_BG -> {
+                    val dm = resources.displayMetrics
+                    val maxDim = maxOf(dm.widthPixels, dm.heightPixels).coerceAtLeast(1080)
+                    val success = CustomBackgroundManager.saveBackgroundFromUri(
+                        this, uri, CustomBackgroundManager.getSettingsBgFile(this), maxDim = maxDim
+                    )
+                    if (success) {
+                        toast(getString(R.string.bg_image_applied))
+                        settingsBgBitmap?.recycle()
+                        settingsBgBitmap = null
+                        recreateKeepingScroll()
+                    } else {
+                        toast(getString(R.string.bg_image_failed))
+                    }
+                }
+            }
+        }
     }
 
     override fun onStart() {
@@ -277,12 +363,8 @@ class MainActivity : Activity() {
                 append(getString(R.string.label_dynamic_color))
             }
         }
-        addCollapsible(
-            "appearance",
-            getString(R.string.sec_appearance),
-            R.drawable.ic_lu_layers_2,
-            appearanceSummary,
-            defaultExpanded = true,
+        val hasSettingsBg = CustomBackgroundManager.hasSettingsBg(this)
+        val appearanceRows = mutableListOf<View>(
             themeModeRow(),
             switchRow(
                 getString(R.string.switch_dynamic_color),
@@ -310,6 +392,48 @@ class MainActivity : Activity() {
                 },
                 allowCustomHex = true,
             ),
+            customBackgroundRow(
+                title = getString(R.string.set_settings_bg),
+                hint = getString(R.string.set_settings_bg_hint),
+                hasCustomBg = hasSettingsBg,
+                onPick = {
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
+                    startActivityForResult(intent, REQUEST_CODE_PICK_SETTINGS_BG)
+                },
+                onClear = {
+                    CustomBackgroundManager.clearBackground(CustomBackgroundManager.getSettingsBgFile(this))
+                    settingsBgBitmap?.recycle()
+                    settingsBgBitmap = null
+                    toast(getString(R.string.bg_image_cleared))
+                    recreateKeepingScroll()
+                },
+            ),
+        )
+        if (hasSettingsBg) {
+            appearanceRows.add(
+                slider(
+                    getString(R.string.set_settings_bg_scrim),
+                    10,
+                    95,
+                    prefs.settingsBgScrimPercent,
+                    unit = "%",
+                    hint = getString(R.string.set_settings_bg_scrim_hint),
+                    onChange = {
+                        prefs.settingsBgScrimPercent = it
+                        val scrimAlpha = (255 * it / 100).coerceIn(0, 255)
+                        val scrimColor = Color.argb(scrimAlpha, Color.red(pageColor), Color.green(pageColor), Color.blue(pageColor))
+                        settingsBgScrimView?.setBackgroundColor(scrimColor)
+                    },
+                )
+            )
+        }
+        addCollapsible(
+            "appearance",
+            getString(R.string.sec_appearance),
+            R.drawable.ic_lu_layers_2,
+            appearanceSummary,
+            defaultExpanded = true,
+            *appearanceRows.toTypedArray(),
         )
 
         // ── 触控板 ──
@@ -356,6 +480,21 @@ class MainActivity : Activity() {
                 { prefs.touchpadColor = it },
                 onServiceUpdate = { TouchpadService.instance?.updatePanelAppearance() },
                 allowCustomHex = true,
+            ),
+            customBackgroundRow(
+                title = getString(R.string.set_touchpad_bg),
+                hint = getString(R.string.set_touchpad_bg_hint),
+                hasCustomBg = CustomBackgroundManager.hasTouchpadBg(this),
+                onPick = {
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
+                    startActivityForResult(intent, REQUEST_CODE_PICK_TOUCHPAD_BG)
+                },
+                onClear = {
+                    CustomBackgroundManager.clearBackground(CustomBackgroundManager.getTouchpadBgFile(this))
+                    TouchpadService.instance?.reloadTouchpadBackground()
+                    toast(getString(R.string.bg_image_cleared))
+                    recreateKeepingScroll()
+                },
             ),
             slider(
                 getString(R.string.set_opacity),
@@ -632,6 +771,11 @@ class MainActivity : Activity() {
             },
             actionRow(getString(R.string.btn_reset_all), destructive = true) {
                 prefs.resetAll()
+                CustomBackgroundManager.clearBackground(CustomBackgroundManager.getTouchpadBgFile(this))
+                CustomBackgroundManager.clearBackground(CustomBackgroundManager.getSettingsBgFile(this))
+                TouchpadService.instance?.reloadTouchpadBackground()
+                settingsBgBitmap?.recycle()
+                settingsBgBitmap = null
                 expandedCardIds.clear()
                 hasInitializedCardDefaults = false
                 applyExcludeFromRecents(false)
@@ -949,6 +1093,78 @@ class MainActivity : Activity() {
         setTextColor(tertiaryTextColor)
         setLineSpacing(0f, 1.45f)
         setPadding(0, dp(4), 0, 0)
+    }
+
+    private fun customBackgroundRow(
+        title: String,
+        hint: String? = null,
+        hasCustomBg: Boolean,
+        onPick: () -> Unit,
+        onClear: () -> Unit,
+    ): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(56)
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+        }
+
+        val textCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        textCol.addView(titleText(title))
+        if (!hint.isNullOrBlank()) {
+            textCol.addView(hintText(hint))
+        }
+        row.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = dp(12)
+        })
+
+        val btnContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        if (hasCustomBg) {
+            val clearBtn = TextView(this).apply {
+                text = getString(R.string.btn_clear_image)
+                textSize = 13f
+                typeface = sansMedium
+                setTextColor(dangerColor)
+                setPadding(dp(10), dp(6), dp(10), dp(6))
+                background = ripple(roundedSurface(trackColor, 999), rippleColor, 999)
+                isClickable = true
+                setOnClickListener {
+                    haptic(it)
+                    onClear()
+                }
+            }
+            btnContainer.addView(clearBtn, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(8) })
+        }
+
+        val pickBtn = TextView(this).apply {
+            text = getString(R.string.btn_pick_image)
+            textSize = 13f
+            typeface = sansMedium
+            setTextColor(onAccentColor)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = ripple(roundedSurface(accentColor, 999), 0x33FAF9F5, 999)
+            isClickable = true
+            setOnClickListener {
+                haptic(it)
+                onPick()
+            }
+        }
+        btnContainer.addView(pickBtn)
+
+        row.addView(btnContainer, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        return row
     }
 
     private fun actionRow(title: String, destructive: Boolean = false, onClick: () -> Unit): View =
@@ -1987,6 +2203,8 @@ class MainActivity : Activity() {
     private companion object {
         const val KEY_SCROLL_Y = "settings_scroll_y"
         const val THEME_SELECTOR_TRACK_TAG = "theme_selector_track"
+        const val REQUEST_CODE_PICK_TOUCHPAD_BG = 1001
+        const val REQUEST_CODE_PICK_SETTINGS_BG = 1002
         val SYNCING = Any()
         val expandedCardIds = mutableSetOf<String>()
         var hasInitializedCardDefaults = false

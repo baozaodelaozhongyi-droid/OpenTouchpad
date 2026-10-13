@@ -71,9 +71,22 @@ class TouchpadService : AccessibilityService() {
     private var panelParams: WindowManager.LayoutParams? = null
     private var padArea: View? = null
     private var padControlRect = ControlRect(0, 0, 0, 0)
+    private var touchpadCustomBgBitmap: android.graphics.Bitmap? = null
     private var miniBallView: View? = null
     private val actionViews = mutableListOf<View>()
     private val actionSlots = mutableListOf<Int>()
+
+    fun reloadTouchpadBackground() {
+        touchpadCustomBgBitmap?.recycle()
+        touchpadCustomBgBitmap = CustomBackgroundManager.loadBackgroundBitmap(
+            CustomBackgroundManager.getTouchpadBgFile(this),
+            maxDim = 1200
+        )
+        (padArea as? TouchpadSurfaceView)?.let {
+            it.customBackgroundBitmap = touchpadCustomBgBitmap
+            it.invalidate()
+        }
+    }
 
     private var cursorView: View? = null
     private var cursorParams: WindowManager.LayoutParams? = null
@@ -307,6 +320,8 @@ class TouchpadService : AccessibilityService() {
         cursorView?.let { runCatching { wm.removeView(it) } }
         cursorView = null
         cursorParams = null
+        touchpadCustomBgBitmap?.recycle()
+        touchpadCustomBgBitmap = null
         super.onDestroy()
     }
 
@@ -806,6 +821,13 @@ class TouchpadService : AccessibilityService() {
             baseColor = p.padBg
             strokeColor = p.padStroke
             opacityPercent = prefs.opacityPercent
+            if (touchpadCustomBgBitmap == null && CustomBackgroundManager.hasTouchpadBg(this@TouchpadService)) {
+                touchpadCustomBgBitmap = CustomBackgroundManager.loadBackgroundBitmap(
+                    CustomBackgroundManager.getTouchpadBgFile(this@TouchpadService),
+                    maxDim = 1200
+                )
+            }
+            customBackgroundBitmap = touchpadCustomBgBitmap
             setOnTouchListener { _, e -> handlePadTouch(e); true }
         }
         padArea = pad
@@ -883,6 +905,13 @@ class TouchpadService : AccessibilityService() {
             baseColor = p.padBg
             strokeColor = p.padStroke
             opacityPercent = prefs.opacityPercent
+            if (touchpadCustomBgBitmap == null && CustomBackgroundManager.hasTouchpadBg(this@TouchpadService)) {
+                touchpadCustomBgBitmap = CustomBackgroundManager.loadBackgroundBitmap(
+                    CustomBackgroundManager.getTouchpadBgFile(this@TouchpadService),
+                    maxDim = 1200
+                )
+            }
+            customBackgroundBitmap = touchpadCustomBgBitmap
         }
 
         actionViews.forEachIndexed { index, view ->

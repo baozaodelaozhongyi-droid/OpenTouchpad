@@ -89,6 +89,11 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("dynamicColor", false)
         set(v) = sp.edit().putBoolean("dynamicColor", v).apply()
 
+    /** 设置页自定义背景遮罩浓度 (10% ~ 95%)，默认 70% */
+    var settingsBgScrimPercent: Int
+        get() = sp.getInt("settingsBgScrimPercent", 70)
+        set(v) = sp.edit().putInt("settingsBgScrimPercent", v.coerceIn(10, 95)).apply()
+
     // ── 光标 ──
     var sensitivity: Float
         get() = sp.getFloat("sensitivity", 1.4f)

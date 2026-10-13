@@ -182,4 +182,15 @@
     <string name="custom_color_invalid">Please enter a valid hex color code (format: #RRGGBB)</string>
     <string name="set_ui_accent_color">Buttons &amp; Sliders Color</string>
     <string name="color_dynamic">Dynamic Wallpaper</string>
+    <string name="set_settings_bg">Settings Page Wallpaper</string>
+    <string name="set_settings_bg_hint">Use a custom image from gallery as settings background</string>
+    <string name="set_settings_bg_scrim">Wallpaper Overlay Scrim</string>
+    <string name="set_settings_bg_scrim_hint">Adjust overlay opacity so cards and text remain readable</string>
+    <string name="set_touchpad_bg">Touchpad Custom Wallpaper</string>
+    <string name="set_touchpad_bg_hint">Use an image as the touchpad panel surface background</string>
+    <string name="btn_pick_image">Pick Image</string>
+    <string name="btn_clear_image">Remove</string>
+    <string name="bg_image_applied">Custom background applied</string>
+    <string name="bg_image_cleared">Custom background removed</string>
+    <string name="bg_image_failed">Failed to load image, please try again</string>
 </resources>

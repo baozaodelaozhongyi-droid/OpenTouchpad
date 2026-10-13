@@ -1040,5 +1040,18 @@ class TouchpadMathTest {
         val theme = synthesizeMaterialYouTheme(wallpaperPrimary, isDark = false, customAccentColor = COLOR_DYNAMIC, fallbackDynamicAccent = customDynamic)
         assertEquals(customDynamic, theme.accentColor)
     }
+
+    @Test
+    fun customBackgroundManagerFileHelpersAndClearWork() {
+        val tempDir = java.io.File(System.getProperty("java.io.tmpdir"), "otp_test_${System.currentTimeMillis()}")
+        tempDir.mkdirs()
+        val testFile = java.io.File(tempDir, "test_bg.png")
+        testFile.writeText("test_content")
+        assertTrue(testFile.exists())
+        val cleared = CustomBackgroundManager.clearBackground(testFile)
+        assertTrue(cleared)
+        assertFalse(testFile.exists())
+        tempDir.deleteRecursively()
+    }
 }
 

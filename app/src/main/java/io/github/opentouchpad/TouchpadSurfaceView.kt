@@ -3,9 +3,11 @@ package io.github.opentouchpad
 import android.animation.TimeInterpolator
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -29,9 +31,17 @@ class TouchpadSurfaceView(context: Context) : View(context) {
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
     }
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
     private val boundsRect = RectF()
     private val clipPath = Path()
+    private val bgMatrix = Matrix()
+
+    var customBackgroundBitmap: Bitmap? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
 
     var cornerRadiusPx: Float = 0f
         set(value) {
@@ -120,23 +130,41 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         canvas.save()
         canvas.clipPath(clipPath)
 
-        // 1. 液态玻璃光学渐变底色（对角线折射：左上透光微亮，右下沉淀深邃）
+        // 1. 底色渲染：优先使用用户自定义背景图片（Center-Crop 填充），未设置时使用液态玻璃光学渐变
         val fillAlpha = (255 * opacityPercent / 100).coerceIn(0, 255)
-        val topLightColor = lightenColor(baseColor, 0.16f)
-        val bottomDepthColor = darkenColor(baseColor, 0.08f)
-        val glassBaseShader = LinearGradient(
-            0f, 0f, w, h,
-            intArrayOf(
-                Color.argb(fillAlpha, Color.red(topLightColor), Color.green(topLightColor), Color.blue(topLightColor)),
-                Color.argb(fillAlpha, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor)),
-                Color.argb(fillAlpha, Color.red(bottomDepthColor), Color.green(bottomDepthColor), Color.blue(bottomDepthColor)),
-            ),
-            floatArrayOf(0f, 0.45f, 1f),
-            Shader.TileMode.CLAMP,
-        )
-        surfacePaint.shader = glassBaseShader
-        canvas.drawRect(boundsRect, surfacePaint)
-        surfacePaint.shader = null
+        val bgBmp = customBackgroundBitmap
+        if (bgBmp != null && !bgBmp.isRecycled) {
+            val srcW = bgBmp.width.toFloat()
+            val srcH = bgBmp.height.toFloat()
+            if (srcW > 0f && srcH > 0f) {
+                val scale = maxOf(w / srcW, h / srcH)
+                val destW = srcW * scale
+                val destH = srcH * scale
+                val dx = (w - destW) / 2f
+                val dy = (h - destH) / 2f
+                bgMatrix.reset()
+                bgMatrix.postScale(scale, scale)
+                bgMatrix.postTranslate(dx, dy)
+                bitmapPaint.alpha = fillAlpha
+                canvas.drawBitmap(bgBmp, bgMatrix, bitmapPaint)
+            }
+        } else {
+            val topLightColor = lightenColor(baseColor, 0.16f)
+            val bottomDepthColor = darkenColor(baseColor, 0.08f)
+            val glassBaseShader = LinearGradient(
+                0f, 0f, w, h,
+                intArrayOf(
+                    Color.argb(fillAlpha, Color.red(topLightColor), Color.green(topLightColor), Color.blue(topLightColor)),
+                    Color.argb(fillAlpha, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor)),
+                    Color.argb(fillAlpha, Color.red(bottomDepthColor), Color.green(bottomDepthColor), Color.blue(bottomDepthColor)),
+                ),
+                floatArrayOf(0f, 0.45f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            surfacePaint.shader = glassBaseShader
+            canvas.drawRect(boundsRect, surfacePaint)
+            surfacePaint.shader = null
+        }
 
         // 2. 毛玻璃漫反射透光层（顶部微光漫射与立体透光）
         val restTopAlpha = (36 * opacityPercent / 100).coerceIn(0, 255)
