@@ -248,6 +248,7 @@ class MainActivity : Activity() {
         fun addCollapsible(
             cardId: String,
             title: String,
+            iconResId: Int? = null,
             summary: String? = null,
             defaultExpanded: Boolean = false,
             vararg rows: View,
@@ -255,6 +256,7 @@ class MainActivity : Activity() {
             col.addView(collapsibleCard(
                 cardId = cardId,
                 title = title,
+                iconResId = iconResId,
                 summary = summary,
                 defaultExpanded = defaultExpanded,
                 onToggle = { updateExpandAllText() },
@@ -278,6 +280,7 @@ class MainActivity : Activity() {
         addCollapsible(
             "appearance",
             getString(R.string.sec_appearance),
+            R.drawable.ic_lu_layers_2,
             appearanceSummary,
             defaultExpanded = true,
             themeModeRow(),
@@ -318,6 +321,7 @@ class MainActivity : Activity() {
         addCollapsible(
             "pad",
             getString(R.string.sec_pad),
+            R.drawable.ic_lu_touchpad,
             padSummary,
             defaultExpanded = true,
             slider(
@@ -431,6 +435,7 @@ class MainActivity : Activity() {
         addCollapsible(
             "buttons",
             getString(R.string.sec_buttons),
+            R.drawable.ic_lu_mouse_pointer_click,
             buttonsSummary,
             defaultExpanded = true,
             *buttonRows.toTypedArray(),
@@ -445,6 +450,7 @@ class MainActivity : Activity() {
         addCollapsible(
             "ball",
             getString(R.string.sec_ball),
+            R.drawable.ic_lu_circle_dot,
             ballSummary,
             defaultExpanded = false,
             slider(
@@ -512,6 +518,7 @@ class MainActivity : Activity() {
         addCollapsible(
             "ball_gestures",
             getString(R.string.sec_ball_gestures),
+            R.drawable.ic_lu_hand,
             ballGesturesSummary,
             defaultExpanded = false,
             *ballGestureRows.toTypedArray(),
@@ -576,6 +583,7 @@ class MainActivity : Activity() {
         addCollapsible(
             "cursor",
             getString(R.string.sec_cursor),
+            R.drawable.ic_lu_pointer,
             cursorSummary,
             defaultExpanded = false,
             *cursorRows.toTypedArray(),
@@ -586,6 +594,7 @@ class MainActivity : Activity() {
         addCollapsible(
             "feel",
             getString(R.string.sec_feel),
+            R.drawable.ic_lu_move,
             feelSummary,
             defaultExpanded = false,
             slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt(), format = { String.format(java.util.Locale.US, "%.1f×", it / 10f) }) { prefs.sensitivity = it / 10f },
@@ -614,6 +623,7 @@ class MainActivity : Activity() {
         addCollapsible(
             "about",
             getString(R.string.sec_about),
+            R.drawable.ic_lu_settings,
             aboutSummary,
             defaultExpanded = false,
             actionRow(getString(R.string.btn_setup)) { showDialog(getString(R.string.steps_title), getString(R.string.steps_body)) },
@@ -755,10 +765,11 @@ class MainActivity : Activity() {
         return bar
     }
 
-    /** 具有 Flowmix 风格的分组折叠卡片：包含大号触控标题、实时状态摘要胶囊与平滑旋转指示箭头 */
+    /** 具有 Flowmix / Material 3 风格的分组折叠卡片：包含头部彩色矢量图标、大号触控标题、实时状态摘要胶囊与平滑旋转指示箭头 */
     private fun collapsibleCard(
         cardId: String,
         title: String,
+        iconResId: Int? = null,
         summary: String? = null,
         defaultExpanded: Boolean = false,
         onToggle: (() -> Unit)? = null,
@@ -772,13 +783,14 @@ class MainActivity : Activity() {
 
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = borderedSurface(surfaceColor, borderColor, 16)
+            // Material 3 容器风格：24dp 大圆角，依赖色阶呈现层次，移除原有生硬描边
+            background = roundedSurface(surfaceColor, 24)
             clipToOutline = true
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                topMargin = dp(12)
+                topMargin = dp(14)
             }
         }
 
@@ -787,16 +799,29 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(56)
-            setPadding(dp(16), dp(10), dp(14), dp(10))
-            background = ripple(null, rippleColor, 0)
+            setPadding(dp(18), dp(12), dp(16), dp(12))
+            background = ripple(null, rippleColor, 24)
             isClickable = true
             contentDescription = "$title, ${if (isExpanded) "已展开" else "已折叠"}"
+        }
+
+        // 头部主题色前置矢量图标（Material 3 / Flowmix 核心特征）
+        if (iconResId != null && iconResId != 0) {
+            val iconIv = ImageView(this).apply {
+                setImageResource(iconResId)
+                setColorFilter(accentColor, PorterDuff.Mode.SRC_IN)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            val iconLp = LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                marginEnd = dp(12)
+            }
+            header.addView(iconIv, iconLp)
         }
 
         val titleTv = TextView(this).apply {
             text = title
             textSize = 17f
-            typeface = serif
+            typeface = sansMedium
             setTextColor(textColor)
         }
         header.addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -809,9 +834,7 @@ class MainActivity : Activity() {
                 typeface = sansMedium
                 setTextColor(secondaryTextColor)
                 setPadding(dp(10), dp(4), dp(10), dp(4))
-                background = roundedSurface(trackColor, 999).apply {
-                    setStroke(maxOf(1, dp(1)), borderColor)
-                }
+                background = roundedSurface(trackColor, 999)
             }
             val chipLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(10)
@@ -837,21 +860,21 @@ class MainActivity : Activity() {
             visibility = if (isExpanded) View.VISIBLE else View.GONE
         }
         box.addView(headerDivider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, dp(1) / 2)).apply {
-            marginStart = dp(16); marginEnd = dp(16)
+            marginStart = dp(18); marginEnd = dp(18)
         })
 
         // 内容容器
         val contentBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = if (isExpanded) View.VISIBLE else View.GONE
-            setPadding(0, dp(4), 0, dp(4))
+            setPadding(0, dp(4), 0, dp(6))
         }
 
         rows.forEachIndexed { i, row ->
             if (i > 0) {
                 contentBox.addView(View(this).apply { setBackgroundColor(borderColor) },
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, dp(1) / 2)).apply {
-                        marginStart = dp(16); marginEnd = dp(16)
+                        marginStart = dp(18); marginEnd = dp(18)
                     })
             }
             contentBox.addView(row)
@@ -900,14 +923,14 @@ class MainActivity : Activity() {
     private fun card(vararg rows: View): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = borderedSurface(surfaceColor, borderColor, 16)
+            background = roundedSurface(surfaceColor, 24)
             clipToOutline = true
-            setPadding(0, dp(4), 0, dp(4))
+            setPadding(0, dp(4), 0, dp(6))
         }
         rows.forEachIndexed { i, row ->
             if (i > 0) box.addView(View(this).apply { setBackgroundColor(borderColor) },
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, dp(1) / 2)).apply {
-                    marginStart = dp(16); marginEnd = dp(16)
+                    marginStart = dp(18); marginEnd = dp(18)
                 })
             box.addView(row)
         }
