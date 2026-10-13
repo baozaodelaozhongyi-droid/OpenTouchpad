@@ -488,12 +488,8 @@ class MainActivity : Activity() {
         val currentPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
             ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
         val padSummary = "${currentPanelWidth}dp · ${prefs.opacityPercent}%"
-        addCollapsible(
-            "pad",
-            getString(R.string.sec_pad),
-            R.drawable.ic_lu_touchpad,
-            padSummary,
-            defaultExpanded = true,
+        val hasTouchpadBg = CustomBackgroundManager.hasTouchpadBg(this)
+        val padRows = mutableListOf(
             slider(
                 getString(R.string.set_pad_width),
                 PANEL_MIN_WIDTH_DP,
@@ -530,7 +526,7 @@ class MainActivity : Activity() {
             customBackgroundRow(
                 title = getString(R.string.set_touchpad_bg),
                 hint = getString(R.string.set_touchpad_bg_hint),
-                hasCustomBg = CustomBackgroundManager.hasTouchpadBg(this),
+                hasCustomBg = hasTouchpadBg,
                 onPick = {
                     launchImagePicker(REQUEST_CODE_PICK_TOUCHPAD_BG)
                 },
@@ -541,6 +537,38 @@ class MainActivity : Activity() {
                     recreateKeepingScroll()
                 },
             ),
+        )
+        if (hasTouchpadBg) {
+            padRows.add(
+                slider(
+                    getString(R.string.set_touchpad_bg_focus_y),
+                    0,
+                    100,
+                    prefs.touchpadBgFocusYPercent,
+                    unit = "%",
+                    hint = getString(R.string.set_touchpad_bg_focus_y_hint),
+                    onChange = {
+                        prefs.touchpadBgFocusYPercent = it
+                        TouchpadService.instance?.updatePanelAppearance()
+                    },
+                )
+            )
+            padRows.add(
+                slider(
+                    getString(R.string.set_touchpad_bg_focus_x),
+                    0,
+                    100,
+                    prefs.touchpadBgFocusXPercent,
+                    unit = "%",
+                    hint = getString(R.string.set_touchpad_bg_focus_x_hint),
+                    onChange = {
+                        prefs.touchpadBgFocusXPercent = it
+                        TouchpadService.instance?.updatePanelAppearance()
+                    },
+                )
+            )
+        }
+        padRows.add(
             slider(
                 getString(R.string.set_opacity),
                 20,
@@ -551,7 +579,9 @@ class MainActivity : Activity() {
                     prefs.opacityPercent = it
                     TouchpadService.instance?.updatePanelAppearance()
                 },
-            ),
+            )
+        )
+        padRows.add(
             switchRow(getString(R.string.switch_show_panel), !prefs.minimized, hint = getString(R.string.switch_show_panel_hint),
                 bind = { showPanelSwitch = it }) { show ->
                 val svc = TouchpadService.instance
@@ -560,11 +590,21 @@ class MainActivity : Activity() {
                 } else if (show == prefs.minimized) {
                     svc.toggleMinimize()
                 }
-            },
+            }
+        )
+        padRows.add(
             actionRow(getString(R.string.btn_reset_position)) {
                 prefs.resetPositions()
                 reload()
-            },
+            }
+        )
+        addCollapsible(
+            "pad",
+            getString(R.string.sec_pad),
+            R.drawable.ic_lu_touchpad,
+            padSummary,
+            defaultExpanded = true,
+            *padRows.toTypedArray(),
         )
 
         // ── 按钮 ──

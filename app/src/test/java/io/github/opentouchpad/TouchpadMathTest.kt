@@ -1053,5 +1053,27 @@ class TouchpadMathTest {
         assertFalse(testFile.exists())
         tempDir.deleteRecursively()
     }
+
+    @Test
+    fun calculateCropOffsetSupportsCustomFocus() {
+        val containerH = 200f
+        val scaledImgH = 500f // 长图/立绘高度远大于触控板高度
+
+        // 默认 50% 居中
+        assertEquals(-150f, calculateCropOffset(containerH, scaledImgH, 50), 0.001f)
+
+        // 0% 顶部对齐 (对齐人物脸部)
+        assertEquals(0f, calculateCropOffset(containerH, scaledImgH, 0), 0.001f)
+
+        // 20% 靠近头部区域
+        assertEquals(-60f, calculateCropOffset(containerH, scaledImgH, 20), 0.001f)
+
+        // 100% 底部对齐
+        assertEquals(-300f, calculateCropOffset(containerH, scaledImgH, 100), 0.001f)
+
+        // 范围外自动 clamp
+        assertEquals(0f, calculateCropOffset(containerH, scaledImgH, -10), 0.001f)
+        assertEquals(-300f, calculateCropOffset(containerH, scaledImgH, 150), 0.001f)
+    }
 }
 

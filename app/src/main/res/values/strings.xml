@@ -193,4 +193,8 @@
     <string name="bg_image_applied">Custom background applied</string>
     <string name="bg_image_cleared">Custom background removed</string>
     <string name="bg_image_failed">Failed to load image, please try again</string>
+    <string name="set_touchpad_bg_focus_y">Background Vertical Focus</string>
+    <string name="set_touchpad_bg_focus_y_hint" formatted="false">0% Top (shows face/head) · 50% Center · 100% Bottom</string>
+    <string name="set_touchpad_bg_focus_x">Background Horizontal Focus</string>
+    <string name="set_touchpad_bg_focus_x_hint" formatted="false">0% Left · 50% Center · 100% Right</string>
 </resources>

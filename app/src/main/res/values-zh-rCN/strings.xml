@@ -193,4 +193,8 @@
     <string name="bg_image_applied">已应用自定义背景</string>
     <string name="bg_image_cleared">已清除自定义背景</string>
     <string name="bg_image_failed">加载图片失败，请重试</string>
+    <string name="set_touchpad_bg_focus_y">底图垂直焦点 (高度对齐)</string>
+    <string name="set_touchpad_bg_focus_y_hint" formatted="false">0% 顶端(优先显示脸部) · 50% 居中 · 100% 底部</string>
+    <string name="set_touchpad_bg_focus_x">底图水平焦点 (宽度对齐)</string>
+    <string name="set_touchpad_bg_focus_x_hint" formatted="false">0% 左侧 · 50% 居中 · 100% 右侧</string>
 </resources>

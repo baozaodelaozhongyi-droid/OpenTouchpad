@@ -931,3 +931,18 @@ internal fun calculateTouchRingMotionBlur(
     )
 }
 
+/**
+ * 计算背景图片在容器中按 Center-Crop 配合焦点百分比对齐时的平移偏移量。
+ * @param containerSize 容器大小 (例如 width 或 height)
+ * @param scaledImageSize 缩放后的图片大小 (例如 destW 或 destH)
+ * @param focusPercent 焦点百分比 (0 ~ 100)，0 为左/顶对齐，50 为居中，100 为右/底对齐
+ */
+internal fun calculateCropOffset(
+    containerSize: Float,
+    scaledImageSize: Float,
+    focusPercent: Int,
+): Float {
+    val clampedFocus = (focusPercent.coerceIn(0, 100)) / 100f
+    return (containerSize - scaledImageSize) * clampedFocus
+}
+

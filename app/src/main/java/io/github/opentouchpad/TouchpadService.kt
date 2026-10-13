@@ -84,6 +84,8 @@ class TouchpadService : AccessibilityService() {
         )
         (padArea as? TouchpadSurfaceView)?.let {
             it.customBackgroundBitmap = touchpadCustomBgBitmap
+            it.bgFocusXPercent = prefs.touchpadBgFocusXPercent
+            it.bgFocusYPercent = prefs.touchpadBgFocusYPercent
             it.invalidate()
         }
     }
@@ -821,6 +823,8 @@ class TouchpadService : AccessibilityService() {
             baseColor = p.padBg
             strokeColor = p.padStroke
             opacityPercent = prefs.opacityPercent
+            bgFocusXPercent = prefs.touchpadBgFocusXPercent
+            bgFocusYPercent = prefs.touchpadBgFocusYPercent
             if (touchpadCustomBgBitmap == null && CustomBackgroundManager.hasTouchpadBg(this@TouchpadService)) {
                 touchpadCustomBgBitmap = CustomBackgroundManager.loadBackgroundBitmap(
                     CustomBackgroundManager.getTouchpadBgFile(this@TouchpadService),
@@ -905,6 +909,8 @@ class TouchpadService : AccessibilityService() {
             baseColor = p.padBg
             strokeColor = p.padStroke
             opacityPercent = prefs.opacityPercent
+            bgFocusXPercent = prefs.touchpadBgFocusXPercent
+            bgFocusYPercent = prefs.touchpadBgFocusYPercent
             if (touchpadCustomBgBitmap == null && CustomBackgroundManager.hasTouchpadBg(this@TouchpadService)) {
                 touchpadCustomBgBitmap = CustomBackgroundManager.loadBackgroundBitmap(
                     CustomBackgroundManager.getTouchpadBgFile(this@TouchpadService),

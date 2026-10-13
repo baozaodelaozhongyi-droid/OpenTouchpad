@@ -43,6 +43,18 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             invalidate()
         }
 
+    var bgFocusXPercent: Int = 50
+        set(value) {
+            field = value.coerceIn(0, 100)
+            invalidate()
+        }
+
+    var bgFocusYPercent: Int = 50
+        set(value) {
+            field = value.coerceIn(0, 100)
+            invalidate()
+        }
+
     var cornerRadiusPx: Float = 0f
         set(value) {
             field = value
@@ -140,8 +152,8 @@ class TouchpadSurfaceView(context: Context) : View(context) {
                 val scale = maxOf(w / srcW, h / srcH)
                 val destW = srcW * scale
                 val destH = srcH * scale
-                val dx = (w - destW) / 2f
-                val dy = (h - destH) / 2f
+                val dx = calculateCropOffset(w, destW, bgFocusXPercent)
+                val dy = calculateCropOffset(h, destH, bgFocusYPercent)
                 bgMatrix.reset()
                 bgMatrix.postScale(scale, scale)
                 bgMatrix.postTranslate(dx, dy)

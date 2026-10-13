@@ -94,6 +94,16 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("settingsBgScrimPercent", 70)
         set(v) = sp.edit().putInt("settingsBgScrimPercent", v.coerceIn(10, 95)).apply()
 
+    /** 触控板自定义背景横向焦点位置 (0% ~ 100%)，默认 50% (居中) */
+    var touchpadBgFocusXPercent: Int
+        get() = sp.getInt("touchpadBgFocusXPercent", 50)
+        set(v) = sp.edit().putInt("touchpadBgFocusXPercent", v.coerceIn(0, 100)).apply()
+
+    /** 触控板自定义背景纵向焦点位置 (0% ~ 100%)，0% 为顶部(脸部)，50% 为居中，100% 为底部，默认 50% */
+    var touchpadBgFocusYPercent: Int
+        get() = sp.getInt("touchpadBgFocusYPercent", 50)
+        set(v) = sp.edit().putInt("touchpadBgFocusYPercent", v.coerceIn(0, 100)).apply()
+
     // ── 光标 ──
     var sensitivity: Float
         get() = sp.getFloat("sensitivity", 1.4f)
