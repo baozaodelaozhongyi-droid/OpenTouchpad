@@ -680,14 +680,16 @@ internal fun resolveTouchRingColor(customColor: Int, isDark: Boolean, fallbackAc
     return if (isDark) 0xFFD97757.toInt() else 0xFFC96442.toInt()
 }
 
+/** 哨兵值：表示跟随系统壁纸 Material You Monet 动态色彩提取。 */
+internal const val COLOR_DYNAMIC = -2
+
 /**
- * 解析设置界面强调色（按钮与滑动条）：0 表示跟随主题默认色（深色模式 0xFFD97757 珊瑚陶土，浅色模式 0xFFC96442 暖陶土）。
+ * 解析设置界面强调色（按钮与滑动条）：0 表示跟随主题默认色（深色模式 0xFFD97757 珊瑚陶土，浅色模式 0xFFC96442 暖陶土）；COLOR_DYNAMIC 表示动态取色（无上下文时回退为默认色）。
  */
 internal fun resolveUiAccentColor(customColor: Int, isDark: Boolean): Int {
-    return if (customColor != 0) {
-        if ((customColor ushr 24) == 0) (customColor or 0xFF000000.toInt()) else customColor
-    } else {
-        if (isDark) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+    return when (customColor) {
+        0, COLOR_DYNAMIC -> if (isDark) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+        else -> if ((customColor ushr 24) == 0) (customColor or 0xFF000000.toInt()) else customColor
     }
 }
 

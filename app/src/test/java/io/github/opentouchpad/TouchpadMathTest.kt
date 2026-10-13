@@ -1018,5 +1018,27 @@ class TouchpadMathTest {
         assertTrue(theme.surfaceColor != 0)
         assertTrue(theme.accentColor != 0)
     }
+
+    @Test
+    fun uiAccentColorResolvesColorDynamicToDefaultWhenNoContext() {
+        assertEquals(0xFFD97757.toInt(), resolveUiAccentColor(COLOR_DYNAMIC, isDark = true))
+        assertEquals(0xFFC96442.toInt(), resolveUiAccentColor(COLOR_DYNAMIC, isDark = false))
+    }
+
+    @Test
+    fun warmSettingsThemeResolvesDynamicAccentWhenSpecified() {
+        val dynamicAccent = 0xFF10B981.toInt()
+        val theme = resolveWarmSettingsTheme(isDark = true, customAccentColor = COLOR_DYNAMIC, dynamicAccentColor = dynamicAccent)
+        assertEquals(dynamicAccent, theme.accentColor)
+        assertEquals(0xFF1F1E1D.toInt(), theme.pageColor)
+    }
+
+    @Test
+    fun dynamicMaterialYouThemeAppliesColorDynamic() {
+        val wallpaperPrimary = 0xFF8E7CC3.toInt()
+        val customDynamic = 0xFF10B981.toInt()
+        val theme = synthesizeMaterialYouTheme(wallpaperPrimary, isDark = false, customAccentColor = COLOR_DYNAMIC, fallbackDynamicAccent = customDynamic)
+        assertEquals(customDynamic, theme.accentColor)
+    }
 }
 

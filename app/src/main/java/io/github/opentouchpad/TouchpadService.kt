@@ -406,8 +406,8 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun getAccentColor(dark: Boolean): Int {
-        if (prefs.dynamicColor && prefs.uiAccentColor == 0) {
-            return resolveSettingsTheme(this, dark, isDynamic = true, customAccentColor = 0).accentColor
+        if (prefs.uiAccentColor == COLOR_DYNAMIC || (prefs.dynamicColor && prefs.uiAccentColor == 0)) {
+            return resolveDynamicAccentColor(this, dark)
         }
         return resolveUiAccentColor(prefs.uiAccentColor, dark)
     }
@@ -1010,8 +1010,20 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 外观 ─────────────────────────
 
-    private fun palette(dark: Boolean): TouchpadPalette =
-        resolveTouchpadPalette(prefs.touchpadColor, dark)
+    private fun palette(dark: Boolean): TouchpadPalette {
+        if (prefs.touchpadColor == COLOR_DYNAMIC || (prefs.dynamicColor && prefs.touchpadColor == 0)) {
+            val dyn = resolveSettingsTheme(this, dark, isDynamic = true, customAccentColor = prefs.uiAccentColor)
+            return TouchpadPalette(
+                buttonBg = dyn.trackStrongColor,
+                buttonStroke = dyn.borderColor,
+                buttonText = dyn.textColor,
+                padBg = dyn.surfaceColor,
+                padStroke = dyn.borderColor,
+                ripple = dyn.rippleColor,
+            )
+        }
+        return resolveTouchpadPalette(prefs.touchpadColor, dark)
+    }
 
     private fun solidBackground(shape: Int, color: Int, stroke: Int, radiusPx: Float = 0f): GradientDrawable {
         val topC = lighten(color, 0.08f)
@@ -2116,7 +2128,7 @@ class TouchpadService : AccessibilityService() {
     private var touchRingParams: WindowManager.LayoutParams? = null
 
     private fun resolveTouchRingColor(): Int =
-        resolveTouchRingColor(prefs.touchRingColor, isDarkTheme(), prefs.uiAccentColor)
+        resolveTouchRingColor(prefs.touchRingColor, isDarkTheme(), getAccentColor(isDarkTheme()))
 
     /** 常驻的反馈圆环窗口（透明、不可触摸），只移动位置，不反复 add/remove。 */
     private fun ensureTouchRing(): Pair<TouchRingView, WindowManager.LayoutParams>? {

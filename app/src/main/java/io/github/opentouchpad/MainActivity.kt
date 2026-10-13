@@ -14,6 +14,7 @@ import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Path
+import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -1133,6 +1134,8 @@ class MainActivity : Activity() {
             progressTintList = ColorStateList.valueOf(accentColor)
             progressBackgroundTintList = ColorStateList.valueOf(trackColor)
             thumbTintList = ColorStateList.valueOf(accentColor)
+            progressTintMode = PorterDuff.Mode.SRC_IN
+            thumbTintMode = PorterDuff.Mode.SRC_IN
             splitTrack = false
             setPadding(dp(4), 0, dp(4), 0)
             contentDescription = title
@@ -1216,24 +1219,36 @@ class MainActivity : Activity() {
             setPadding(dp(12), 0, dp(12), 0)
         }
         val currentColor = get()
-        val allColors = if (allowCustomHex && currentColor != 0 && currentColor !in palette) {
+        val allColors = if (allowCustomHex && currentColor != 0 && currentColor != COLOR_DYNAMIC && currentColor !in palette) {
             palette + currentColor
         } else {
             palette
         }
         allColors.forEach { color ->
             val selected = currentColor == color
-            val fill = if (color == 0) accentColor else color
+            val isDyn = color == COLOR_DYNAMIC
+            val fill = when (color) {
+                COLOR_DYNAMIC -> resolveDynamicAccentColor(this, darkUi)
+                0 -> if (prefs.dynamicColor) resolveDynamicAccentColor(this, darkUi) else (if (darkUi) 0xFFD97757.toInt() else 0xFFC96442.toInt())
+                else -> color
+            }
             val swatch = TextView(this).apply {
                 gravity = Gravity.CENTER
                 textSize = 15f
-                text = if (selected) "✓" else ""
+                text = when {
+                    selected -> "✓"
+                    isDyn -> "✦"
+                    else -> ""
+                }
                 setTextColor(if (Color.luminance(fill) > 0.55f) 0xFF111827.toInt() else Color.WHITE)
                 val inner = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    if (color == 0) {
+                    if (isDyn) {
                         orientation = GradientDrawable.Orientation.TL_BR
-                        colors = intArrayOf(accentColor, accentColor)
+                        colors = intArrayOf(lightenColor(fill, 0.14f), fill, darkenColor(fill, 0.10f))
+                    } else if (color == 0) {
+                        orientation = GradientDrawable.Orientation.TL_BR
+                        colors = intArrayOf(fill, fill)
                     } else {
                         setColor(color)
                     }
@@ -1245,7 +1260,11 @@ class MainActivity : Activity() {
                     setStroke(dp(2), if (selected) accentColor else Color.TRANSPARENT)
                 }
                 background = LayerDrawable(arrayOf(ring, inner)).apply { setLayerInset(1, dp(4), dp(4), dp(4), dp(4)) }
-                contentDescription = if (color == 0) getString(R.string.color_default) else String.format(java.util.Locale.US, "#%06X", color and 0xFFFFFF)
+                contentDescription = when (color) {
+                    0 -> getString(R.string.color_default)
+                    COLOR_DYNAMIC -> getString(R.string.color_dynamic)
+                    else -> String.format(java.util.Locale.US, "#%06X", color and 0xFFFFFF)
+                }
                 isClickable = true
                 setOnClickListener {
                     set(color)
@@ -1311,7 +1330,7 @@ class MainActivity : Activity() {
         currentColor: Int,
         onColorSelected: (Int) -> Unit,
     ) {
-        val initialHex = if (currentColor != 0) {
+        val initialHex = if (currentColor != 0 && currentColor != COLOR_DYNAMIC) {
             String.format(java.util.Locale.US, "#%06X", currentColor and 0x00FFFFFF)
         } else {
             String.format(java.util.Locale.US, "#%06X", accentColor and 0x00FFFFFF)
@@ -1954,26 +1973,26 @@ class MainActivity : Activity() {
             0xFF141413.toInt(), 0xFFFAF9F5.toInt(), 0xFFC96442.toInt(), 0xFFD97757.toInt(),
             0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(),
         )
-        /** 0 = 跟随主题的默认陶土色。 */
+        /** 0 = 跟随主题默认色；COLOR_DYNAMIC = 跟随壁纸动态取色。 */
         val BALL_COLORS = listOf(
-            0, 0xFFFAF9F5.toInt(), 0xFFE8E6DC.toInt(), 0xFF87867F.toInt(), 0xFF30302E.toInt(), 0xFF141413.toInt(),
+            0, COLOR_DYNAMIC, 0xFFFAF9F5.toInt(), 0xFFE8E6DC.toInt(), 0xFF87867F.toInt(), 0xFF30302E.toInt(), 0xFF141413.toInt(),
             0xFFD97757.toInt(), 0xFFB53333.toInt(), 0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
         )
-        /** 0 = 跟随主题的默认陶土色。 */
+        /** 0 = 跟随主题默认色；COLOR_DYNAMIC = 跟随壁纸动态取色。 */
         val RING_COLORS = listOf(
-            0, 0xFFFAF9F5.toInt(), 0xFFE8E6DC.toInt(), 0xFF87867F.toInt(), 0xFF30302E.toInt(), 0xFF141413.toInt(),
+            0, COLOR_DYNAMIC, 0xFFFAF9F5.toInt(), 0xFFE8E6DC.toInt(), 0xFF87867F.toInt(), 0xFF30302E.toInt(), 0xFF141413.toInt(),
             0xFFD97757.toInt(), 0xFFB53333.toInt(), 0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
         )
-        /** 0 = 跟随主题默认色。 */
+        /** 0 = 跟随主题默认色；COLOR_DYNAMIC = 跟随壁纸动态取色。 */
         val TOUCHPAD_COLORS = listOf(
-            0, 0xFF141413.toInt(), 0xFF2A2A28.toInt(), 0xFF30302E.toInt(), 0xFF87867F.toInt(),
+            0, COLOR_DYNAMIC, 0xFF141413.toInt(), 0xFF2A2A28.toInt(), 0xFF30302E.toInt(), 0xFF87867F.toInt(),
             0xFFE8E6DC.toInt(), 0xFFFAF9F5.toInt(), 0xFFD97757.toInt(), 0xFFB53333.toInt(),
             0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
             0xFF1E293B.toInt(), 0xFF1C3829.toInt(),
         )
-        /** 0 = 跟随主题默认色（深色模式珊瑚陶土，浅色模式暖陶土）。 */
+        /** 0 = 跟随主题默认色；COLOR_DYNAMIC = 跟随壁纸动态取色。 */
         val UI_ACCENT_COLORS = listOf(
-            0, 0xFFD97757.toInt(), 0xFFC96442.toInt(), 0xFFD4A27F.toInt(), 0xFFD97706.toInt(),
+            0, COLOR_DYNAMIC, 0xFFD97757.toInt(), 0xFFC96442.toInt(), 0xFFD4A27F.toInt(), 0xFFD97706.toInt(),
             0xFF7A9A5B.toInt(), 0xFF10B981.toInt(), 0xFF6A9BCC.toInt(), 0xFF3B82F6.toInt(),
             0xFF8E7CC3.toInt(), 0xFFE5826F.toInt(), 0xFFB53333.toInt(), 0xFF30302E.toInt(),
             0xFF141413.toInt(), 0xFFFAF9F5.toInt(),

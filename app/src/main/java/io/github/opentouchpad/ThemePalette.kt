@@ -86,14 +86,42 @@ internal fun hslToRgb(h: Float, s: Float, l: Float): Int {
     return (0xFF shl 24) or (ri shl 16) or (gi shl 8) or bi
 }
 
+/**
+ * 从系统提取 Material You (Monet) 壁纸动态强调色。
+ * 1. Android 12+ (API 31+): 优先提取系统 Monet token:
+ *    - 深色模式使用 system_accent1_200 (兼顾柔和与暗底高可见度)
+ *    - 浅色模式使用 system_accent1_600 (具备充足色彩饱和度与阅读对比度)
+ * 2. Android 8.1+ (API 27+): 通过 WallpaperManager 提取主壁纸色并合成动态强调色。
+ * 3. 降级回退至经典暖陶土强调色。
+ */
+fun resolveDynamicAccentColor(context: Context, isDark: Boolean): Int {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val resId = if (isDark) android.R.color.system_accent1_200 else android.R.color.system_accent1_600
+        val c = runCatching { context.getColor(resId) }.getOrNull()
+        if (c != null && c != 0) return c
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        val wpColors = runCatching {
+            WallpaperManager.getInstance(context).getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
+        }.getOrNull()
+        val primary = wpColors?.primaryColor?.toArgb()
+        if (primary != null && primary != 0) {
+            val hsl = rgbToHsl(primary)
+            return hslToRgb(hsl[0], hsl[1].coerceIn(0.40f, 0.70f), if (isDark) 0.75f else 0.48f)
+        }
+    }
+    return if (isDark) 0xFFD97757.toInt() else 0xFFC96442.toInt()
+}
+
 internal fun resolveSettingsTheme(
     context: Context,
     isDark: Boolean,
     isDynamic: Boolean,
     customAccentColor: Int = 0,
 ): SettingsTheme {
+    val dynamicAccent = resolveDynamicAccentColor(context, isDark)
     if (!isDynamic) {
-        return resolveWarmSettingsTheme(isDark, customAccentColor)
+        return resolveWarmSettingsTheme(isDark, customAccentColor, dynamicAccent)
     }
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -108,11 +136,10 @@ internal fun resolveSettingsTheme(
             val tertiaryText = context.getColor(if (isDark) android.R.color.system_neutral2_400 else android.R.color.system_neutral2_500)
             val border = context.getColor(if (isDark) android.R.color.system_neutral2_700 else android.R.color.system_neutral2_200)
 
-            val systemAccent = context.getColor(if (isDark) android.R.color.system_accent1_200 else android.R.color.system_accent1_600)
-            val accent = if (customAccentColor != 0) {
-                if ((customAccentColor ushr 24) == 0) (customAccentColor or 0xFF000000.toInt()) else customAccentColor
-            } else {
-                systemAccent
+            val accent = when {
+                customAccentColor == COLOR_DYNAMIC -> dynamicAccent
+                customAccentColor != 0 -> if ((customAccentColor ushr 24) == 0) (customAccentColor or 0xFF000000.toInt()) else customAccentColor
+                else -> dynamicAccent
             }
 
             val onAccent = if (colorLuminance(accent) > 0.55f) 0xFF141413.toInt() else 0xFFFAF9F5.toInt()
@@ -147,17 +174,18 @@ internal fun resolveSettingsTheme(
         }.getOrNull()
         val primary = wpColors?.primaryColor?.toArgb()
         if (primary != null && primary != 0) {
-            return synthesizeMaterialYouTheme(primary, isDark, customAccentColor)
+            return synthesizeMaterialYouTheme(primary, isDark, customAccentColor, dynamicAccent)
         }
     }
 
-    return resolveWarmSettingsTheme(isDark, customAccentColor)
+    return resolveWarmSettingsTheme(isDark, customAccentColor, dynamicAccent)
 }
 
 internal fun synthesizeMaterialYouTheme(
     wallpaperPrimary: Int,
     isDark: Boolean,
     customAccentColor: Int,
+    fallbackDynamicAccent: Int? = null,
 ): SettingsTheme {
     val hsl = rgbToHsl(wallpaperPrimary)
     val hue = hsl[0]
@@ -173,11 +201,12 @@ internal fun synthesizeMaterialYouTheme(
     val tertiaryText = if (isDark) hslToRgb(hue, 0.08f, 0.55f) else hslToRgb(hue, 0.10f, 0.52f)
     val border = hslToRgb(hue, neutralSat * 1.8f, if (isDark) 0.25f else 0.89f)
 
-    val dynamicAccent = hslToRgb(hue, hsl[1].coerceIn(0.40f, 0.70f), if (isDark) 0.75f else 0.48f)
-    val accent = if (customAccentColor != 0) {
-        if ((customAccentColor ushr 24) == 0) (customAccentColor or 0xFF000000.toInt()) else customAccentColor
-    } else {
-        dynamicAccent
+    val dynamicAccent = fallbackDynamicAccent
+        ?: hslToRgb(hue, hsl[1].coerceIn(0.40f, 0.70f), if (isDark) 0.75f else 0.48f)
+    val accent = when {
+        customAccentColor == COLOR_DYNAMIC -> dynamicAccent
+        customAccentColor != 0 -> if ((customAccentColor ushr 24) == 0) (customAccentColor or 0xFF000000.toInt()) else customAccentColor
+        else -> dynamicAccent
     }
 
     val onAccent = if (colorLuminance(accent) > 0.55f) 0xFF141413.toInt() else 0xFFFAF9F5.toInt()
@@ -204,7 +233,11 @@ internal fun synthesizeMaterialYouTheme(
     )
 }
 
-internal fun resolveWarmSettingsTheme(isDark: Boolean, customAccentColor: Int): SettingsTheme {
+internal fun resolveWarmSettingsTheme(
+    isDark: Boolean,
+    customAccentColor: Int,
+    dynamicAccentColor: Int? = null,
+): SettingsTheme {
     val page = if (isDark) 0xFF1F1E1D.toInt() else 0xFFF5F4ED.toInt()
     val surface = if (isDark) 0xFF262624.toInt() else 0xFFFAF9F5.toInt()
     val elevated = if (isDark) 0xFF30302E.toInt() else 0xFFFFFFFF.toInt()
@@ -214,7 +247,11 @@ internal fun resolveWarmSettingsTheme(isDark: Boolean, customAccentColor: Int): 
     val secondaryText = if (isDark) 0xFFB0AEA5.toInt() else 0xFF5E5D59.toInt()
     val tertiaryText = 0xFF87867F.toInt()
     val border = if (isDark) 0xFF3D3D3A.toInt() else 0xFFE8E6DC.toInt()
-    val accent = resolveUiAccentColor(customAccentColor, isDark)
+    val accent = when {
+        customAccentColor == COLOR_DYNAMIC -> dynamicAccentColor ?: resolveUiAccentColor(COLOR_DYNAMIC, isDark)
+        customAccentColor != 0 -> if ((customAccentColor ushr 24) == 0) (customAccentColor or 0xFF000000.toInt()) else customAccentColor
+        else -> resolveUiAccentColor(0, isDark)
+    }
     val onAccent = resolveOnAccentColor(accent)
     val (accentSoft, accentSoftStrong) = resolveUiAccentSoftColors(accent, isDark)
     val ripple = if (isDark) 0x1FFAF9F5 else 0x14141413
