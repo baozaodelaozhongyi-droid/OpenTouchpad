@@ -52,6 +52,9 @@
     <string name="act_none_gesture">无动作</string>
 
     <!-- 设置分组 -->
+    <string name="categories_title">设置分类</string>
+    <string name="expand_all">全部展开</string>
+    <string name="collapse_all">全部折叠</string>
     <string name="sec_appearance">外观与主题</string>
     <string name="sec_pad">触控板面板</string>
     <string name="sec_ball">悬浮球设置</string>
@@ -94,6 +97,7 @@
     <string name="screenshot_needs_p">系统截屏功能需要 Android 9 (API 28) 及以上系统版本支持</string>
     <string name="no_input_field">未检测到获得焦点的输入框，请先使用光标点击目标文本框</string>
     <string name="label_off">已关闭</string>
+    <string name="label_on">已开启</string>
     <string name="reset_done">已恢复全部默认设置</string>
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
     <string name="switch_hide_ball">收起面板时隐藏悬浮球</string>

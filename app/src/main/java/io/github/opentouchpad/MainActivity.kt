@@ -56,6 +56,12 @@ class MainActivity : Activity() {
     private lateinit var baseScroller: ScrollView
     private lateinit var rootContainer: FrameLayout
     class SliderController(val setValue: (Int) -> Unit)
+    private class CollapsibleCardController(
+        val id: String,
+        val setExpanded: (Boolean) -> Unit,
+        val isExpanded: () -> Boolean,
+    )
+
 
     private var showPanelSwitch: Switch? = null
     private var baseStatusView: TextView? = null
@@ -226,9 +232,45 @@ class MainActivity : Activity() {
 
         col.addView(hero())
 
+        val uiCardControllers = mutableListOf<CollapsibleCardController>()
+        var uiExpandAllBtn: TextView? = null
+
+        fun updateExpandAllText() {
+            val allExpanded = uiCardControllers.isNotEmpty() && uiCardControllers.all { it.isExpanded() }
+            uiExpandAllBtn?.text = getString(if (allExpanded) R.string.collapse_all else R.string.expand_all)
+        }
+
+        col.addView(categoriesBar(uiCardControllers) { uiExpandAllBtn = it })
+
+        fun addCollapsible(
+            cardId: String,
+            title: String,
+            summary: String? = null,
+            defaultExpanded: Boolean = false,
+            vararg rows: View,
+        ) {
+            col.addView(collapsibleCard(
+                cardId = cardId,
+                title = title,
+                summary = summary,
+                defaultExpanded = defaultExpanded,
+                onToggle = { updateExpandAllText() },
+                controllers = uiCardControllers,
+                rows = rows,
+            ))
+        }
+
         // ── 外观 ──
-        col.addView(sectionHeader(getString(R.string.sec_appearance)))
-        col.addView(card(
+        val appearanceSummary = when (prefs.themeMode) {
+            ThemeMode.SYSTEM -> getString(R.string.theme_system)
+            ThemeMode.LIGHT -> getString(R.string.theme_light)
+            ThemeMode.DARK -> getString(R.string.theme_dark)
+        }
+        addCollapsible(
+            "appearance",
+            getString(R.string.sec_appearance),
+            appearanceSummary,
+            defaultExpanded = true,
             themeModeRow(),
             colorRow(
                 getString(R.string.set_ui_accent_color),
@@ -243,15 +285,19 @@ class MainActivity : Activity() {
                 },
                 allowCustomHex = true,
             ),
-        ))
+        )
 
         // ── 触控板 ──
         val maxPanelWidth = pixelsToDp(resources.displayMetrics.widthPixels, resources.displayMetrics.density)
             .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
         val currentPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
             ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
-        col.addView(sectionHeader(getString(R.string.sec_pad)))
-        col.addView(card(
+        val padSummary = "${currentPanelWidth}dp · ${prefs.opacityPercent}%"
+        addCollapsible(
+            "pad",
+            getString(R.string.sec_pad),
+            padSummary,
+            defaultExpanded = true,
             slider(
                 getString(R.string.set_pad_width),
                 PANEL_MIN_WIDTH_DP,
@@ -309,10 +355,9 @@ class MainActivity : Activity() {
                 prefs.resetPositions()
                 reload()
             },
-        ))
+        )
 
         // ── 按钮 ──
-        col.addView(sectionHeader(getString(R.string.sec_buttons)))
         val buttonRows = mutableListOf<View>(
             buttonLayoutModeRow(),
             buttonSlotMap(),
@@ -354,11 +399,32 @@ class MainActivity : Activity() {
                 )
             )
         }
-        col.addView(card(*buttonRows.toTypedArray()))
+        val buttonsSummary = when (prefs.buttonCount) {
+            4 -> getString(R.string.btn_mode_4)
+            8 -> getString(R.string.btn_mode_8)
+            12 -> getString(R.string.btn_mode_12)
+            18 -> getString(R.string.btn_mode_18)
+            else -> getString(R.string.btn_mode_16)
+        }
+        addCollapsible(
+            "buttons",
+            getString(R.string.sec_buttons),
+            buttonsSummary,
+            defaultExpanded = true,
+            *buttonRows.toTypedArray(),
+        )
 
         // ── 悬浮球 ──
-        col.addView(sectionHeader(getString(R.string.sec_ball)))
-        col.addView(card(
+        val ballSummary = if (prefs.hideFloatingBall) {
+            getString(R.string.label_off)
+        } else {
+            "${prefs.floatingBallSizeDp}dp · ${prefs.floatingBallOpacityPercent}%"
+        }
+        addCollapsible(
+            "ball",
+            getString(R.string.sec_ball),
+            ballSummary,
+            defaultExpanded = false,
             slider(
                 getString(R.string.set_ball_size),
                 FLOATING_BALL_MIN_DP,
@@ -390,8 +456,9 @@ class MainActivity : Activity() {
                 },
             ),
             switchRow(getString(R.string.switch_hide_ball), prefs.hideFloatingBall, hint = getString(R.string.hide_ball_hint), onChange = { prefs.hideFloatingBall = it; reload() }),
-        ))
-        col.addView(sectionHeader(getString(R.string.sec_ball_gestures)))
+        )
+
+        // ── 悬浮球手势 ──
         val ballGestureRows = mutableListOf<View>()
         ballGestureRows.add(
             switchRow(
@@ -419,10 +486,16 @@ class MainActivity : Activity() {
                 recreateKeepingScroll()
             })
         }
-        col.addView(card(*ballGestureRows.toTypedArray()))
+        val ballGesturesSummary = if (prefs.ballGesturesEnabled) getString(R.string.label_on) else getString(R.string.label_off)
+        addCollapsible(
+            "ball_gestures",
+            getString(R.string.sec_ball_gestures),
+            ballGesturesSummary,
+            defaultExpanded = false,
+            *ballGestureRows.toTypedArray(),
+        )
 
         // ── 光标 ──
-        col.addView(sectionHeader(getString(R.string.sec_cursor)))
         val cursorRows = mutableListOf<View>(
             slider(
                 getString(R.string.set_cursor_size),
@@ -477,11 +550,22 @@ class MainActivity : Activity() {
                 )
             )
         }
-        col.addView(card(*cursorRows.toTypedArray()))
+        val cursorSummary = "${prefs.cursorSizeDp}dp · ${prefs.cursorOpacityPercent}%"
+        addCollapsible(
+            "cursor",
+            getString(R.string.sec_cursor),
+            cursorSummary,
+            defaultExpanded = false,
+            *cursorRows.toTypedArray(),
+        )
 
         // ── 手感 ──
-        col.addView(sectionHeader(getString(R.string.sec_feel)))
-        col.addView(card(
+        val feelSummary = String.format(java.util.Locale.US, "%.1f×", prefs.sensitivity)
+        addCollapsible(
+            "feel",
+            getString(R.string.sec_feel),
+            feelSummary,
+            defaultExpanded = false,
             slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt(), format = { String.format(java.util.Locale.US, "%.1f×", it / 10f) }) { prefs.sensitivity = it / 10f },
             slider(getString(R.string.set_pad_dead_zone), 0, PAD_EDGE_DEAD_ZONE_MAX_DP, prefs.padEdgeDeadZoneDp, unit = "dp",
                 offLabel = getString(R.string.label_off), hint = getString(R.string.pad_dead_zone_hint),
@@ -501,23 +585,34 @@ class MainActivity : Activity() {
                 prefs.excludeFromRecents = it
                 applyExcludeFromRecents(it)
             }),
-        ))
+        )
 
         // ── 关于 ──
-        col.addView(sectionHeader(getString(R.string.sec_about)))
-        col.addView(card(
+        val aboutSummary = "v${appVersion()}".takeIf { it != "v" } ?: ""
+        addCollapsible(
+            "about",
+            getString(R.string.sec_about),
+            aboutSummary,
+            defaultExpanded = false,
             actionRow(getString(R.string.btn_setup)) { showDialog(getString(R.string.steps_title), getString(R.string.steps_body)) },
             actionRow(getString(R.string.btn_github)) {
                 runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.project_url)))) }
             },
             actionRow(getString(R.string.btn_reset_all), destructive = true) {
                 prefs.resetAll()
+                expandedCardIds.clear()
+                hasInitializedCardDefaults = false
                 applyExcludeFromRecents(false)
                 toast(getString(R.string.reset_done))
                 reload()
                 recreateKeepingScroll()
             },
-        ))
+        )
+
+        if (!hasInitializedCardDefaults) {
+            hasInitializedCardDefaults = true
+        }
+        updateExpandAllText()
 
         col.addView(TextView(this).apply {
             text = "OpenTouchpad ${appVersion()}"
@@ -586,6 +681,190 @@ class MainActivity : Activity() {
     }
 
     // ───────────────────────── 小控件 ─────────────────────────
+
+    private fun haptic(v: View) {
+        if (prefs.haptics) {
+            runCatching {
+                v.performHapticFeedback(
+                    HapticFeedbackConstants.VIRTUAL_KEY,
+                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
+                )
+            }
+        }
+    }
+
+    private fun categoriesBar(
+        controllers: List<CollapsibleCardController>,
+        bindBtn: ((TextView) -> Unit)? = null,
+    ): View {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(22), dp(4), dp(4))
+        }
+
+        val label = TextView(this).apply {
+            text = getString(R.string.categories_title)
+            textSize = 14f
+            typeface = sansMedium
+            setTextColor(secondaryTextColor)
+        }
+        bar.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val btn = TextView(this).apply {
+            textSize = 13f
+            typeface = sansMedium
+            setTextColor(accentColor)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = ripple(roundedSurface(trackColor, 999), rippleColor, 999)
+            isClickable = true
+            val allExpanded = controllers.isNotEmpty() && controllers.all { it.isExpanded() }
+            text = getString(if (allExpanded) R.string.collapse_all else R.string.expand_all)
+            setOnClickListener {
+                haptic(it)
+                val isAllExpanded = controllers.isNotEmpty() && controllers.all { c -> c.isExpanded() }
+                val targetExpand = !isAllExpanded
+                controllers.forEach { c -> c.setExpanded(targetExpand) }
+                text = getString(if (targetExpand) R.string.collapse_all else R.string.expand_all)
+            }
+        }
+        bindBtn?.invoke(btn)
+        bar.addView(btn)
+        return bar
+    }
+
+    /** 具有 Flowmix 风格的分组折叠卡片：包含大号触控标题、实时状态摘要胶囊与平滑旋转指示箭头 */
+    private fun collapsibleCard(
+        cardId: String,
+        title: String,
+        summary: String? = null,
+        defaultExpanded: Boolean = false,
+        onToggle: (() -> Unit)? = null,
+        controllers: MutableList<CollapsibleCardController>? = null,
+        vararg rows: View,
+    ): View {
+        if (!hasInitializedCardDefaults && defaultExpanded) {
+            expandedCardIds.add(cardId)
+        }
+        val isExpanded = expandedCardIds.contains(cardId)
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = borderedSurface(surfaceColor, borderColor, 16)
+            clipToOutline = true
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(12)
+            }
+        }
+
+        // 标题栏：整行可点击（>= 56dp 高度），提供大号无障碍触控目标与水波纹反馈
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(56)
+            setPadding(dp(16), dp(10), dp(14), dp(10))
+            background = ripple(null, rippleColor, 0)
+            isClickable = true
+            contentDescription = "$title, ${if (isExpanded) "已展开" else "已折叠"}"
+        }
+
+        val titleTv = TextView(this).apply {
+            text = title
+            textSize = 17f
+            typeface = serif
+            setTextColor(textColor)
+        }
+        header.addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        // 实时状态摘要胶囊 (Status Chip)
+        if (!summary.isNullOrBlank()) {
+            val chip = TextView(this).apply {
+                text = summary
+                textSize = 12f
+                typeface = sansMedium
+                setTextColor(secondaryTextColor)
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                background = roundedSurface(trackColor, 999).apply {
+                    setStroke(maxOf(1, dp(1)), borderColor)
+                }
+            }
+            val chipLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = dp(10)
+            }
+            header.addView(chip, chipLp)
+        }
+
+        // 旋转折叠箭头 (Chevron)
+        val chevron = TextView(this).apply {
+            text = "⌄"
+            textSize = 20f
+            typeface = sansMedium
+            setTextColor(tertiaryTextColor)
+            rotation = if (isExpanded) 0f else -90f
+        }
+        header.addView(chevron)
+
+        box.addView(header)
+
+        // 标题与内容的分割线
+        val headerDivider = View(this).apply {
+            setBackgroundColor(borderColor)
+            visibility = if (isExpanded) View.VISIBLE else View.GONE
+        }
+        box.addView(headerDivider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, dp(1) / 2)).apply {
+            marginStart = dp(16); marginEnd = dp(16)
+        })
+
+        // 内容容器
+        val contentBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (isExpanded) View.VISIBLE else View.GONE
+            setPadding(0, dp(4), 0, dp(4))
+        }
+
+        rows.forEachIndexed { i, row ->
+            if (i > 0) {
+                contentBox.addView(View(this).apply { setBackgroundColor(borderColor) },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, dp(1) / 2)).apply {
+                        marginStart = dp(16); marginEnd = dp(16)
+                    })
+            }
+            contentBox.addView(row)
+        }
+        box.addView(contentBox)
+
+        val controller = CollapsibleCardController(
+            id = cardId,
+            setExpanded = { expand ->
+                if (expand) {
+                    expandedCardIds.add(cardId)
+                    contentBox.visibility = View.VISIBLE
+                    headerDivider.visibility = View.VISIBLE
+                    chevron.animate().rotation(0f).setDuration(180).start()
+                } else {
+                    expandedCardIds.remove(cardId)
+                    contentBox.visibility = View.GONE
+                    headerDivider.visibility = View.GONE
+                    chevron.animate().rotation(-90f).setDuration(180).start()
+                }
+                header.contentDescription = "$title, ${if (expand) "已展开" else "已折叠"}"
+            },
+            isExpanded = { contentBox.visibility == View.VISIBLE }
+        )
+        controllers?.add(controller)
+
+        header.setOnClickListener {
+            haptic(it)
+            val willExpand = contentBox.visibility != View.VISIBLE
+            controller.setExpanded(willExpand)
+            onToggle?.invoke()
+        }
+
+        return box
+    }
 
     private fun sectionHeader(title: String): View = TextView(this).apply {
         text = title
@@ -1645,6 +1924,8 @@ class MainActivity : Activity() {
         const val KEY_SCROLL_Y = "settings_scroll_y"
         const val THEME_SELECTOR_TRACK_TAG = "theme_selector_track"
         val SYNCING = Any()
+        val expandedCardIds = mutableSetOf<String>()
+        var hasInitializedCardDefaults = false
 
         /** 和设置页同一套暖色：暖黑（默认）、象牙白、陶土、珊瑚、沙色、橄榄绿、雾蓝。 */
         val CURSOR_COLORS = listOf(

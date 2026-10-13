@@ -422,11 +422,11 @@ class TouchpadService : AccessibilityService() {
             setColor((ballColor and 0x00FFFFFF) or 0x40000000)
         }
         val disc = GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(lighten(ballColor, 0.08f), ballColor),
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(lighten(ballColor, 0.18f), ballColor, darken(ballColor, 0.06f)),
         ).apply {
             shape = GradientDrawable.OVAL
-            setStroke(maxOf(1, dp(1)), if (light) 0x26141413 else 0x33FAF9F5)
+            setStroke(maxOf(1, dp(1)), if (light) 0x33141413 else 0x55FAF9F5)
         }
         val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
 
@@ -730,6 +730,10 @@ class TouchpadService : AccessibilityService() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+            lp.blurBehindRadius = dp(20)
+        }
         lp.gravity = Gravity.TOP or Gravity.START
         // 关掉系统默认的窗口进出动画：它会给被移除的窗口拍一帧快照再淡出，
         // 和我们自己的缩放动画叠在一起就是「残影」。
@@ -757,6 +761,10 @@ class TouchpadService : AccessibilityService() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+            lp.blurBehindRadius = dp(16)
+        }
         lp.gravity = Gravity.TOP or Gravity.START
         lp.windowAnimations = 0
         val land = isLandscape()
@@ -917,11 +925,11 @@ class TouchpadService : AccessibilityService() {
             setColor((ballColor and 0x00FFFFFF) or 0x40000000)
         }
         val disc = GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(lighten(ballColor, 0.08f), ballColor),
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(lighten(ballColor, 0.18f), ballColor, darken(ballColor, 0.06f)),
         ).apply {
             shape = GradientDrawable.OVAL
-            setStroke(maxOf(1, dp(1)), if (light) 0x26141413 else 0x33FAF9F5)
+            setStroke(maxOf(1, dp(1)), if (light) 0x33141413 else 0x55FAF9F5)
         }
         val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
 
@@ -996,18 +1004,28 @@ class TouchpadService : AccessibilityService() {
         return Color.argb(Color.alpha(color), ch(Color.red(color)), ch(Color.green(color)), ch(Color.blue(color)))
     }
 
+    private fun darken(color: Int, amount: Float): Int {
+        fun ch(c: Int) = (c * (1f - amount)).roundToInt().coerceIn(0, 255)
+        return Color.argb(Color.alpha(color), ch(Color.red(color)), ch(Color.green(color)), ch(Color.blue(color)))
+    }
+
     // ───────────────────────── 外观 ─────────────────────────
 
     private fun palette(dark: Boolean): TouchpadPalette =
         resolveTouchpadPalette(prefs.touchpadColor, dark)
 
-    private fun solidBackground(shape: Int, color: Int, stroke: Int, radiusPx: Float = 0f): GradientDrawable =
-        GradientDrawable().apply {
+    private fun solidBackground(shape: Int, color: Int, stroke: Int, radiusPx: Float = 0f): GradientDrawable {
+        val topC = lighten(color, 0.08f)
+        val botC = color
+        return GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(withAlpha(topC, prefs.opacityPercent), withAlpha(botC, prefs.opacityPercent)),
+        ).apply {
             this.shape = shape
             if (shape == GradientDrawable.RECTANGLE) cornerRadius = radiusPx
-            setColor(withAlpha(color, prefs.opacityPercent))
             setStroke(dp(1), scaleAlpha(stroke, prefs.opacityPercent))
         }
+    }
 
     /** 按钮背景，支持胶囊型与圆形（根据传入的圆角半径自适应），带按压水波纹反馈。 */
     private fun buttonBackground(color: Int, stroke: Int, ripple: Int, cornerRadiusPx: Float): Drawable {

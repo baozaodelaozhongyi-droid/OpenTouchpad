@@ -120,24 +120,42 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         canvas.save()
         canvas.clipPath(clipPath)
 
-        // 1. 基础填充（应用不透明度）
+        // 1. 液态玻璃光学渐变底色（对角线折射：左上透光微亮，右下沉淀深邃）
         val fillAlpha = (255 * opacityPercent / 100).coerceIn(0, 255)
-        surfacePaint.color = Color.argb(fillAlpha, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor))
+        val topLightColor = lightenColor(baseColor, 0.16f)
+        val bottomDepthColor = darkenColor(baseColor, 0.08f)
+        val glassBaseShader = LinearGradient(
+            0f, 0f, w, h,
+            intArrayOf(
+                Color.argb(fillAlpha, Color.red(topLightColor), Color.green(topLightColor), Color.blue(topLightColor)),
+                Color.argb(fillAlpha, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor)),
+                Color.argb(fillAlpha, Color.red(bottomDepthColor), Color.green(bottomDepthColor), Color.blue(bottomDepthColor)),
+            ),
+            floatArrayOf(0f, 0.45f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        surfacePaint.shader = glassBaseShader
         canvas.drawRect(boundsRect, surfacePaint)
+        surfacePaint.shader = null
 
-        // 2. 静态常态微光照：上沿微亮，下沿微深，赋予表面自然实体厚度
-        val restTopAlpha = (24 * opacityPercent / 100).coerceIn(0, 255)
-        val restBottomAlpha = (28 * opacityPercent / 100).coerceIn(0, 255)
+        // 2. 毛玻璃漫反射透光层（顶部微光漫射与立体透光）
+        val restTopAlpha = (36 * opacityPercent / 100).coerceIn(0, 255)
+        val restMidAlpha = (12 * opacityPercent / 100).coerceIn(0, 255)
+        val restBottomAlpha = (26 * opacityPercent / 100).coerceIn(0, 255)
         val restShader = LinearGradient(
             0f, 0f, 0f, h,
-            Color.argb(restTopAlpha, 255, 255, 255),
-            Color.argb(restBottomAlpha, 0, 0, 0),
+            intArrayOf(
+                Color.argb(restTopAlpha, 255, 255, 255),
+                Color.argb(restMidAlpha, 255, 255, 255),
+                Color.argb(restBottomAlpha, 0, 0, 0),
+            ),
+            floatArrayOf(0f, 0.35f, 1f),
             Shader.TileMode.CLAMP,
         )
         lightingPaint.shader = restShader
         canvas.drawRect(boundsRect, lightingPaint)
 
-        // 3. 动态 3D 按压倾斜光影：按下凹陷端受阴影，翘起翘起端迎光高光
+        // 3. 动态 3D 按压倾斜透镜光影：随手指触控方向产生流光折射
         val tiltLen = kotlin.math.hypot(tiltNormX, tiltNormY)
         if (tiltIntensity > 0.01f && tiltLen > 0.01f) {
             val cx = w / 2f
@@ -149,8 +167,8 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             val raisedX = cx - cx * tiltNormX
             val raisedY = cy - cy * tiltNormY
 
-            val highAlpha = (85 * tiltIntensity * opacityPercent / 100).toInt().coerceIn(0, 255)
-            val shadowAlpha = (115 * tiltIntensity * opacityPercent / 100).toInt().coerceIn(0, 255)
+            val highAlpha = (95 * tiltIntensity * opacityPercent / 100).toInt().coerceIn(0, 255)
+            val shadowAlpha = (110 * tiltIntensity * opacityPercent / 100).toInt().coerceIn(0, 255)
 
             val tiltShader = LinearGradient(
                 raisedX, raisedY, sinkX, sinkY,
@@ -166,29 +184,51 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             canvas.drawRect(boundsRect, lightingPaint)
         }
 
-        // 4. 倒角内微光立体边缘（Top Bevel 微亮，Bottom Bevel 微暗）
-        val bevelHighlightAlpha = (40 * opacityPercent / 100).coerceIn(0, 255)
-        val bevelShadowAlpha = (50 * opacityPercent / 100).coerceIn(0, 255)
-        val bevelShader = LinearGradient(
-            0f, 0f, 0f, h,
-            Color.argb(bevelHighlightAlpha, 255, 255, 255),
-            Color.argb(bevelShadowAlpha, 0, 0, 0),
+        // 4. 顶部内边缘液态高光（模拟真实玻璃边缘内反射）
+        val innerGlowAlpha = (48 * opacityPercent / 100).coerceIn(0, 255)
+        val innerGlowShader = LinearGradient(
+            0f, 0f, 0f, h * 0.35f,
+            Color.argb(innerGlowAlpha, 255, 255, 255),
+            Color.TRANSPARENT,
             Shader.TileMode.CLAMP,
         )
-        lightingPaint.shader = bevelShader
+        lightingPaint.shader = innerGlowShader
         canvas.drawRect(boundsRect, lightingPaint)
 
         canvas.restore()
 
-        // 5. 外部立体精细描边
-        val strokeWidth = density * 1f
+        // 5. 外部液态玻璃流光高光描边（左上迎光高光，右下环境漫反射）
+        val strokeWidth = density * 1.2f
         strokePaint.strokeWidth = strokeWidth
-        val strokeAlpha = ((Color.alpha(strokeColor) * opacityPercent) / 100).coerceIn(0, 255)
-        strokePaint.color = Color.argb(strokeAlpha, Color.red(strokeColor), Color.green(strokeColor), Color.blue(strokeColor))
+        val isLightBase = colorLuminance(baseColor) > 0.55f
+
+        val highSpecularAlpha = if (isLightBase) {
+            (190 * opacityPercent / 100).coerceIn(0, 255)
+        } else {
+            (160 * opacityPercent / 100).coerceIn(0, 255)
+        }
+        val lowSpecularAlpha = if (isLightBase) {
+            (60 * opacityPercent / 100).coerceIn(0, 255)
+        } else {
+            (40 * opacityPercent / 100).coerceIn(0, 255)
+        }
+
+        val specularStrokeShader = LinearGradient(
+            0f, 0f, w, h,
+            intArrayOf(
+                Color.argb(highSpecularAlpha, 255, 255, 255),
+                Color.argb((highSpecularAlpha + lowSpecularAlpha) / 2, 255, 255, 255),
+                if (isLightBase) Color.argb(lowSpecularAlpha, 0, 0, 0) else Color.argb(lowSpecularAlpha, 255, 255, 255),
+            ),
+            floatArrayOf(0f, 0.42f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        strokePaint.shader = specularStrokeShader
 
         val halfStroke = strokeWidth / 2f
         boundsRect.set(halfStroke, halfStroke, w - halfStroke, h - halfStroke)
         val strokeRadius = (r - halfStroke).coerceAtLeast(0f)
         canvas.drawRoundRect(boundsRect, strokeRadius, strokeRadius, strokePaint)
+        strokePaint.shader = null
     }
 }

@@ -52,6 +52,9 @@
     <string name="act_none_gesture">No Action</string>
 
     <!-- 设置项 -->
+    <string name="categories_title">Categories</string>
+    <string name="expand_all">Expand All</string>
+    <string name="collapse_all">Collapse All</string>
     <string name="sec_appearance">Appearance &amp; Theme</string>
     <string name="sec_pad">Touchpad Panel</string>
     <string name="sec_ball">Floating Ball</string>
@@ -94,6 +97,7 @@
     <string name="screenshot_needs_p">Screenshot capture requires Android 9 (API 28) or newer</string>
     <string name="no_input_field">No input field currently focused. Tap a text field with the cursor first.</string>
     <string name="label_off">Disabled</string>
+    <string name="label_on">Enabled</string>
     <string name="reset_done">All settings restored to defaults</string>
     <string name="project_url">https://github.com/baozaodelaozhongyi-droid/OpenTouchpad</string>
     <string name="switch_hide_ball">Hide Floating Ball when Collapsed</string>
