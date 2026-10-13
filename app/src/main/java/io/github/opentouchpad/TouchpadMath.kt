@@ -22,11 +22,123 @@ internal const val DRAG_TRAIL_MAX_POINTS = 120
 internal const val PAD_EDGE_DEAD_ZONE_DEFAULT_DP = 10
 internal const val PAD_EDGE_DEAD_ZONE_MAX_DP = 32
 
+internal const val CUSTOM_SWIPE_MIN_DISTANCE_DP = 6
+
 internal data class PanelPosition(val x: Int, val y: Int)
 
 internal data class CustomSwipe(val startX: Float, val startY: Float, val endX: Float, val endY: Float) {
     val distance: Float
         get() = kotlin.math.hypot(endX - startX, endY - startY)
+}
+
+internal data class SwipeSample(val timeMs: Long, val x: Float, val y: Float)
+
+internal class SwipeVelocityTracker(
+    private val maxAgeMs: Long = 140L,
+) {
+    private val samples = ArrayDeque<SwipeSample>()
+
+    fun reset() {
+        samples.clear()
+    }
+
+    fun addMovement(timeMs: Long, x: Float, y: Float) {
+        samples.addLast(SwipeSample(timeMs, x, y))
+        prune(timeMs)
+    }
+
+    private fun prune(nowMs: Long) {
+        while (samples.size > 2 && (nowMs - samples.first().timeMs) > maxAgeMs) {
+            samples.removeFirst()
+        }
+    }
+
+    /**
+     * 计算当前的释放速度（像素 / 秒）。
+     * 若最后一次采样距离抬手时间已超过静止门限（80ms），判定用户已停顿，速度归零。
+     */
+    fun computeVelocity(nowMs: Long, stopThresholdMs: Long = 80L): Pair<Float, Float> {
+        prune(nowMs)
+        if (samples.size < 2) return 0f to 0f
+        val last = samples.last()
+        if (nowMs - last.timeMs > stopThresholdMs) {
+            return 0f to 0f
+        }
+        val first = samples.first()
+        val dt = (last.timeMs - first.timeMs).coerceAtLeast(12L)
+        val vx = (last.x - first.x) / dt * 1000f
+        val vy = (last.y - first.y) / dt * 1000f
+        return vx to vy
+    }
+}
+
+internal data class CustomSwipePlan(
+    val startX: Float,
+    val startY: Float,
+    val endX: Float,
+    val endY: Float,
+    val targetX: Float,
+    val targetY: Float,
+    val durationMs: Long,
+    val isInertial: Boolean,
+)
+
+internal fun planCustomSwipe(
+    startX: Float,
+    startY: Float,
+    endX: Float,
+    endY: Float,
+    velocityX: Float,
+    velocityY: Float,
+    minDistancePx: Float,
+    density: Float,
+    screenWidth: Int,
+    screenHeight: Int,
+): CustomSwipePlan? {
+    val dx = endX - startX
+    val dy = endY - startY
+    val distance = kotlin.math.hypot(dx, dy)
+    if (distance < minDistancePx) return null
+
+    val dirX = dx / distance
+    val dirY = dy / distance
+
+    // 沿拖动方向投影的释放速度
+    val projSpeed = velocityX * dirX + velocityY * dirY
+    val minFlingVelocity = 180f * density // 相当于 180 dp/s 轻扫初速度
+
+    if (projSpeed < minFlingVelocity) {
+        return CustomSwipePlan(
+            startX = startX,
+            startY = startY,
+            endX = endX,
+            endY = endY,
+            targetX = endX,
+            targetY = endY,
+            durationMs = 300L,
+            isInertial = false,
+        )
+    }
+
+    // 惯性滑动延伸距离（基于超出初速度的平滑动量，上限不超过 450 dp）
+    val extraPx = ((projSpeed - minFlingVelocity) * 0.16f).coerceIn(0f, 450f * density)
+    val targetX = (endX + dirX * extraPx).coerceIn(0f, screenWidth.toFloat())
+    val targetY = (endY + dirY * extraPx).coerceIn(0f, screenHeight.toFloat())
+
+    // 惯性滑动手势耗时缩短，赋予注入手势高初速度以触发底层系统的原生惯性飞滑
+    val speedRatio = ((projSpeed - minFlingVelocity) / (2500f * density)).coerceIn(0f, 1f)
+    val durationMs = (220L - (speedRatio * 80L).toLong()).coerceIn(140L, 220L)
+
+    return CustomSwipePlan(
+        startX = startX,
+        startY = startY,
+        endX = endX,
+        endY = endY,
+        targetX = targetX,
+        targetY = targetY,
+        durationMs = durationMs,
+        isInertial = true,
+    )
 }
 
 internal fun customSwipeFrom(

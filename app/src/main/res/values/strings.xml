@@ -20,7 +20,7 @@
     <string name="cursor_content_description">Screen pointer cursor</string>
     <string name="control_surface_content_description">OpenTouchpad control panel</string>
     <string name="touchpad_content_description">Touchpad area. Slide to move cursor; press and hold until haptic feedback, then drag and release to execute a custom swipe gesture.</string>
-    <string name="custom_swipe_hint">Custom swipe gesture: Hold on the touchpad until haptic feedback triggers, move to the destination point, and release to perform the swipe.</string>
+    <string name="custom_swipe_hint">Custom swipe: Hold on the touchpad until haptic feedback triggers, move to the destination point, and release to perform the swipe (flicking supports inertial scrolling); release in place for long press.</string>
     <string name="floating_ball_content_description">Expand touchpad panel</string>
     <string name="pick_action">Select Action</string>
 
@@ -74,6 +74,7 @@
     <string name="set_sensitivity">Cursor Sensitivity</string>
     <string name="set_long_press">Touchpad Long-Press Threshold</string>
     <string name="set_scroll_distance">Scroll Step Distance</string>
+    <string name="scroll_distance_hint">Controls simulated scroll distance per click for panel scroll buttons (↑ / ↓ / ← / →).</string>
     <string name="set_swipe_distance">Swipe Gesture Distance</string>
     <string name="set_button_radius">Button Corner Radius</string>
     <string name="set_button_spacing">Button Spacing</string>

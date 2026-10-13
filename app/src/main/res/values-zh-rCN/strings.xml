@@ -20,7 +20,7 @@
     <string name="cursor_content_description">屏幕指针光标</string>
     <string name="control_surface_content_description">OpenTouchpad 控制面板</string>
     <string name="touchpad_content_description">触控板操作区域。滑动可移动屏幕光标；长按至震动反馈后移动并释放，可执行自定义滑动轨迹。</string>
-    <string name="custom_swipe_hint">自定义手势滑动：在触控板上按住至产生震动反馈，拖动光标至目标终点后松手，即可在屏幕上执行对应路径的滑动手势。</string>
+    <string name="custom_swipe_hint">触控板自定义滑动：长按触控板至震动反馈后拖动光标松手，即可在屏幕上执行对应路径的滑动（快速划动支持惯性滑动）；原地松手则触发长按。</string>
     <string name="floating_ball_content_description">展开触控板面板</string>
     <string name="pick_action">选择功能动作</string>
 
@@ -74,6 +74,7 @@
     <string name="set_sensitivity">光标移动灵敏度</string>
     <string name="set_long_press">触控板长按手势识别时长</string>
     <string name="set_scroll_distance">单次滚动模拟距离</string>
+    <string name="scroll_distance_hint">控制面板滚动按键（↑ / ↓ / ← / →）单次点击时在屏幕上模拟滚动的距离。</string>
     <string name="set_swipe_distance">快速滑动手势距离</string>
     <string name="set_button_radius">按键圆角半径</string>
     <string name="set_button_spacing">按键间距</string>

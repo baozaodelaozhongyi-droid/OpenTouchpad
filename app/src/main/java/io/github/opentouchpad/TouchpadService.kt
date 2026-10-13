@@ -97,6 +97,7 @@ class TouchpadService : AccessibilityService() {
     private var customSwipeStartY = 0f
     private var customSwipeEndX = 0f
     private var customSwipeEndY = 0f
+    private val swipeVelocityTracker = SwipeVelocityTracker()
 
     // 拖拽锁定：第一次按记下起点，之后正常移动光标，第二次按一次性注入「按住→拖到终点→松开」。
     // 不在两次按键之间保持注入的手指按下：真实手指一碰屏幕，系统就会取消正在注入的手势，
@@ -253,6 +254,8 @@ class TouchpadService : AccessibilityService() {
             customSwipeStartY = cursorY
             customSwipeEndX = cursorX
             customSwipeEndY = cursorY
+            swipeVelocityTracker.reset()
+            swipeVelocityTracker.addMovement(SystemClock.uptimeMillis(), cursorX, cursorY)
             if (prefs.touchRingEnabled) {
                 moveTouchRing(cursorX, cursorY)
                 touchRing?.pressUntilRelease()
@@ -1244,6 +1247,7 @@ class TouchpadService : AccessibilityService() {
                 customSwipeStartY = cursorY
                 customSwipeEndX = cursorX
                 customSwipeEndY = cursorY
+                swipeVelocityTracker.reset()
                 main.removeCallbacks(longPressRunnable)
                 // 拖拽锁定期间触控板只移动光标，不点击、不长按
                 if (!dragging) {
@@ -1274,6 +1278,7 @@ class TouchpadService : AccessibilityService() {
                 if (customSwipeArmed) {
                     customSwipeEndX = cursorX
                     customSwipeEndY = cursorY
+                    swipeVelocityTracker.addMovement(SystemClock.uptimeMillis(), cursorX, cursorY)
                     if (prefs.touchRingEnabled) {
                         moveTouchRing(cursorX, cursorY)
                     }
@@ -1290,17 +1295,31 @@ class TouchpadService : AccessibilityService() {
                     }
                 }
                 main.removeCallbacks(longPressRunnable)
+                val (vx, vy) = if (customSwipeArmed) {
+                    swipeVelocityTracker.computeVelocity(SystemClock.uptimeMillis())
+                } else {
+                    0f to 0f
+                }
+                swipeVelocityTracker.reset()
                 val distance = kotlin.math.hypot(customSwipeEndX - customSwipeStartX, customSwipeEndY - customSwipeStartY)
                 if (dragging) {
                     // 拖拽锁定期间圆环继续跟着光标，等第二次按拖拽锁定再收缩
                     customSwipeArmed = false
                     return
                 }
-                val outcome = resolvePadTouchOutcome(longPressFired, moved, distance, dp(12).toFloat())
+                val minSwipeDist = dp(CUSTOM_SWIPE_MIN_DISTANCE_DP).toFloat()
+                val outcome = resolvePadTouchOutcome(longPressFired, moved, distance, minSwipeDist)
                 // 松手即收缩：触控板长按松手时圆环立即收缩，不再在松手后强行多停留
                 if (customSwipeArmed) touchRing?.release()
                 when (outcome) {
-                    PadTouchOutcome.CUSTOM_SWIPE -> customSwipeAt(customSwipeStartX, customSwipeStartY, customSwipeEndX, customSwipeEndY)
+                    PadTouchOutcome.CUSTOM_SWIPE -> customSwipeAt(
+                        customSwipeStartX,
+                        customSwipeStartY,
+                        customSwipeEndX,
+                        customSwipeEndY,
+                        vx,
+                        vy,
+                    )
                     PadTouchOutcome.LONG_PRESS -> longPressAt(cursorX, cursorY, showFeedbackRing = false)
                     PadTouchOutcome.CLICK -> tapOrDouble()
                     PadTouchOutcome.MOVE_ONLY -> Unit
@@ -1315,6 +1334,7 @@ class TouchpadService : AccessibilityService() {
                     }
                 }
                 main.removeCallbacks(longPressRunnable)
+                swipeVelocityTracker.reset()
                 if (customSwipeArmed) touchRing?.release()
                 customSwipeArmed = false
             }
@@ -1941,19 +1961,48 @@ class TouchpadService : AccessibilityService() {
     private fun longPressAt(x: Float, y: Float, showFeedbackRing: Boolean = true) =
         tapAt(x, y, prefs.cursorHoldMs.toLong(), showFeedbackRing)
 
-    private fun customSwipeAt(startX: Float, startY: Float, endX: Float, endY: Float, ms: Long = 320) {
-        val swipe = customSwipeFrom(startX, startY, endX, endY, dp(12).toFloat()) ?: return
-        val overPanel = isPointInsidePanel(swipe.startX, swipe.startY) || isPointInsidePanel(swipe.endX, swipe.endY)
+    private fun customSwipeAt(
+        startX: Float,
+        startY: Float,
+        endX: Float,
+        endY: Float,
+        velocityX: Float = 0f,
+        velocityY: Float = 0f,
+    ) {
+        val minDistance = dp(CUSTOM_SWIPE_MIN_DISTANCE_DP).toFloat()
+        val plan = planCustomSwipe(
+            startX = startX,
+            startY = startY,
+            endX = endX,
+            endY = endY,
+            velocityX = velocityX,
+            velocityY = velocityY,
+            minDistancePx = minDistance,
+            density = resources.displayMetrics.density,
+            screenWidth = screenW,
+            screenHeight = screenH,
+        ) ?: return
+
+        val overPanel = isPointInsidePanel(plan.startX, plan.startY) ||
+            isPointInsidePanel(plan.endX, plan.endY) ||
+            isPointInsidePanel(plan.targetX, plan.targetY)
+
         val path = Path().apply {
-            moveTo(swipe.startX, swipe.startY)
-            lineTo(swipe.endX, swipe.endY)
+            moveTo(plan.startX, plan.startY)
+            if (plan.isInertial && (plan.targetX != plan.endX || plan.targetY != plan.endY)) {
+                lineTo(plan.endX, plan.endY)
+                lineTo(plan.targetX, plan.targetY)
+            } else {
+                lineTo(plan.endX, plan.endY)
+            }
         }
+
         dispatch(
             GestureDescription.Builder()
-                .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
+                .addStroke(GestureDescription.StrokeDescription(path, 0, plan.durationMs))
                 .build(),
             needsPassThrough = overPanel,
-            expectedMs = ms,
+            expectedMs = plan.durationMs,
         )
         haptic()
     }

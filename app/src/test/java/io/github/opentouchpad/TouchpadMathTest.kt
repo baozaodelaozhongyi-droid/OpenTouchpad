@@ -3,6 +3,7 @@ package io.github.opentouchpad
 import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,6 +25,70 @@ class TouchpadMathTest {
             CustomSwipe(10f, 20f, 40f, 60f),
             customSwipeFrom(10f, 20f, 40f, 60f, minDistancePx = 8f),
         )
+    }
+
+    @Test
+    fun customSwipeInertiaPlanCalculatesFlingExtensionAndDuration() {
+        // 距离小于最小阈值：返回 null
+        val belowMin = planCustomSwipe(
+            startX = 100f, startY = 100f, endX = 102f, endY = 102f,
+            velocityX = 0f, velocityY = 0f, minDistancePx = 6f, density = 2f,
+            screenWidth = 1080, screenHeight = 1920,
+        )
+        assertEquals(null, belowMin)
+
+        // 慢速移动（无惯性）：终点不变，耗时固定 300ms
+        val slowDrag = planCustomSwipe(
+            startX = 100f, startY = 500f, endX = 100f, endY = 400f,
+            velocityX = 0f, velocityY = -100f, minDistancePx = 6f, density = 2f,
+            screenWidth = 1080, screenHeight = 1920,
+        )
+        assertNotNull(slowDrag)
+        assertFalse(slowDrag!!.isInertial)
+        assertEquals(100f, slowDrag.targetX, 0.01f)
+        assertEquals(400f, slowDrag.targetY, 0.01f)
+        assertEquals(300L, slowDrag.durationMs)
+
+        // 快速上滑（初速度高）：沿滑动方向延伸 targetY，并且缩短手势耗时赋予飞滑动量
+        val fastFlick = planCustomSwipe(
+            startX = 200f, startY = 800f, endX = 200f, endY = 500f,
+            velocityX = 0f, velocityY = -1800f, minDistancePx = 6f, density = 2f,
+            screenWidth = 1080, screenHeight = 1920,
+        )
+        assertNotNull(fastFlick)
+        assertTrue(fastFlick!!.isInertial)
+        assertEquals(200f, fastFlick.targetX, 0.01f)
+        // targetY 应比 endY (500f) 更小（向上延伸）
+        assertTrue(fastFlick.targetY < 500f)
+        assertTrue(fastFlick.durationMs in 140L..220L)
+
+        // 反向速度（与位移方向相反）：不触发向前惯性延伸
+        val reverseVel = planCustomSwipe(
+            startX = 200f, startY = 800f, endX = 200f, endY = 500f,
+            velocityX = 0f, velocityY = 1200f, minDistancePx = 6f, density = 2f,
+            screenWidth = 1080, screenHeight = 1920,
+        )
+        assertNotNull(reverseVel)
+        assertFalse(reverseVel!!.isInertial)
+        assertEquals(500f, reverseVel.targetY, 0.01f)
+    }
+
+    @Test
+    fun swipeVelocityTrackerComputesVelocityAndHandlesPause() {
+        val tracker = SwipeVelocityTracker()
+        tracker.addMovement(1000L, 100f, 200f)
+        tracker.addMovement(1050L, 120f, 300f)
+        tracker.addMovement(1100L, 150f, 450f)
+
+        // 快速移动并在 1110ms 立即抬手：速度计算正常
+        val (vx, vy) = tracker.computeVelocity(1110L)
+        assertTrue(vx > 0f)
+        assertTrue(vy > 1000f)
+
+        // 停顿 150ms 后才抬手（抬手时手指已停顿）：速度归零
+        val (pausedVx, pausedVy) = tracker.computeVelocity(1260L)
+        assertEquals(0f, pausedVx, 0.001f)
+        assertEquals(0f, pausedVy, 0.001f)
     }
 
     @Test
