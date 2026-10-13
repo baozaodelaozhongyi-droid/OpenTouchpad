@@ -13,7 +13,7 @@ internal fun resolvePadTouchOutcome(
     distancePx: Float,
     minSwipeDistancePx: Float,
 ): PadTouchOutcome = when {
-    moved && distancePx >= minSwipeDistancePx && longPressFired -> PadTouchOutcome.CUSTOM_SWIPE
+    longPressFired && distancePx >= minSwipeDistancePx -> PadTouchOutcome.CUSTOM_SWIPE
     moved -> PadTouchOutcome.MOVE_ONLY
     longPressFired -> PadTouchOutcome.LONG_PRESS
     else -> PadTouchOutcome.CLICK

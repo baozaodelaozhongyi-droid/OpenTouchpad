@@ -22,7 +22,7 @@ internal const val DRAG_TRAIL_MAX_POINTS = 120
 internal const val PAD_EDGE_DEAD_ZONE_DEFAULT_DP = 10
 internal const val PAD_EDGE_DEAD_ZONE_MAX_DP = 32
 
-internal const val CUSTOM_SWIPE_MIN_DISTANCE_DP = 6
+internal const val CUSTOM_SWIPE_MIN_DISTANCE_DP = 2
 
 internal data class PanelPosition(val x: Int, val y: Int)
 
@@ -108,6 +108,9 @@ internal fun planCustomSwipe(
     val minFlingVelocity = 180f * density // 相当于 180 dp/s 轻扫初速度
 
     if (projSpeed < minFlingVelocity) {
+        // 微操与慢速拖动：手势耗时根据移动距离动态计算，微操（几像素）可在 ~100ms 内干脆执行完毕，
+        // 避免固定 300ms 匀速拖拽导致底层微调控件因瞬时位移过慢而无法灵敏响应。
+        val nonInertialDuration = (100L + (distance / (1.5f * density)).coerceIn(0f, 150f).toLong()).coerceIn(100L, 250L)
         return CustomSwipePlan(
             startX = startX,
             startY = startY,
@@ -115,7 +118,7 @@ internal fun planCustomSwipe(
             endY = endY,
             targetX = endX,
             targetY = endY,
-            durationMs = 300L,
+            durationMs = nonInertialDuration,
             isInertial = false,
         )
     }

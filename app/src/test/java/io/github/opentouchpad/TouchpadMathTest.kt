@@ -47,7 +47,19 @@ class TouchpadMathTest {
         assertFalse(slowDrag!!.isInertial)
         assertEquals(100f, slowDrag.targetX, 0.01f)
         assertEquals(400f, slowDrag.targetY, 0.01f)
-        assertEquals(300L, slowDrag.durationMs)
+        assertTrue(slowDrag.durationMs in 100L..250L)
+
+        // 微操：仅位移 5px (2.5dp)
+        val microDrag = planCustomSwipe(
+            startX = 100f, startY = 200f, endX = 104f, endY = 203f,
+            velocityX = 0f, velocityY = 0f, minDistancePx = 4f, density = 2f,
+            screenWidth = 1080, screenHeight = 1920,
+        )
+        assertNotNull(microDrag)
+        assertFalse(microDrag!!.isInertial)
+        assertEquals(104f, microDrag.targetX, 0.01f)
+        assertEquals(203f, microDrag.targetY, 0.01f)
+        assertTrue(microDrag.durationMs in 100L..120L)
 
         // 快速上滑（初速度高）：沿滑动方向延伸 targetY，并且缩短手势耗时赋予飞滑动量
         val fastFlick = planCustomSwipe(
