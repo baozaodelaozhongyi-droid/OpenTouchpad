@@ -66,6 +66,9 @@
     <string name="theme_system">Follow System</string>
     <string name="theme_light">Light Mode</string>
     <string name="theme_dark">Dark Mode</string>
+    <string name="switch_dynamic_color">Dynamic Color (Material You)</string>
+    <string name="switch_dynamic_color_hint">Harmonize the settings page background, cards, and accent colors with your system wallpaper palette (Android 12+).</string>
+    <string name="label_dynamic_color">Dynamic Color</string>
 
     <string name="set_pad_height">Touchpad Extra Height</string>
     <string name="set_pad_width">Total Panel Width</string>

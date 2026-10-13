@@ -995,5 +995,28 @@ class TouchpadMathTest {
         assertEquals(0xFFC96442.toInt(), resolveTouchRingColor(0, isDark = false, fallbackAccent = 0))
         assertEquals(0xFF141413.toInt(), resolveTouchRingColor(0xFF141413.toInt(), isDark = true, fallbackAccent = 0xFF3B82F6.toInt()))
     }
+
+    @Test
+    fun warmSettingsThemeResolvesExpectedColors() {
+        val darkTheme = resolveWarmSettingsTheme(isDark = true, customAccentColor = 0)
+        assertEquals(0xFF1F1E1D.toInt(), darkTheme.pageColor)
+        assertEquals(0xFF262624.toInt(), darkTheme.surfaceColor)
+        assertEquals(0xFFD97757.toInt(), darkTheme.accentColor)
+
+        val lightTheme = resolveWarmSettingsTheme(isDark = false, customAccentColor = 0)
+        assertEquals(0xFFF5F4ED.toInt(), lightTheme.pageColor)
+        assertEquals(0xFFFAF9F5.toInt(), lightTheme.surfaceColor)
+        assertEquals(0xFFC96442.toInt(), lightTheme.accentColor)
+    }
+
+    @Test
+    fun dynamicMaterialYouThemeSynthesizesValidColors() {
+        val wallpaperPrimary = 0xFF3B82F6.toInt()
+        val theme = synthesizeMaterialYouTheme(wallpaperPrimary, isDark = false, customAccentColor = 0)
+        assertNotNull(theme)
+        assertTrue(theme.pageColor != 0)
+        assertTrue(theme.surfaceColor != 0)
+        assertTrue(theme.accentColor != 0)
+    }
 }
 

@@ -405,6 +405,13 @@ class TouchpadService : AccessibilityService() {
         root.invalidate()
     }
 
+    private fun getAccentColor(dark: Boolean): Int {
+        if (prefs.dynamicColor && prefs.uiAccentColor == 0) {
+            return resolveSettingsTheme(this, dark, isDynamic = true, customAccentColor = 0).accentColor
+        }
+        return resolveUiAccentColor(prefs.uiAccentColor, dark)
+    }
+
     /** 实时平滑更新悬浮球尺寸、透明度与颜色（零闪烁）。 */
     fun updateBallAppearance() {
         prefs = Prefs(this)
@@ -412,7 +419,7 @@ class TouchpadService : AccessibilityService() {
         val lp = panelParams ?: return
         val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
         val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
-            ?: resolveUiAccentColor(prefs.uiAccentColor, isDarkTheme())
+            ?: getAccentColor(isDarkTheme())
         val light = Color.luminance(ballColor) > 0.55f
         val ballSize = (size * 0.86f).roundToInt()
         val halo = (ballSize * 0.06f).roundToInt().coerceAtLeast(dp(1))
@@ -905,7 +912,7 @@ class TouchpadService : AccessibilityService() {
         }
         val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
         val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
-            ?: resolveUiAccentColor(prefs.uiAccentColor, isDarkTheme())
+            ?: getAccentColor(isDarkTheme())
         val light = Color.luminance(ballColor) > 0.55f
 
         val ballSize = (size * 0.86f).roundToInt()
@@ -1194,7 +1201,7 @@ class TouchpadService : AccessibilityService() {
     // ───────────────────────── 按钮长按换动作 ─────────────────────────
 
     private fun showActionPicker(slot: Int, current: PadAction) {
-        val accent = resolveUiAccentColor(prefs.uiAccentColor, isDarkTheme())
+        val accent = getAccentColor(isDarkTheme())
         val dialog = ActionPicker.build(this, isDarkTheme(), current, actions = PadAction.TOUCHPAD_ACTIONS, accentColor = accent) { picked ->
             val list = replaceSlot(prefs.buttons, slot, picked, prefs.buttonCount)
             if (list == null) {
@@ -2184,7 +2191,7 @@ class TouchpadService : AccessibilityService() {
     private fun refreshDragButtons() {
         val dark = isDarkTheme()
         val p = palette(dark)
-        val accent = resolveUiAccentColor(prefs.uiAccentColor, dark)
+        val accent = getAccentColor(dark)
         val accentText = resolveOnAccentColor(accent)
         val (_, accentSoftStrong) = resolveUiAccentSoftColors(accent, dark)
         actionViews.forEachIndexed { index, view ->

@@ -66,6 +66,9 @@
     <string name="theme_system">跟随系统</string>
     <string name="theme_light">浅色模式</string>
     <string name="theme_dark">深色模式</string>
+    <string name="switch_dynamic_color">跟随系统动态配色 (Material You)</string>
+    <string name="switch_dynamic_color_hint">从系统壁纸提取色彩，使设置页背景、卡片底色与强调色与系统全局风格融为一体（Android 12+ 原生支持）</string>
+    <string name="label_dynamic_color">动态配色</string>
 
     <string name="set_pad_height">触控板额外高度</string>
     <string name="set_pad_width">面板总宽度</string>

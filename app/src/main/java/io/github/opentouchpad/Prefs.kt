@@ -84,6 +84,11 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("uiAccentColor", 0)
         set(v) = sp.edit().putInt("uiAccentColor", v).apply()
 
+    /** 是否启用跟随系统动态配色 (Material You)。默认关闭。 */
+    var dynamicColor: Boolean
+        get() = sp.getBoolean("dynamicColor", false)
+        set(v) = sp.edit().putBoolean("dynamicColor", v).apply()
+
     // ── 光标 ──
     var sensitivity: Float
         get() = sp.getFloat("sensitivity", 1.4f)

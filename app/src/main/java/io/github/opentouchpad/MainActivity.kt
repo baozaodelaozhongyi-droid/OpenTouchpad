@@ -79,22 +79,24 @@ class MainActivity : Activity() {
     private var activeAnimator: ValueAnimator? = null
     private var isSyncingScroll = false
 
-    // 暖色调配色（参考 Claude 官网）：羊皮纸底色 + 象牙白卡片 + 陶土橙强调色；所有灰色都带暖黄底调。
-    private val pageColor get() = if (darkUi) 0xFF1F1E1D.toInt() else 0xFFF5F4ED.toInt()
-    private val surfaceColor get() = if (darkUi) 0xFF262624.toInt() else 0xFFFAF9F5.toInt()
-    private val elevatedColor get() = if (darkUi) 0xFF30302E.toInt() else 0xFFFFFFFF.toInt()
-    private val trackColor get() = if (darkUi) 0xFF30302E.toInt() else 0xFFF0EEE6.toInt()
-    private val trackStrongColor get() = if (darkUi) 0xFF4D4C48.toInt() else 0xFFD1CFC5.toInt()
-    private val textColor get() = if (darkUi) 0xFFFAF9F5.toInt() else 0xFF141413.toInt()
-    private val secondaryTextColor get() = if (darkUi) 0xFFB0AEA5.toInt() else 0xFF5E5D59.toInt()
-    private val tertiaryTextColor get() = if (darkUi) 0xFF87867F.toInt() else 0xFF87867F.toInt()
-    private val borderColor get() = if (darkUi) 0xFF3D3D3A.toInt() else 0xFFE8E6DC.toInt()
-    private val accentColor get() = resolveUiAccentColor(prefs.uiAccentColor, darkUi)
-    private val onAccentColor get() = resolveOnAccentColor(accentColor)
-    private val accentSoftColor get() = resolveUiAccentSoftColors(accentColor, darkUi).first
-    private val accentSoftStrongColor get() = resolveUiAccentSoftColors(accentColor, darkUi).second
-    private val rippleColor get() = if (darkUi) 0x1FFAF9F5 else 0x14141413
-    private val dangerColor get() = if (darkUi) 0xFFE5826F.toInt() else 0xFFB53333.toInt()
+    private val currentTheme: SettingsTheme
+        get() = resolveSettingsTheme(this, darkUi, prefs.dynamicColor, prefs.uiAccentColor)
+
+    private val pageColor get() = currentTheme.pageColor
+    private val surfaceColor get() = currentTheme.surfaceColor
+    private val elevatedColor get() = currentTheme.elevatedColor
+    private val trackColor get() = currentTheme.trackColor
+    private val trackStrongColor get() = currentTheme.trackStrongColor
+    private val textColor get() = currentTheme.textColor
+    private val secondaryTextColor get() = currentTheme.secondaryTextColor
+    private val tertiaryTextColor get() = currentTheme.tertiaryTextColor
+    private val borderColor get() = currentTheme.borderColor
+    private val accentColor get() = currentTheme.accentColor
+    private val onAccentColor get() = currentTheme.onAccentColor
+    private val accentSoftColor get() = currentTheme.accentSoftColor
+    private val accentSoftStrongColor get() = currentTheme.accentSoftStrongColor
+    private val rippleColor get() = currentTheme.rippleColor
+    private val dangerColor get() = currentTheme.dangerColor
 
     /** 标题用衬线体（内置 Noto Serif SC Medium 子集），正文/控件用系统无衬线体。 */
     private val serif: Typeface by lazy {
@@ -261,10 +263,16 @@ class MainActivity : Activity() {
         }
 
         // ── 外观 ──
-        val appearanceSummary = when (prefs.themeMode) {
-            ThemeMode.SYSTEM -> getString(R.string.theme_system)
-            ThemeMode.LIGHT -> getString(R.string.theme_light)
-            ThemeMode.DARK -> getString(R.string.theme_dark)
+        val appearanceSummary = buildString {
+            append(when (prefs.themeMode) {
+                ThemeMode.SYSTEM -> getString(R.string.theme_system)
+                ThemeMode.LIGHT -> getString(R.string.theme_light)
+                ThemeMode.DARK -> getString(R.string.theme_dark)
+            })
+            if (prefs.dynamicColor) {
+                append(" · ")
+                append(getString(R.string.label_dynamic_color))
+            }
         }
         addCollapsible(
             "appearance",
@@ -272,6 +280,19 @@ class MainActivity : Activity() {
             appearanceSummary,
             defaultExpanded = true,
             themeModeRow(),
+            switchRow(
+                getString(R.string.switch_dynamic_color),
+                prefs.dynamicColor,
+                hint = getString(R.string.switch_dynamic_color_hint),
+                onChange = {
+                    prefs.dynamicColor = it
+                    TouchpadService.instance?.let { svc ->
+                        svc.reload()
+                        svc.updateTouchRingAppearance()
+                    }
+                    recreateKeepingScroll()
+                },
+            ),
             colorRow(
                 getString(R.string.set_ui_accent_color),
                 UI_ACCENT_COLORS,
@@ -1050,11 +1071,12 @@ class MainActivity : Activity() {
     }
 
     private fun updateThemeSelector(track: LinearLayout, selectedMode: ThemeMode, isDark: Boolean) {
-        val elevated = if (isDark) 0xFF30302E.toInt() else 0xFFFFFFFF.toInt()
-        val border = if (isDark) 0xFF3D3D3A.toInt() else 0xFFE8E6DC.toInt()
-        val text = if (isDark) 0xFFFAF9F5.toInt() else 0xFF141413.toInt()
-        val secondaryText = if (isDark) 0xFFB0AEA5.toInt() else 0xFF5E5D59.toInt()
-        val ripple = if (isDark) 0x1FFAF9F5 else 0x14141413
+        val theme = resolveSettingsTheme(this, isDark, prefs.dynamicColor, prefs.uiAccentColor)
+        val elevated = theme.elevatedColor
+        val border = theme.borderColor
+        val text = theme.textColor
+        val secondaryText = theme.secondaryTextColor
+        val ripple = theme.rippleColor
 
         for (i in 0 until track.childCount) {
             val tv = track.getChildAt(i) as? TextView ?: continue
