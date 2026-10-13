@@ -886,17 +886,16 @@ class MainActivity : Activity() {
             text = "OpenTouchpad ${appVersion()}"
             textSize = 12f
             gravity = Gravity.CENTER
+            setTextColor(if (hasCustomSettingsBg && !darkUi) secondaryTextColor else tertiaryTextColor)
             if (hasCustomSettingsBg) {
-                background = roundedSurface(cardBgColor, 999)
-                setTextColor(secondaryTextColor)
-                setPadding(dp(16), dp(6), dp(16), dp(6))
-            } else {
-                setTextColor(tertiaryTextColor)
-                setPadding(0, dp(20), 0, 0)
+                setShadowLayer(
+                    dp(4).toFloat(),
+                    0f,
+                    dp(1).toFloat(),
+                    if (darkUi) 0x80000000.toInt() else 0x99FFFFFF.toInt()
+                )
             }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            gravity = Gravity.CENTER_HORIZONTAL
-            topMargin = dp(20)
+            setPadding(0, dp(20), 0, 0)
         })
 
         return ScrollView(this).apply {
@@ -915,20 +914,7 @@ class MainActivity : Activity() {
     private fun hero(): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            if (hasCustomSettingsBg) {
-                background = roundedSurface(cardBgColor, 24)
-                clipToOutline = true
-                setPadding(dp(20), dp(22), dp(20), dp(20))
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    topMargin = dp(4)
-                    bottomMargin = dp(4)
-                }
-            } else {
-                setPadding(dp(8), dp(28), dp(8), dp(8))
-            }
+            setPadding(dp(8), dp(28), dp(8), dp(8))
         }
         box.addView(TextView(this).apply {
             text = getString(R.string.app_name)
@@ -936,6 +922,16 @@ class MainActivity : Activity() {
             typeface = serif
             letterSpacing = -0.01f
             setTextColor(textColor)
+            if (hasCustomSettingsBg) {
+                // 环境温润漫反射光晕：浅色模式下采用温润柔和半透白晕，深色模式下采用柔和深色阴影
+                // 零遮挡背景插画与人物立绘，同时将字形边缘与复杂暗色/高对比背景利落剥离
+                setShadowLayer(
+                    dp(8).toFloat(),
+                    0f,
+                    dp(1).toFloat(),
+                    if (darkUi) 0xB3000000.toInt() else 0xD9FFFFFF.toInt()
+                )
+            }
         })
         box.addView(TextView(this).apply {
             text = getString(R.string.app_description)
@@ -943,6 +939,14 @@ class MainActivity : Activity() {
             setTextColor(if (hasCustomSettingsBg && !darkUi) textColor else secondaryTextColor)
             setLineSpacing(0f, 1.5f)
             setPadding(0, dp(10), 0, dp(18))
+            if (hasCustomSettingsBg) {
+                setShadowLayer(
+                    dp(5).toFloat(),
+                    0f,
+                    dp(1).toFloat(),
+                    if (darkUi) 0x99000000.toInt() else 0xB3FFFFFF.toInt()
+                )
+            }
         })
         statusView = TextView(this).apply {
             textSize = 13f
@@ -989,32 +993,31 @@ class MainActivity : Activity() {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), dp(18), dp(4), dp(4))
+            setPadding(dp(8), dp(22), dp(4), dp(4))
         }
 
         val label = TextView(this).apply {
             text = getString(R.string.categories_title)
             textSize = 14f
             typeface = sansMedium
+            setTextColor(if (hasCustomSettingsBg && !darkUi) textColor else secondaryTextColor)
             if (hasCustomSettingsBg) {
-                setTextColor(textColor)
-                background = roundedSurface(cardBgColor, 999)
-                setPadding(dp(14), dp(6), dp(14), dp(6))
-            } else {
-                setTextColor(secondaryTextColor)
-                setPadding(dp(4), dp(0), dp(4), dp(0))
+                setShadowLayer(
+                    dp(4).toFloat(),
+                    0f,
+                    dp(1).toFloat(),
+                    if (darkUi) 0x80000000.toInt() else 0xB3FFFFFF.toInt()
+                )
             }
         }
-        bar.addView(label, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-        bar.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
+        bar.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         val btn = TextView(this).apply {
             textSize = 13f
             typeface = sansMedium
             setTextColor(accentColor)
-            setPadding(dp(14), dp(6), dp(14), dp(6))
-            background = ripple(roundedSurface(if (hasCustomSettingsBg) cardBgColor else trackColor, 999), rippleColor, 999)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = ripple(roundedSurface(trackColor, 999), rippleColor, 999)
             isClickable = true
             val allExpanded = controllers.isNotEmpty() && controllers.all { it.isExpanded() }
             text = getString(if (allExpanded) R.string.collapse_all else R.string.expand_all)
