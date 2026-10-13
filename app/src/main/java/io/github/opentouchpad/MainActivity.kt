@@ -83,6 +83,7 @@ class MainActivity : Activity() {
     private var settingsBgImageView: ImageView? = null
     private var settingsBgScrimView: View? = null
     private var settingsBgBitmap: android.graphics.Bitmap? = null
+    private var contentHost: FrameLayout? = null
 
     private val currentTheme: SettingsTheme
         get() = resolveSettingsTheme(this, darkUi, prefs.dynamicColor, prefs.uiAccentColor)
@@ -125,6 +126,14 @@ class MainActivity : Activity() {
         baseWidthSliderController = widthSliderController
         baseHeightSliderController = heightSliderController
         attachScrollSync(baseScroller)
+        val host = FrameLayout(this).apply {
+            addView(baseScroller, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+        }
+        contentHost = host
+
         rootContainer = FrameLayout(this).apply {
             setBackgroundColor(pageColor)
 
@@ -147,7 +156,7 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
 
-            addView(baseScroller, FrameLayout.LayoutParams(
+            addView(host, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
@@ -167,14 +176,16 @@ class MainActivity : Activity() {
                 }
                 lastInsetsTop = top
                 lastInsetsBottom = bottom
-                for (i in 0 until childCount) {
-                    val c = getChildAt(i)
-                    val s = when (c) {
-                        is ScrollView -> c
-                        is RevealLayout -> c.scroller
-                        else -> null
+                host.let { h ->
+                    for (i in 0 until h.childCount) {
+                        val c = h.getChildAt(i)
+                        val s = when (c) {
+                            is ScrollView -> c
+                            is RevealLayout -> c.scroller
+                            else -> null
+                        }
+                        s?.setPadding(0, top, 0, bottom)
                     }
-                    s?.setPadding(0, top, 0, bottom)
                 }
                 insets
             }
@@ -284,8 +295,8 @@ class MainActivity : Activity() {
                             if (!isFinishing && !isDestroyed) {
                                 if (success) {
                                     toast(getString(R.string.bg_image_applied))
-                                    settingsBgBitmap?.recycle()
                                     settingsBgBitmap = null
+                                    applySettingsBackground()
                                     recreateKeepingScroll()
                                 } else {
                                     toast(getString(R.string.bg_image_failed))
@@ -352,7 +363,6 @@ class MainActivity : Activity() {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(40))
-            setBackgroundColor(pageColor)
         }
         content = col
 
@@ -837,7 +847,6 @@ class MainActivity : Activity() {
             scroller = this
             // 固定 id：系统重建（换主题/换颜色后的 recreate）时会自动保存并恢复滚动位置
             id = R.id.settings_scroll
-            setBackgroundColor(pageColor)
             isFillViewport = true
             isVerticalScrollBarEnabled = false
             clipToPadding = false
@@ -960,10 +969,17 @@ class MainActivity : Activity() {
         }
         val isExpanded = expandedCardIds.contains(cardId)
 
+        val hasCustomSettingsBg = CustomBackgroundManager.hasSettingsBg(this)
+        val cardBgColor = if (hasCustomSettingsBg) {
+            Color.argb(230, Color.red(surfaceColor), Color.green(surfaceColor), Color.blue(surfaceColor))
+        } else {
+            surfaceColor
+        }
+
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             // Material 3 容器风格：24dp 大圆角，依赖色阶呈现层次，移除原有生硬描边
-            background = roundedSurface(surfaceColor, 24)
+            background = roundedSurface(cardBgColor, 24)
             clipToOutline = true
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1100,9 +1116,15 @@ class MainActivity : Activity() {
 
     /** 一组设置放在同一张圆角卡片里，组内用细分隔线隔开。 */
     private fun card(vararg rows: View): View {
+        val hasCustomSettingsBg = CustomBackgroundManager.hasSettingsBg(this)
+        val cardBgColor = if (hasCustomSettingsBg) {
+            Color.argb(230, Color.red(surfaceColor), Color.green(surfaceColor), Color.blue(surfaceColor))
+        } else {
+            surfaceColor
+        }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundedSurface(surfaceColor, 24)
+            background = roundedSurface(cardBgColor, 24)
             clipToOutline = true
             setPadding(0, dp(4), 0, dp(6))
         }
@@ -2154,7 +2176,8 @@ class MainActivity : Activity() {
                 currentReveal = newReveal
                 currentRevealDark = targetDark
 
-                rootContainer.addView(
+                val host = contentHost ?: rootContainer
+                host.addView(
                     newReveal,
                     FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
                 )
@@ -2177,9 +2200,10 @@ class MainActivity : Activity() {
         val winnerScroller = winnerReveal.scroller
         val currentScroll = winnerScroller.scrollY
 
-        rootContainer.removeAllViews()
+        val host = contentHost ?: rootContainer
+        host.removeAllViews()
         winnerReveal.removeView(winnerScroller)
-        rootContainer.addView(
+        host.addView(
             winnerScroller,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         )
@@ -2196,6 +2220,7 @@ class MainActivity : Activity() {
 
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
         rootContainer.setBackgroundColor(pageColor)
+        applySettingsBackground()
         updateSystemBars()
     }
 
