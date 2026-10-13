@@ -730,10 +730,6 @@ class TouchpadService : AccessibilityService() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
-            lp.blurBehindRadius = dp(20)
-        }
         lp.gravity = Gravity.TOP or Gravity.START
         // 关掉系统默认的窗口进出动画：它会给被移除的窗口拍一帧快照再淡出，
         // 和我们自己的缩放动画叠在一起就是「残影」。
@@ -761,10 +757,6 @@ class TouchpadService : AccessibilityService() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
-            lp.blurBehindRadius = dp(16)
-        }
         lp.gravity = Gravity.TOP or Gravity.START
         lp.windowAnimations = 0
         val land = isLandscape()
