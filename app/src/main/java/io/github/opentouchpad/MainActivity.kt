@@ -23,6 +23,7 @@ import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import android.provider.Settings
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -225,37 +226,73 @@ class MainActivity : Activity() {
         settingsBgScrimView?.visibility = View.GONE
     }
 
+    private fun launchImagePicker(requestCode: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                val intent = Intent(MediaStore.ACTION_PICK_IMAGES).apply {
+                    type = "image/*"
+                }
+                startActivityForResult(intent, requestCode)
+                return
+            } catch (_: Exception) {
+                // 部分定制系统可能未启用 Photo Picker，回退到系统 SAF 文件选择器
+            }
+        }
+        try {
+            val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                type = "image/*"
+                addCategory(Intent.CATEGORY_OPENABLE)
+            }
+            startActivityForResult(intent, requestCode)
+        } catch (_: Exception) {
+            toast(getString(R.string.bg_image_failed))
+        }
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode == RESULT_OK && data?.data != null) {
-            val uri = data.data ?: return
+        if (resultCode == RESULT_OK && data != null) {
+            val uri = data.data ?: data.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri ?: return
+            val appContext = applicationContext
             when (requestCode) {
                 REQUEST_CODE_PICK_TOUCHPAD_BG -> {
-                    val success = CustomBackgroundManager.saveBackgroundFromUri(
-                        this, uri, CustomBackgroundManager.getTouchpadBgFile(this), maxDim = 1200
-                    )
-                    if (success) {
-                        toast(getString(R.string.bg_image_applied))
-                        TouchpadService.instance?.reloadTouchpadBackground()
-                        recreateKeepingScroll()
-                    } else {
-                        toast(getString(R.string.bg_image_failed))
-                    }
+                    Thread {
+                        val success = CustomBackgroundManager.saveBackgroundFromUri(
+                            appContext, uri, CustomBackgroundManager.getTouchpadBgFile(appContext), maxDim = 1200
+                        )
+                        runOnUiThread {
+                            if (!isFinishing && !isDestroyed) {
+                                if (success) {
+                                    toast(getString(R.string.bg_image_applied))
+                                    TouchpadService.instance?.reloadTouchpadBackground()
+                                    recreateKeepingScroll()
+                                } else {
+                                    toast(getString(R.string.bg_image_failed))
+                                }
+                            }
+                        }
+                    }.start()
                 }
                 REQUEST_CODE_PICK_SETTINGS_BG -> {
                     val dm = resources.displayMetrics
                     val maxDim = maxOf(dm.widthPixels, dm.heightPixels).coerceAtLeast(1080)
-                    val success = CustomBackgroundManager.saveBackgroundFromUri(
-                        this, uri, CustomBackgroundManager.getSettingsBgFile(this), maxDim = maxDim
-                    )
-                    if (success) {
-                        toast(getString(R.string.bg_image_applied))
-                        settingsBgBitmap?.recycle()
-                        settingsBgBitmap = null
-                        recreateKeepingScroll()
-                    } else {
-                        toast(getString(R.string.bg_image_failed))
-                    }
+                    Thread {
+                        val success = CustomBackgroundManager.saveBackgroundFromUri(
+                            appContext, uri, CustomBackgroundManager.getSettingsBgFile(appContext), maxDim = maxDim
+                        )
+                        runOnUiThread {
+                            if (!isFinishing && !isDestroyed) {
+                                if (success) {
+                                    toast(getString(R.string.bg_image_applied))
+                                    settingsBgBitmap?.recycle()
+                                    settingsBgBitmap = null
+                                    recreateKeepingScroll()
+                                } else {
+                                    toast(getString(R.string.bg_image_failed))
+                                }
+                            }
+                        }
+                    }.start()
                 }
             }
         }
@@ -397,8 +434,7 @@ class MainActivity : Activity() {
                 hint = getString(R.string.set_settings_bg_hint),
                 hasCustomBg = hasSettingsBg,
                 onPick = {
-                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
-                    startActivityForResult(intent, REQUEST_CODE_PICK_SETTINGS_BG)
+                    launchImagePicker(REQUEST_CODE_PICK_SETTINGS_BG)
                 },
                 onClear = {
                     CustomBackgroundManager.clearBackground(CustomBackgroundManager.getSettingsBgFile(this))
@@ -486,8 +522,7 @@ class MainActivity : Activity() {
                 hint = getString(R.string.set_touchpad_bg_hint),
                 hasCustomBg = CustomBackgroundManager.hasTouchpadBg(this),
                 onPick = {
-                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" }
-                    startActivityForResult(intent, REQUEST_CODE_PICK_TOUCHPAD_BG)
+                    launchImagePicker(REQUEST_CODE_PICK_TOUCHPAD_BG)
                 },
                 onClear = {
                     CustomBackgroundManager.clearBackground(CustomBackgroundManager.getTouchpadBgFile(this))
