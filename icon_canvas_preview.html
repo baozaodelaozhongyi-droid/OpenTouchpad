@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenTouchpad 应用图标重新设计与 Canvas 交互预览</title>
+  <style>
+    :root {
+      --bg: #0B0E14;
+      --card-bg: #141923;
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #38BDF8;
+      --accent-glow: rgba(56, 189, 248, 0.3);
+      --text-main: #F1F5F9;
+      --text-sub: #94A3B8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      padding: 32px 24px;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    header {
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 9999px;
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      border: 1px solid rgba(56, 189, 248, 0.25);
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+    }
+
+    p.subtitle {
+      color: var(--text-sub);
+      font-size: 15px;
+    }
+
+    .layout-grid {
+      display: grid;
+      grid-template-columns: 460px 1fr;
+      gap: 32px;
+      align-items: start;
+    }
+
+    @media (max-width: 980px) {
+      .layout-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title::before {
+      content: '';
+      display: inline-block;
+      width: 4px;
+      height: 16px;
+      background: var(--accent);
+      border-radius: 2px;
+    }
+
+    .preview-canvas-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #07090E;
+      border-radius: 16px;
+      padding: 32px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      position: relative;
+      margin-bottom: 24px;
+      overflow: hidden;
+    }
+
+    .preview-canvas-wrap::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: 
+        radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.06) 0%, transparent 60%),
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 100% 100%, 20px 20px, 20px 20px;
+      pointer-events: none;
+    }
+
+    #mainCanvas {
+      width: 280px;
+      height: 280px;
+      filter: drop-shadow(0 20px 35px rgba(0, 0, 0, 0.5));
+      position: relative;
+      z-index: 1;
+    }
+
+    .control-group {
+      margin-bottom: 20px;
+    }
+
+    .control-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-sub);
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn-toggle {
+      background: #1B212D;
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-toggle:hover {
+      border-color: rgba(56, 189, 248, 0.4);
+      background: #222938;
+    }
+
+    .btn-toggle.active {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .btn-primary {
+      width: 100%;
+      background: linear-gradient(135deg, #0EA5E9, #2563EB);
+      color: #FFF;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 4px 15px rgba(14, 165, 233, 0.35);
+      transition: all 0.2s ease;
+      margin-top: 12px;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(14, 165, 233, 0.45);
+    }
+
+    .btn-secondary {
+      width: 100%;
+      background: #1B212D;
+      color: var(--text-main);
+      border: 1px solid var(--card-border);
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      margin-top: 8px;
+    }
+
+    .btn-secondary:hover {
+      background: #252D3D;
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    /* Density Grid */
+    .density-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .density-item {
+      background: #0E1219;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      transition: all 0.2s ease;
+    }
+
+    .density-item:hover {
+      border-color: rgba(56, 189, 248, 0.25);
+      background: #121620;
+    }
+
+    .density-canvas-box {
+      height: 96px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .density-item canvas {
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: crisp-edges;
+    }
+
+    .density-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .density-sub {
+      font-size: 11px;
+      color: var(--text-sub);
+    }
+
+    /* Phone Mockup */
+    .mockup-wrap {
+      display: flex;
+      gap: 24px;
+      align-items: center;
+      background: #0A0D14;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 28px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .phone-screen {
+      width: 220px;
+      height: 280px;
+      background: linear-gradient(145deg, #1A1F35, #0B0E1B);
+      border-radius: 28px;
+      border: 4px solid #2B3347;
+      padding: 20px 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      box-shadow: 0 15px 35px rgba(0,0,0,0.6);
+      flex-shrink: 0;
+    }
+
+    .app-row {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      margin-top: auto;
+      margin-bottom: 8px;
+    }
+
+    .mock-app {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .mock-icon-slot {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .mock-label {
+      font-size: 9px;
+      color: rgba(255, 255, 255, 0.85);
+      max-width: 46px;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Code View */
+    .code-box {
+      background: #07090E;
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 16px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: #CBD5E1;
+      max-height: 240px;
+      overflow-y: auto;
+      position: relative;
+      white-space: pre;
+    }
+
+    .btn-copy {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: #1B212D;
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .btn-copy:hover {
+      background: var(--accent);
+      color: #000;
+    }
+
+    .concept-points {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    .point-item {
+      background: rgba(255, 255, 255, 0.03);
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .point-item strong {
+      display: block;
+      color: var(--accent);
+      font-size: 13px;
+      margin-bottom: 3px;
+    }
+
+    .point-item span {
+      font-size: 12px;
+      color: var(--text-sub);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <span class="badge">OpenTouchpad Design System</span>
+      <h1>应用图标重新设计与 Canvas 交互预览</h1>
+      <p class="subtitle">设计主题：极简现代科技 · 悬浮球 (Assistive Orb) + 触控板 (Touchpad) · 原生纯 JS Canvas 渲染</p>
+    </header>
+
+    <div class="layout-grid">
+      <!-- Left Column: Interactive Controls & Master View -->
+      <div class="card">
+        <div class="card-title">主图标实时渲染 (512x512)</div>
+
+        <div class="preview-canvas-wrap">
+          <canvas id="mainCanvas" width="512" height="512"></canvas>
+        </div>
+
+        <div class="control-group">
+          <label class="control-label">图标形态 (Icon Shape)</label>
+          <div class="btn-group">
+            <button class="btn-toggle active" data-shape="squircle">Squircle (标准圆角)</button>
+            <button class="btn-toggle" data-shape="circle">Round (圆形/RoundIcon)</button>
+            <button class="btn-toggle" data-shape="full">Full (自适应无遮罩)</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label class="control-label">设计风格 (Design Style)</label>
+          <div class="btn-group">
+            <button class="btn-toggle active" data-style="luminous">灵动光感 (推荐)</button>
+            <button class="btn-toggle" data-style="minimal">极简线条</button>
+            <button class="btn-toggle" data-style="cyber">赛博霓虹</button>
+          </div>
+        </div>
+
+        <button class="btn-primary" id="btnDownloadMaster">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          下载当前主图标 (512×512 PNG)
+        </button>
+        <button class="btn-secondary" id="btnDownloadAll">
+          一键导出全部 Android Mipmap 尺寸 (48~192)
+        </button>
+
+        <div class="concept-points">
+          <div class="point-item">
+            <strong>触控板 (Touchpad)</strong>
+            <span>深空哑光拉丝面板，微光金属斜边与左右物理按键分割线。</span>
+          </div>
+          <div class="point-item">
+            <strong>悬浮球 (Assistive Orb)</strong>
+            <span>半透磨砂光环 + 3D 能量球心，悬空投影增强空间层次。</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Multi-Density Showcase & Phone Mockup -->
+      <div>
+        <!-- Phone Mockup -->
+        <div class="card" style="margin-bottom: 24px;">
+          <div class="card-title">真实手机桌面模拟效果</div>
+          <div class="mockup-wrap">
+            <div class="phone-screen">
+              <div style="display: flex; justify-content: space-between; font-size: 10px; color: #94A3B8;">
+                <span>09:41</span>
+                <span>5G · 100%</span>
+              </div>
+              <div style="text-align: center; margin-top: 18px;">
+                <div style="font-size: 32px; font-weight: 300; letter-spacing: -1px;">10月14日</div>
+                <div style="font-size: 11px; color: #94A3B8;">星期三</div>
+              </div>
+              <div class="app-row">
+                <div class="mock-app">
+                  <div class="mock-icon-slot" style="background: #3B82F6;">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFF" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                  </div>
+                  <span class="mock-label">邮件</span>
+                </div>
+                <div class="mock-app">
+                  <canvas id="mockupCanvas" width="48" height="48" style="border-radius: 10px;"></canvas>
+                  <span class="mock-label" style="color: var(--accent); font-weight: 600;">OpenTouch</span>
+                </div>
+                <div class="mock-app">
+                  <div class="mock-icon-slot" style="background: #10B981;">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFF" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                  </div>
+                  <span class="mock-label">电话</span>
+                </div>
+                <div class="mock-app">
+                  <div class="mock-icon-slot" style="background: #64748B;">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFF" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                  </div>
+                  <span class="mock-label">设置</span>
+                </div>
+              </div>
+            </div>
+            <div style="font-size: 13px; color: var(--text-sub); line-height: 1.8;">
+              <h4 style="color: var(--text-main); font-size: 15px; margin-bottom: 6px;">桌面辨识度实测</h4>
+              <p>• <strong>高对比度</strong>：深暗背景确保在亮色或深色壁纸上都能稳定辨识外轮廓。</p>
+              <p>• <strong>标志性特征</strong>：居中悬浮光球（Assistive Orb）辨识度极高，缩放到 42px 依然能一眼认出是触控+悬浮球辅助工具。</p>
+              <p>• <strong>轻量与纯粹</strong>：摒弃杂乱装饰，突出触控板微光分界与手势涟漪。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Android Densities Gallery -->
+        <div class="card" style="margin-bottom: 24px;">
+          <div class="card-title">全套 Android Mipmap 密度规格实时呈现</div>
+          <div class="density-grid">
+            <div class="density-item">
+              <div class="density-canvas-box">
+                <canvas id="c_xxxhdpi" width="192" height="192" style="width: 80px; height: 80px;"></canvas>
+              </div>
+              <div class="density-label">xxxhdpi</div>
+              <div class="density-sub">192 × 192 px</div>
+            </div>
+            <div class="density-item">
+              <div class="density-canvas-box">
+                <canvas id="c_xxhdpi" width="144" height="144" style="width: 72px; height: 72px;"></canvas>
+              </div>
+              <div class="density-label">xxhdpi</div>
+              <div class="density-sub">144 × 144 px</div>
+            </div>
+            <div class="density-item">
+              <div class="density-canvas-box">
+                <canvas id="c_xhdpi" width="96" height="96" style="width: 60px; height: 60px;"></canvas>
+              </div>
+              <div class="density-label">xhdpi</div>
+              <div class="density-sub">96 × 96 px</div>
+            </div>
+            <div class="density-item">
+              <div class="density-canvas-box">
+                <canvas id="c_hdpi" width="72" height="72" style="width: 52px; height: 52px;"></canvas>
+              </div>
+              <div class="density-label">hdpi</div>
+              <div class="density-sub">72 × 72 px</div>
+            </div>
+            <div class="density-item">
+              <div class="density-canvas-box">
+                <canvas id="c_mdpi" width="48" height="48" style="width: 48px; height: 48px;"></canvas>
+              </div>
+              <div class="density-label">mdpi</div>
+              <div class="density-sub">48 × 48 px</div>
+            </div>
+            <div class="density-item">
+              <div class="density-canvas-box">
+                <canvas id="c_round192" width="192" height="192" style="width: 80px; height: 80px;"></canvas>
+              </div>
+              <div class="density-label">RoundIcon</div>
+              <div class="density-sub">192 × 192 px</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- JS Canvas Source Code -->
+        <div class="card">
+          <div class="card-title">原生 JavaScript Canvas 绘制核心代码</div>
+          <div class="code-box" id="codeSnippet">
+            <button class="btn-copy" id="btnCopyCode">复制代码</button>
+            <code id="codeText"></code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * 核心 Canvas 绘制函数
+     */
+    function drawOpenTouchpadIcon(ctx, size, options = {}) {
+      const { shape = 'squircle', style = 'luminous' } = options;
+      const s = size / 512;
+      ctx.save();
+      ctx.clearRect(0, 0, size, size);
+      ctx.scale(s, s);
+
+      // 1. 剪裁轮廓 (Squircle / Circle / Full)
+      ctx.beginPath();
+      if (shape === 'circle') {
+        ctx.arc(256, 256, 238, 0, Math.PI * 2);
+      } else if (shape === 'squircle') {
+        ctx.roundRect(16, 16, 480, 480, 108);
+      } else {
+        ctx.rect(0, 0, 512, 512);
+      }
+      ctx.clip();
+
+      if (style === 'minimal') {
+        // ---- 风格 B: 极简线条几何 ----
+        const bg = ctx.createLinearGradient(0, 0, 512, 512);
+        bg.addColorStop(0, '#1E2433');
+        bg.addColorStop(1, '#0F131D');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, 512, 512);
+
+        const px = 88, py = 180, pw = 336, ph = 240, pr = 24;
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+        ctx.shadowBlur = 24;
+        ctx.shadowOffsetY = 12;
+        ctx.fillStyle = '#181E2B';
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.fill();
+        ctx.restore();
+
+        const padGrad = ctx.createLinearGradient(0, py, 0, py + ph);
+        padGrad.addColorStop(0, '#252F42');
+        padGrad.addColorStop(1, '#1A2130');
+        ctx.fillStyle = padGrad;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        const dy = py + ph - 64;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(px + 16, dy);
+        ctx.lineTo(px + pw - 16, dy);
+        ctx.moveTo(256, dy);
+        ctx.lineTo(256, py + ph - 10);
+        ctx.stroke();
+
+        const ox = 256, oy = 160;
+        ctx.save();
+        const shGrad = ctx.createRadialGradient(ox, 230, 4, ox, 230, 52);
+        shGrad.addColorStop(0, 'rgba(0,0,0,0.5)');
+        shGrad.addColorStop(1, 'transparent');
+        ctx.fillStyle = shGrad;
+        ctx.beginPath();
+        ctx.ellipse(ox, 230, 52, 14, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 62, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 46, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const coreGrad = ctx.createLinearGradient(ox - 30, oy - 30, ox + 30, oy + 30);
+        coreGrad.addColorStop(0, '#38BDF8');
+        coreGrad.addColorStop(1, '#0284C7');
+        ctx.fillStyle = coreGrad;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 32, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(ox, oy, 9, 0, Math.PI * 2);
+        ctx.fill();
+
+      } else if (style === 'cyber') {
+        // ---- 风格 C: 赛博霓虹 ----
+        ctx.fillStyle = '#090B10';
+        ctx.fillRect(0, 0, 512, 512);
+
+        const px = 80, py = 184, pw = 352, ph = 244, pr = 26;
+        ctx.save();
+        ctx.shadowColor = '#0EA5E9';
+        ctx.shadowBlur = 20;
+        ctx.strokeStyle = 'rgba(14, 165, 233, 0.6)';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.stroke();
+        ctx.restore();
+
+        const padGrad = ctx.createLinearGradient(0, py, 0, py + ph);
+        padGrad.addColorStop(0, '#131822');
+        padGrad.addColorStop(1, '#0D1017');
+        ctx.fillStyle = padGrad;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.fill();
+
+        const dy = py + ph - 62;
+        ctx.strokeStyle = 'rgba(14, 165, 233, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(px + 14, dy);
+        ctx.lineTo(px + pw - 14, dy);
+        ctx.moveTo(256, dy);
+        ctx.lineTo(256, py + ph - 12);
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.ellipse(256, 276, 50, 24, 0, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const ox = 256, oy = 152;
+        const aura = ctx.createRadialGradient(ox, oy, 10, ox, oy, 90);
+        aura.addColorStop(0, 'rgba(56, 189, 248, 0.6)');
+        aura.addColorStop(1, 'transparent');
+        ctx.fillStyle = aura;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 90, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#38BDF8';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 60, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const spGrad = ctx.createRadialGradient(ox - 8, oy - 8, 3, ox, oy, 32);
+        spGrad.addColorStop(0, '#FFFFFF');
+        spGrad.addColorStop(0.3, '#38BDF8');
+        spGrad.addColorStop(1, '#0369A1');
+        ctx.fillStyle = spGrad;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 32, 0, Math.PI * 2);
+        ctx.fill();
+
+      } else {
+        // ---- 风格 A: 灵动光感 3D 拟态质感 (推荐) ----
+        // 1. 深邃暗夜背景渐变
+        const bgGrad = ctx.createLinearGradient(40, 20, 472, 492);
+        bgGrad.addColorStop(0, '#151928');
+        bgGrad.addColorStop(0.5, '#0E111C');
+        bgGrad.addColorStop(1, '#07090F');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, 512, 512);
+
+        // 环境微光晕染
+        const ambientGlow = ctx.createRadialGradient(256, 230, 20, 256, 230, 290);
+        ambientGlow.addColorStop(0, 'rgba(56, 189, 248, 0.16)');
+        ambientGlow.addColorStop(0.5, 'rgba(37, 99, 235, 0.06)');
+        ambientGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = ambientGlow;
+        ctx.fillRect(0, 0, 512, 512);
+
+        if (shape === 'squircle' || shape === 'circle') {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          if (shape === 'squircle') ctx.roundRect(16, 16, 480, 480, 108);
+          else ctx.arc(256, 256, 238, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // 2. 触控板面板 (Touchpad)
+        const isCircle = shape === 'circle';
+        const padW = isCircle ? 320 : 344;
+        const padH = isCircle ? 236 : 248;
+        const padX = (512 - padW) / 2;
+        const padY = isCircle ? 188 : 180;
+        const padR = 26;
+
+        // 触控板底座深层阴影
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.72)';
+        ctx.shadowBlur = 32;
+        ctx.shadowOffsetY = 16;
+        ctx.fillStyle = '#1D253A';
+        ctx.beginPath();
+        ctx.roundRect(padX, padY, padW, padH, padR);
+        ctx.fill();
+        ctx.restore();
+
+        // 触控板哑光深空金属质感表面
+        ctx.save();
+        const padGrad = ctx.createLinearGradient(256, padY, 256, padY + padH);
+        padGrad.addColorStop(0, '#2D364D');
+        padGrad.addColorStop(0.35, '#222B3F');
+        padGrad.addColorStop(0.85, '#161C2B');
+        padGrad.addColorStop(1, '#10141E');
+        ctx.fillStyle = padGrad;
+        ctx.beginPath();
+        ctx.roundRect(padX, padY, padW, padH, padR);
+        ctx.fill();
+
+        // 触控板金属斜角高光描边 (Rim highlight)
+        const rimGrad = ctx.createLinearGradient(padX, padY, padX, padY + padH);
+        rimGrad.addColorStop(0, 'rgba(255, 255, 255, 0.48)');
+        rimGrad.addColorStop(0.3, 'rgba(125, 211, 252, 0.38)');
+        rimGrad.addColorStop(0.8, 'rgba(255, 255, 255, 0.14)');
+        rimGrad.addColorStop(1, 'rgba(255, 255, 255, 0.06)');
+        ctx.strokeStyle = rimGrad;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        // 内嵌微凹倒角
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(padX + 2, padY + 2, padW - 4, padH - 4, padR - 2);
+        ctx.stroke();
+
+        // 触控板按键区域分割线
+        const divY = padY + padH - 62;
+        const btnGrad = ctx.createLinearGradient(256, divY, 256, padY + padH);
+        btnGrad.addColorStop(0, 'rgba(255, 255, 255, 0.04)');
+        btnGrad.addColorStop(1, 'rgba(0, 0, 0, 0.16)');
+        ctx.fillStyle = btnGrad;
+        ctx.beginPath();
+        ctx.roundRect(padX + 4, divY, padW - 8, padH - (divY - padY) - 4, [0, 0, padR - 4, padR - 4]);
+        ctx.fill();
+
+        // 水平按键分界线
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.24)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(padX + 16, divY);
+        ctx.lineTo(padX + padW - 16, divY);
+        ctx.stroke();
+
+        // 左右键垂直分界线
+        ctx.beginPath();
+        ctx.moveTo(256, divY);
+        ctx.lineTo(256, padY + padH - 12);
+        ctx.stroke();
+
+        // 电容触控涟漪 (Capacitive Ripple)
+        const rippleY = isCircle ? 276 : 270;
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.36)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(256, rippleY, 58, 26, 0, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.16)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.ellipse(256, rippleY, 102, 45, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        // 3. 悬浮球投射在触控板上的真实空间阴影
+        const orbX = 256;
+        const orbY = isCircle ? 156 : 152;
+
+        ctx.save();
+        const shadowGrad = ctx.createRadialGradient(256, orbY + 78, 6, 256, orbY + 78, 62);
+        shadowGrad.addColorStop(0, 'rgba(0, 0, 0, 0.72)');
+        shadowGrad.addColorStop(0.45, 'rgba(0, 0, 0, 0.36)');
+        shadowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = shadowGrad;
+        ctx.beginPath();
+        ctx.ellipse(256, orbY + 78, 62, 17, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // 4. 悬浮球主体 (Floating Assistive Orb)
+        ctx.save();
+
+        // (a) 光子辐射光晕 (Luminous Aura)
+        const orbAura = ctx.createRadialGradient(orbX, orbY, 15, orbX, orbY, 95);
+        orbAura.addColorStop(0, 'rgba(56, 189, 248, 0.55)');
+        orbAura.addColorStop(0.4, 'rgba(14, 165, 233, 0.22)');
+        orbAura.addColorStop(1, 'rgba(14, 165, 233, 0)');
+        ctx.fillStyle = orbAura;
+        ctx.beginPath();
+        ctx.arc(orbX, orbY, 95, 0, Math.PI * 2);
+        ctx.fill();
+
+        // (b) 外层半透明磨砂光环 (Assistive Halo)
+        const outerR = 66;
+        ctx.save();
+        ctx.shadowColor = 'rgba(14, 165, 233, 0.65)';
+        ctx.shadowBlur = 24;
+
+        const haloGrad = ctx.createLinearGradient(orbX - outerR, orbY - outerR, orbX + outerR, orbY + outerR);
+        haloGrad.addColorStop(0, 'rgba(255, 255, 255, 0.28)');
+        haloGrad.addColorStop(0.4, 'rgba(56, 189, 248, 0.18)');
+        haloGrad.addColorStop(1, 'rgba(14, 165, 233, 0.24)');
+        ctx.fillStyle = haloGrad;
+        ctx.beginPath();
+        ctx.arc(orbX, orbY, outerR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // 光环外边缘精细亮线
+        const haloRim = ctx.createLinearGradient(orbX - outerR, orbY - outerR, orbX + outerR, orbY + outerR);
+        haloRim.addColorStop(0, 'rgba(255, 255, 255, 0.88)');
+        haloRim.addColorStop(0.35, 'rgba(125, 211, 252, 0.72)');
+        haloRim.addColorStop(0.7, 'rgba(56, 189, 248, 0.42)');
+        haloRim.addColorStop(1, 'rgba(14, 165, 233, 0.3)');
+        ctx.strokeStyle = haloRim;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(orbX, orbY, outerR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // (c) 中间同心导轨圈
+        ctx.strokeStyle = 'rgba(186, 230, 253, 0.55)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(orbX, orbY, 49, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // (d) 悬浮球 3D 渐变能量球体
+        const coreR = 36;
+        const sphereGrad = ctx.createRadialGradient(
+          orbX - 11, orbY - 11, 4,
+          orbX, orbY, coreR
+        );
+        sphereGrad.addColorStop(0, '#F0F9FF');
+        sphereGrad.addColorStop(0.2, '#67E8F9');
+        sphereGrad.addColorStop(0.5, '#0EA5E9');
+        sphereGrad.addColorStop(0.85, '#2563EB');
+        sphereGrad.addColorStop(1, '#1E3A8A');
+
+        ctx.save();
+        ctx.shadowColor = 'rgba(2, 132, 199, 0.75)';
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = sphereGrad;
+        ctx.beginPath();
+        ctx.arc(orbX, orbY, coreR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(orbX, orbY, coreR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // (e) 辅助触控中心触碰点 (Assistive Core Dot)
+        ctx.save();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.shadowColor = 'rgba(255, 255, 255, 1)';
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.arc(orbX, orbY, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // (f) 表面玻璃高光
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.beginPath();
+        ctx.ellipse(orbX - 13, orbY - 13, 7, 4, -Math.PI / 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      ctx.restore();
+    }
+
+    // State
+    let currentShape = 'squircle';
+    let currentStyle = 'luminous';
+
+    const mainCanvas = document.getElementById('mainCanvas');
+    const mainCtx = mainCanvas.getContext('2d');
+
+    const mockupCanvas = document.getElementById('mockupCanvas');
+    const mockupCtx = mockupCanvas.getContext('2d');
+
+    const densityCanvases = {
+      xxxhdpi: document.getElementById('c_xxxhdpi'),
+      xxhdpi: document.getElementById('c_xxhdpi'),
+      xhdpi: document.getElementById('c_xhdpi'),
+      hdpi: document.getElementById('c_hdpi'),
+      mdpi: document.getElementById('c_mdpi'),
+      round: document.getElementById('c_round192')
+    };
+
+    function renderAll() {
+      // 1. Render Main Canvas (512x512)
+      drawOpenTouchpadIcon(mainCtx, 512, { shape: currentShape, style: currentStyle });
+
+      // 2. Render Mockup (48x48)
+      drawOpenTouchpadIcon(mockupCtx, 48, { shape: currentShape, style: currentStyle });
+
+      // 3. Render Density Canvases
+      drawOpenTouchpadIcon(densityCanvases.xxxhdpi.getContext('2d'), 192, { shape: currentShape, style: currentStyle });
+      drawOpenTouchpadIcon(densityCanvases.xxhdpi.getContext('2d'), 144, { shape: currentShape, style: currentStyle });
+      drawOpenTouchpadIcon(densityCanvases.xhdpi.getContext('2d'), 96, { shape: currentShape, style: currentStyle });
+      drawOpenTouchpadIcon(densityCanvases.hdpi.getContext('2d'), 72, { shape: currentShape, style: currentStyle });
+      drawOpenTouchpadIcon(densityCanvases.mdpi.getContext('2d'), 48, { shape: currentShape, style: currentStyle });
+      drawOpenTouchpadIcon(densityCanvases.round.getContext('2d'), 192, { shape: 'circle', style: currentStyle });
+    }
+
+    // Controls
+    document.querySelectorAll('[data-shape]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-shape]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentShape = btn.getAttribute('data-shape');
+        renderAll();
+      });
+    });
+
+    document.querySelectorAll('[data-style]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('[data-style]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentStyle = btn.getAttribute('data-style');
+        renderAll();
+      });
+    });
+
+    // Download Single Master PNG
+    document.getElementById('btnDownloadMaster').addEventListener('click', () => {
+      const link = document.createElement('a');
+      link.download = `opentouchpad-icon-512-${currentShape}-${currentStyle}.png`;
+      link.href = mainCanvas.toDataURL('image/png');
+      link.click();
+    });
+
+    // Download All Sizes
+    document.getElementById('btnDownloadAll').addEventListener('click', () => {
+      const sizes = [
+        { name: 'ic_launcher-512.png', size: 512, shape: 'squircle' },
+        { name: 'ic_launcher_round-512.png', size: 512, shape: 'circle' },
+        { name: 'mipmap-xxxhdpi-192.png', size: 192, shape: 'squircle' },
+        { name: 'mipmap-xxhdpi-144.png', size: 144, shape: 'squircle' },
+        { name: 'mipmap-xhdpi-96.png', size: 96, shape: 'squircle' },
+        { name: 'mipmap-hdpi-72.png', size: 72, shape: 'squircle' },
+        { name: 'mipmap-mdpi-48.png', size: 48, shape: 'squircle' }
+      ];
+
+      sizes.forEach(({ name, size, shape }, idx) => {
+        setTimeout(() => {
+          const c = document.createElement('canvas');
+          c.width = size;
+          c.height = size;
+          drawOpenTouchpadIcon(c.getContext('2d'), size, { shape, style: currentStyle });
+          const a = document.createElement('a');
+          a.download = name;
+          a.href = c.toDataURL('image/png');
+          a.click();
+        }, idx * 150);
+      });
+    });
+
+    // Code Snippet Text
+    document.getElementById('codeText').textContent = drawOpenTouchpadIcon.toString();
+
+    document.getElementById('btnCopyCode').addEventListener('click', () => {
+      navigator.clipboard.writeText(drawOpenTouchpadIcon.toString()).then(() => {
+        const btn = document.getElementById('btnCopyCode');
+        btn.textContent = '已复制！';
+        setTimeout(() => { btn.textContent = '复制代码'; }, 2000);
+      });
+    });
+
+    // Initial render
+    renderAll();
+  </script>
+</body>
+</html>
