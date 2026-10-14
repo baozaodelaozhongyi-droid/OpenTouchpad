@@ -931,7 +931,7 @@ class MainActivity : Activity() {
                 setShadowLayer(
                     dp(6).toFloat(),
                     0f,
-                    dp(1.5f).toFloat(),
+                    dp(1).toFloat(),
                     0x99000000.toInt()
                 )
             }
