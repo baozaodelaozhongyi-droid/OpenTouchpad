@@ -886,13 +886,13 @@ class MainActivity : Activity() {
             text = "OpenTouchpad ${appVersion()}"
             textSize = 12f
             gravity = Gravity.CENTER
-            setTextColor(if (hasCustomSettingsBg && !darkUi) secondaryTextColor else tertiaryTextColor)
+            setTextColor(if (hasCustomSettingsBg || darkUi) 0x99FFFFFF.toInt() else tertiaryTextColor)
             if (hasCustomSettingsBg) {
                 setShadowLayer(
-                    dp(4).toFloat(),
+                    dp(3).toFloat(),
                     0f,
                     dp(1).toFloat(),
-                    if (darkUi) 0x80000000.toInt() else 0x99FFFFFF.toInt()
+                    0x80000000.toInt()
                 )
             }
             setPadding(0, dp(20), 0, 0)
@@ -916,35 +916,38 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(28), dp(8), dp(8))
         }
+        val isHeaderDark = darkUi || hasCustomSettingsBg
+        val headerTitleColor = if (isHeaderDark) 0xFFFFFFFF.toInt() else textColor
+        val headerDescColor = if (isHeaderDark) 0xD9FFFFFF.toInt() else secondaryTextColor
+
         box.addView(TextView(this).apply {
             text = getString(R.string.app_name)
             textSize = 34f
             typeface = serif
             letterSpacing = -0.01f
-            setTextColor(textColor)
+            setTextColor(headerTitleColor)
             if (hasCustomSettingsBg) {
-                // 环境温润漫反射光晕：浅色模式下采用温润柔和半透白晕，深色模式下采用柔和深色阴影
-                // 零遮挡背景插画与人物立绘，同时将字形边缘与复杂暗色/高对比背景利落剥离
+                // 暗色模式风格：纯白大号衬线标题辅以细腻暗色阴影，与壁纸自然融为一体且边缘清晰
                 setShadowLayer(
-                    dp(8).toFloat(),
+                    dp(6).toFloat(),
                     0f,
-                    dp(1).toFloat(),
-                    if (darkUi) 0xB3000000.toInt() else 0xD9FFFFFF.toInt()
+                    dp(1.5f).toFloat(),
+                    0x99000000.toInt()
                 )
             }
         })
         box.addView(TextView(this).apply {
             text = getString(R.string.app_description)
             textSize = 15f
-            setTextColor(if (hasCustomSettingsBg && !darkUi) textColor else secondaryTextColor)
+            setTextColor(headerDescColor)
             setLineSpacing(0f, 1.5f)
             setPadding(0, dp(10), 0, dp(18))
             if (hasCustomSettingsBg) {
                 setShadowLayer(
-                    dp(5).toFloat(),
+                    dp(4).toFloat(),
                     0f,
                     dp(1).toFloat(),
-                    if (darkUi) 0x99000000.toInt() else 0xB3FFFFFF.toInt()
+                    0x80000000.toInt()
                 )
             }
         })
@@ -996,17 +999,20 @@ class MainActivity : Activity() {
             setPadding(dp(8), dp(22), dp(4), dp(4))
         }
 
+        val isHeaderDark = darkUi || hasCustomSettingsBg
+        val labelColor = if (isHeaderDark) 0xD9FFFFFF.toInt() else secondaryTextColor
+
         val label = TextView(this).apply {
             text = getString(R.string.categories_title)
             textSize = 14f
             typeface = sansMedium
-            setTextColor(if (hasCustomSettingsBg && !darkUi) textColor else secondaryTextColor)
+            setTextColor(labelColor)
             if (hasCustomSettingsBg) {
                 setShadowLayer(
                     dp(4).toFloat(),
                     0f,
                     dp(1).toFloat(),
-                    if (darkUi) 0x80000000.toInt() else 0xB3FFFFFF.toInt()
+                    0x80000000.toInt()
                 )
             }
         }
@@ -1017,7 +1023,14 @@ class MainActivity : Activity() {
             typeface = sansMedium
             setTextColor(accentColor)
             setPadding(dp(12), dp(6), dp(12), dp(6))
-            background = ripple(roundedSurface(trackColor, 999), rippleColor, 999)
+            val btnBg = if (hasCustomSettingsBg || darkUi) {
+                roundedSurface(0x33000000.toInt(), 999).apply {
+                    setStroke(maxOf(1, dp(1)), 0x33FFFFFF.toInt())
+                }
+            } else {
+                roundedSurface(trackColor, 999)
+            }
+            background = ripple(btnBg, rippleColor, 999)
             isClickable = true
             val allExpanded = controllers.isNotEmpty() && controllers.all { it.isExpanded() }
             text = getString(if (allExpanded) R.string.collapse_all else R.string.expand_all)
@@ -2008,8 +2021,17 @@ class MainActivity : Activity() {
     private fun updateStatus() {
         val on = isServiceEnabled()
         statusView.text = getString(if (on) R.string.status_on else R.string.status_off)
-        statusView.setTextColor(if (darkUi) 0xFFE8E6DC.toInt() else 0xFF4D4C48.toInt())
-        statusView.background = roundedSurface(trackColor, 999).apply { setStroke(maxOf(1, dp(1)), borderColor) }
+        if (hasCustomSettingsBg || darkUi) {
+            statusView.setTextColor(0xFFE8E6DC.toInt())
+            statusView.background = roundedSurface(0x33000000.toInt(), 999).apply {
+                setStroke(maxOf(1, dp(1)), 0x33FFFFFF.toInt())
+            }
+        } else {
+            statusView.setTextColor(0xFF4D4C48.toInt())
+            statusView.background = roundedSurface(trackColor, 999).apply {
+                setStroke(maxOf(1, dp(1)), borderColor)
+            }
+        }
         statusView.setCompoundDrawablesRelativeWithIntrinsicBounds(GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(if (on) 0xFF7A9A5B.toInt() else accentColor)
@@ -2034,21 +2056,21 @@ class MainActivity : Activity() {
 
     @Suppress("DEPRECATION")
     private fun updateSystemBars() {
+        val lightStatus = !darkUi && !hasCustomSettingsBg
+        val lightNav = !darkUi
         window.statusBarColor = pageColor
         window.navigationBarColor = pageColor
         @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = if (darkUi) 0 else {
-            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        }
+        window.decorView.systemUiVisibility = (if (lightStatus) View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR else 0) or
+            (if (lightNav) View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0)
         if (Build.VERSION.SDK_INT >= 30) {
             val controller = window.insetsController
-            val flags = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            if (darkUi) {
-                controller?.setSystemBarsAppearance(0, flags)
-            } else {
-                controller?.setSystemBarsAppearance(flags, flags)
-            }
+            val statusFlag = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+            val navFlag = WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            controller?.setSystemBarsAppearance(
+                (if (lightStatus) statusFlag else 0) or (if (lightNav) navFlag else 0),
+                statusFlag or navFlag
+            )
         }
     }
 
