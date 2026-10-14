@@ -419,9 +419,12 @@
         <div class="control-group">
           <label class="control-label">设计风格 (Design Style)</label>
           <div class="btn-group">
-            <button class="btn-toggle active" data-style="luminous">灵动光感 (推荐)</button>
-            <button class="btn-toggle" data-style="minimal">极简线条</button>
-            <button class="btn-toggle" data-style="cyber">赛博霓虹</button>
+            <button class="btn-toggle" data-style="tc_bg_wave">陶土橙底白描</button>
+            <button class="btn-toggle active" data-style="tc_white_wave">白底陶土橙 (手势★当前)</button>
+            <button class="btn-toggle" data-style="tc_bg_clean">陶土橙底纯净</button>
+            <button class="btn-toggle" data-style="tc_white_clean">白底陶土橙纯净</button>
+            <button class="btn-toggle" data-style="doodle_wave">极简电光蓝白</button>
+            <button class="btn-toggle" data-style="luminous">灵动光感 (暗黑 3D)</button>
           </div>
         </div>
 
@@ -577,7 +580,283 @@
       }
       ctx.clip();
 
-      if (style === 'minimal') {
+      const TC = '#E05A36';
+      const WHITE = '#FFFFFF';
+
+      if (style === 'tc_bg_wave') {
+        // ---- 风格: 陶土橙底白描 (手势轨迹★推荐) ----
+        ctx.fillStyle = TC;
+        ctx.fillRect(0, 0, 512, 512);
+
+        ctx.strokeStyle = WHITE;
+        ctx.fillStyle = WHITE;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        const ox = 256, oy = 126;
+        ctx.lineWidth = 26;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 48, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(ox, oy, 20, 0, Math.PI * 2);
+        ctx.fill();
+
+        const px = 86, py = 206, pw = 340, ph = 222, pr = 38;
+        ctx.lineWidth = 28;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.stroke();
+
+        const dy = py + ph - 56;
+        ctx.lineWidth = 24;
+        ctx.beginPath();
+        ctx.moveTo(px + 18, dy);
+        ctx.lineTo(px + pw - 18, dy);
+        ctx.moveTo(256, dy);
+        ctx.lineTo(256, py + ph - 10);
+        ctx.stroke();
+
+        ctx.lineWidth = 26;
+        ctx.beginPath();
+        ctx.moveTo(136, 305);
+        ctx.bezierCurveTo(170, 245, 210, 245, 256, 288);
+        ctx.bezierCurveTo(300, 330, 340, 270, 376, 260);
+        ctx.stroke();
+
+      } else if (style === 'tc_white_wave') {
+        // ---- 风格: 白底陶土橙 (手势轨迹) ----
+        ctx.fillStyle = WHITE;
+        ctx.fillRect(0, 0, 512, 512);
+
+        ctx.strokeStyle = TC;
+        ctx.fillStyle = TC;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        const ox = 256, oy = 126;
+        ctx.lineWidth = 26;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 48, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(ox, oy, 20, 0, Math.PI * 2);
+        ctx.fill();
+
+        const px = 86, py = 206, pw = 340, ph = 222, pr = 38;
+        ctx.lineWidth = 28;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.stroke();
+
+        const dy = py + ph - 56;
+        ctx.lineWidth = 24;
+        ctx.beginPath();
+        ctx.moveTo(px + 18, dy);
+        ctx.lineTo(px + pw - 18, dy);
+        ctx.moveTo(256, dy);
+        ctx.lineTo(256, py + ph - 10);
+        ctx.stroke();
+
+        ctx.lineWidth = 26;
+        ctx.beginPath();
+        ctx.moveTo(136, 305);
+        ctx.bezierCurveTo(170, 245, 210, 245, 256, 288);
+        ctx.bezierCurveTo(300, 330, 340, 270, 376, 260);
+        ctx.stroke();
+
+      } else if (style === 'tc_bg_clean') {
+        // ---- 风格: 陶土橙底纯净 ----
+        ctx.fillStyle = TC;
+        ctx.fillRect(0, 0, 512, 512);
+
+        ctx.strokeStyle = WHITE;
+        ctx.fillStyle = WHITE;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        const ox = 256, oy = 138;
+        ctx.lineWidth = 28;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 54, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(ox, oy, 24, 0, Math.PI * 2);
+        ctx.fill();
+
+        const px = 92, py = 224, pw = 328, ph = 208, pr = 38;
+        ctx.lineWidth = 28;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.stroke();
+
+        const dy = py + ph - 56;
+        ctx.lineWidth = 24;
+        ctx.beginPath();
+        ctx.moveTo(px + 18, dy);
+        ctx.lineTo(px + pw - 18, dy);
+        ctx.moveTo(256, dy);
+        ctx.lineTo(256, py + ph - 10);
+        ctx.stroke();
+
+      } else if (style === 'tc_white_clean') {
+        // ---- 风格: 白底陶土橙纯净 ----
+        ctx.fillStyle = WHITE;
+        ctx.fillRect(0, 0, 512, 512);
+
+        ctx.strokeStyle = TC;
+        ctx.fillStyle = TC;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        const ox = 256, oy = 138;
+        ctx.lineWidth = 28;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 54, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(ox, oy, 24, 0, Math.PI * 2);
+        ctx.fill();
+
+        const px = 92, py = 224, pw = 328, ph = 208, pr = 38;
+        ctx.lineWidth = 28;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.stroke();
+
+        const dy = py + ph - 56;
+        ctx.lineWidth = 24;
+        ctx.beginPath();
+        ctx.moveTo(px + 18, dy);
+        ctx.lineTo(px + pw - 18, dy);
+        ctx.moveTo(256, dy);
+        ctx.lineTo(256, py + ph - 10);
+        ctx.stroke();
+
+      } else if (style === 'doodle_wave') {
+        // ---- 风格: 极简手势蓝白 (对齐参考图★) ----
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, 512, 512);
+
+        ctx.strokeStyle = '#0066FF';
+        ctx.fillStyle = '#0066FF';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        // 悬浮球
+        const ox = 256, oy = 126;
+        ctx.lineWidth = 26;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 48, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(ox, oy, 20, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 触控板轮廓
+        const px = 86, py = 206, pw = 340, ph = 222, pr = 38;
+        ctx.lineWidth = 28;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.stroke();
+
+        // 按键分界
+        const dy = py + ph - 56;
+        ctx.lineWidth = 24;
+        ctx.beginPath();
+        ctx.moveTo(px + 18, dy);
+        ctx.lineTo(px + pw - 18, dy);
+        ctx.moveTo(256, dy);
+        ctx.lineTo(256, py + ph - 10);
+        ctx.stroke();
+
+        // 灵动滑动曲线 (与参考图一脉相承的涂鸦手势)
+        ctx.lineWidth = 26;
+        ctx.beginPath();
+        ctx.moveTo(136, 305);
+        ctx.bezierCurveTo(170, 245, 210, 245, 256, 288);
+        ctx.bezierCurveTo(300, 330, 340, 270, 376, 260);
+        ctx.stroke();
+
+      } else if (style === 'doodle_clean') {
+        // ---- 风格: 极简纯净蓝白线描 ----
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, 512, 512);
+
+        ctx.strokeStyle = '#0066FF';
+        ctx.fillStyle = '#0066FF';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        // 悬浮球
+        const ox = 256, oy = 138;
+        ctx.lineWidth = 28;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 54, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(ox, oy, 24, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 触控板
+        const px = 92, py = 224, pw = 328, ph = 208, pr = 38;
+        ctx.lineWidth = 28;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.stroke();
+
+        // 按键分界
+        const dy = py + ph - 56;
+        ctx.lineWidth = 24;
+        ctx.beginPath();
+        ctx.moveTo(px + 18, dy);
+        ctx.lineTo(px + pw - 18, dy);
+        ctx.moveTo(256, dy);
+        ctx.lineTo(256, py + ph - 10);
+        ctx.stroke();
+
+      } else if (style === 'doodle_inv') {
+        // ---- 风格: 电光蓝底反白 ----
+        ctx.fillStyle = '#0066FF';
+        ctx.fillRect(0, 0, 512, 512);
+
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        const ox = 256, oy = 126;
+        ctx.lineWidth = 26;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 48, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(ox, oy, 20, 0, Math.PI * 2);
+        ctx.fill();
+
+        const px = 86, py = 206, pw = 340, ph = 222, pr = 38;
+        ctx.lineWidth = 28;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pw, ph, pr);
+        ctx.stroke();
+
+        const dy = py + ph - 56;
+        ctx.lineWidth = 24;
+        ctx.beginPath();
+        ctx.moveTo(px + 18, dy);
+        ctx.lineTo(px + pw - 18, dy);
+        ctx.moveTo(256, dy);
+        ctx.lineTo(256, py + ph - 10);
+        ctx.stroke();
+
+        ctx.lineWidth = 26;
+        ctx.beginPath();
+        ctx.moveTo(136, 305);
+        ctx.bezierCurveTo(170, 245, 210, 245, 256, 288);
+        ctx.bezierCurveTo(300, 330, 340, 270, 376, 260);
+        ctx.stroke();
+
+      } else if (style === 'minimal') {
         // ---- 风格 B: 极简线条几何 ----
         const bg = ctx.createLinearGradient(0, 0, 512, 512);
         bg.addColorStop(0, '#1E2433');
@@ -947,7 +1226,7 @@
 
     // State
     let currentShape = 'squircle';
-    let currentStyle = 'luminous';
+    let currentStyle = 'tc_white_wave';
 
     const mainCanvas = document.getElementById('mainCanvas');
     const mainCtx = mainCanvas.getContext('2d');
