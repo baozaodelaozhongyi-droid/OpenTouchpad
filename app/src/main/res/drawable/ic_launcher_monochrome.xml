@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+
+    <!-- Android 13+ Monet 动态取色图层 (Themed Icon) -->
+    <!-- 悬浮球外环 -->
+    <path
+        android:pathData="M 256,136 A 36,36 0 1,0 256,208 A 36,36 0 1,0 256,136"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="18"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- 悬浮球核心 -->
+    <path
+        android:pathData="M 256,157 A 15,15 0 1,0 256,187 A 15,15 0 1,0 256,157"
+        android:fillColor="#FF000000" />
+
+    <!-- 触控板外框 -->
+    <path
+        android:pathData="M 164,232 H 348 A 26,26 0 0,1 374,258 V 358 A 26,26 0 0,1 348,384 H 164 A 26,26 0 0,1 138,358 V 258 A 26,26 0 0,1 164,232 Z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="20"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- 底部按键水平分割线 -->
+    <path
+        android:pathData="M 150,346 H 362"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="17"
+        android:strokeLineCap="round" />
+
+    <!-- 左右按键垂直分割线 -->
+    <path
+        android:pathData="M 256,346 V 376"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="17"
+        android:strokeLineCap="round" />
+
+    <!-- 触控板表面灵动滑动手势曲线 -->
+    <path
+        android:pathData="M 172,300 C 196,258 224,258 256,288 C 286,318 314,276 340,268"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="18"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+</vector>

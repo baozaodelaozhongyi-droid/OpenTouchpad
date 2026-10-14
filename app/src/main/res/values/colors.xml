@@ -2,4 +2,5 @@
 <resources>
     <color name="page_light">#F5F4ED</color>
     <color name="page_dark">#1F1E1D</color>
+    <color name="ic_launcher_background">#FFFFFFFF</color>
 </resources>
