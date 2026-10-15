@@ -34,6 +34,7 @@ import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.PathInterpolator
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -60,9 +61,13 @@ class MainActivity : Activity() {
     class SliderController(val setValue: (Int) -> Unit)
     private class CollapsibleCardController(
         val id: String,
-        val setExpanded: (Boolean) -> Unit,
+        private val handler: (expand: Boolean, animate: Boolean, startDelay: Long) -> Unit,
         val isExpanded: () -> Boolean,
-    )
+    ) {
+        fun setExpanded(expand: Boolean, animate: Boolean = true, startDelay: Long = 0L) {
+            handler(expand, animate, startDelay)
+        }
+    }
 
 
     private var showPanelSwitch: Switch? = null
@@ -1038,7 +1043,9 @@ class MainActivity : Activity() {
                 haptic(it)
                 val isAllExpanded = controllers.isNotEmpty() && controllers.all { c -> c.isExpanded() }
                 val targetExpand = !isAllExpanded
-                controllers.forEach { c -> c.setExpanded(targetExpand) }
+                controllers.forEachIndexed { index, c ->
+                    c.setExpanded(targetExpand, animate = true, startDelay = (index * 20L).coerceAtMost(160L))
+                }
                 text = getString(if (targetExpand) R.string.collapse_all else R.string.expand_all)
             }
         }
@@ -1150,6 +1157,8 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             visibility = if (isExpanded) View.VISIBLE else View.GONE
             setPadding(0, dp(4), 0, dp(6))
+            clipChildren = true
+            clipToPadding = true
         }
 
         rows.forEachIndexed { i, row ->
@@ -1163,29 +1172,161 @@ class MainActivity : Activity() {
         }
         box.addView(contentBox)
 
+        var currentAnimator: ValueAnimator? = null
+
         val controller = CollapsibleCardController(
             id = cardId,
-            setExpanded = { expand ->
+            handler = { expand, animate, startDelay ->
+                // 如果当前状态与目标状态一致且没有动画在运行，直接返回
+                if (currentAnimator == null && expand == expandedCardIds.contains(cardId)) {
+                    return@CollapsibleCardController
+                }
+
+                currentAnimator?.cancel()
+                currentAnimator = null
+
                 if (expand) {
                     expandedCardIds.add(cardId)
-                    contentBox.visibility = View.VISIBLE
-                    headerDivider.visibility = View.VISIBLE
-                    chevron.animate().rotation(0f).setDuration(180).start()
                 } else {
                     expandedCardIds.remove(cardId)
-                    contentBox.visibility = View.GONE
-                    headerDivider.visibility = View.GONE
-                    chevron.animate().rotation(-90f).setDuration(180).start()
                 }
                 header.contentDescription = "$title, ${if (expand) "已展开" else "已折叠"}"
+
+                val targetRotation = if (expand) 0f else -90f
+                if (!animate) {
+                    chevron.rotation = targetRotation
+                    headerDivider.visibility = if (expand) View.VISIBLE else View.GONE
+                    headerDivider.alpha = 1f
+                    contentBox.visibility = if (expand) View.VISIBLE else View.GONE
+                    contentBox.alpha = 1f
+                    contentBox.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    return@CollapsibleCardController
+                }
+
+                chevron.animate()
+                    .rotation(targetRotation)
+                    .setDuration(if (expand) 260 else 220)
+                    .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
+                    .setStartDelay(startDelay)
+                    .start()
+
+                val availableWidth = if (box.width > 0) {
+                    box.width
+                } else if ((content?.width ?: 0) > 0) {
+                    (content.width - dp(32)).coerceAtLeast(dp(200))
+                } else {
+                    (resources.displayMetrics.widthPixels - dp(32)).coerceAtLeast(dp(200))
+                }
+
+                if (expand) {
+                    headerDivider.visibility = View.VISIBLE
+                    contentBox.visibility = View.VISIBLE
+
+                    val startHeight = if (contentBox.height > 0) contentBox.height else 0
+                    val startAlpha = if (contentBox.alpha in 0f..1f) contentBox.alpha else 0f
+
+                    // 临时将高度设置为 WRAP_CONTENT 进行测量，获得无拘束状态下的完整内容高度
+                    contentBox.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    val widthSpec = View.MeasureSpec.makeMeasureSpec(availableWidth, View.MeasureSpec.EXACTLY)
+                    val heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                    contentBox.measure(widthSpec, heightSpec)
+                    val targetHeight = contentBox.measuredHeight
+
+                    // 恢复起始高度与透明度
+                    contentBox.layoutParams.height = startHeight
+                    contentBox.alpha = startAlpha
+                    headerDivider.alpha = startAlpha
+
+                    val anim = ValueAnimator.ofFloat(0f, 1f).apply {
+                        duration = 260
+                        interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+                        this.startDelay = startDelay
+                        addUpdateListener { va ->
+                            val frac = va.animatedValue as Float
+                            val h = (startHeight + (targetHeight - startHeight) * frac).roundToInt()
+                            contentBox.layoutParams.height = h
+                            val currentAlpha = startAlpha + (1f - startAlpha) * frac
+                            contentBox.alpha = currentAlpha
+                            headerDivider.alpha = currentAlpha
+                            contentBox.requestLayout()
+                        }
+                        addListener(object : AnimatorListenerAdapter() {
+                            var wasCancelled = false
+                            override fun onAnimationCancel(animation: Animator) {
+                                wasCancelled = true
+                            }
+                            override fun onAnimationEnd(animation: Animator) {
+                                if (!wasCancelled) {
+                                    contentBox.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                                    contentBox.alpha = 1f
+                                    headerDivider.alpha = 1f
+                                    currentAnimator = null
+                                    contentBox.requestLayout()
+                                    // 展开完成后，如卡片底部超出屏幕，轻柔平滑滚动使得新内容进入视野
+                                    box.post {
+                                        val visibleRect = android.graphics.Rect()
+                                        box.getDrawingRect(visibleRect)
+                                        box.requestRectangleOnScreen(visibleRect, false)
+                                    }
+                                }
+                            }
+                        })
+                    }
+                    currentAnimator = anim
+                    anim.start()
+                } else {
+                    // 折叠
+                    val startHeight = if (contentBox.height > 0) contentBox.height else contentBox.measuredHeight
+                    val startAlpha = if (contentBox.alpha in 0f..1f) contentBox.alpha else 1f
+
+                    if (startHeight <= 0) {
+                        contentBox.visibility = View.GONE
+                        headerDivider.visibility = View.GONE
+                        contentBox.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                        return@CollapsibleCardController
+                    }
+
+                    val anim = ValueAnimator.ofFloat(0f, 1f).apply {
+                        duration = 220
+                        interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+                        this.startDelay = startDelay
+                        addUpdateListener { va ->
+                            val frac = va.animatedValue as Float
+                            val h = (startHeight * (1f - frac)).roundToInt()
+                            contentBox.layoutParams.height = h
+                            val currentAlpha = startAlpha * (1f - frac)
+                            contentBox.alpha = currentAlpha
+                            headerDivider.alpha = currentAlpha
+                            contentBox.requestLayout()
+                        }
+                        addListener(object : AnimatorListenerAdapter() {
+                            var wasCancelled = false
+                            override fun onAnimationCancel(animation: Animator) {
+                                wasCancelled = true
+                            }
+                            override fun onAnimationEnd(animation: Animator) {
+                                if (!wasCancelled) {
+                                    contentBox.visibility = View.GONE
+                                    headerDivider.visibility = View.GONE
+                                    contentBox.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                                    contentBox.alpha = 1f
+                                    headerDivider.alpha = 1f
+                                    currentAnimator = null
+                                }
+                            }
+                        })
+                    }
+                    currentAnimator = anim
+                    anim.start()
+                }
             },
-            isExpanded = { contentBox.visibility == View.VISIBLE }
+            isExpanded = { expandedCardIds.contains(cardId) }
         )
         controllers?.add(controller)
 
         header.setOnClickListener {
             haptic(it)
-            val willExpand = contentBox.visibility != View.VISIBLE
+            val willExpand = !controller.isExpanded()
             controller.setExpanded(willExpand)
             onToggle?.invoke()
         }
