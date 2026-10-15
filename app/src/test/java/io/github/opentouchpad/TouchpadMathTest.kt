@@ -220,8 +220,9 @@ class TouchpadMathTest {
 
     @Test
     fun ballLongPressHoldDurationHasSafeMinimum() {
-        assertEquals(450L, resolveBallLongPressHoldMs(configuredLongPressMs = 200))
-        assertEquals(450L, resolveBallLongPressHoldMs(configuredLongPressMs = 300))
+        assertEquals(200L, resolveBallLongPressHoldMs(configuredLongPressMs = 100))
+        assertEquals(200L, resolveBallLongPressHoldMs(configuredLongPressMs = 200))
+        assertEquals(300L, resolveBallLongPressHoldMs(configuredLongPressMs = 300))
         assertEquals(600L, resolveBallLongPressHoldMs(configuredLongPressMs = 600))
         assertEquals(1000L, resolveBallLongPressHoldMs(configuredLongPressMs = 1000))
     }

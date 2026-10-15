@@ -75,6 +75,8 @@
     <string name="set_opacity">面板不透明度</string>
     <string name="set_ball_size">悬浮球直径尺寸</string>
     <string name="set_ball_opacity">悬浮球不透明度</string>
+    <string name="set_ball_hold">长按悬浮球识别时长</string>
+    <string name="ball_hold_hint">长按悬浮球进入移动模式或触发对应长按手势所需的按住时长。</string>
     <string name="set_cursor_size">光标尺寸</string>
     <string name="set_cursor_color">光标颜色</string>
     <string name="set_sensitivity">光标移动灵敏度</string>

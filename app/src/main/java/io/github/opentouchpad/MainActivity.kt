@@ -741,6 +741,17 @@ class MainActivity : Activity() {
             ballGestureRows.add(actionPickerRow(getString(R.string.gesture_single_tap), prefs.ballActionSingleTap, PadAction.BALL_ACTIONS) { prefs.ballActionSingleTap = it })
             ballGestureRows.add(actionPickerRow(getString(R.string.gesture_double_tap), prefs.ballActionDoubleTap, PadAction.BALL_ACTIONS) { prefs.ballActionDoubleTap = it })
             ballGestureRows.add(actionPickerRow(getString(R.string.gesture_long_press), prefs.ballActionLongPress, PadAction.BALL_LONG_PRESS_ACTIONS) { prefs.ballActionLongPress = it })
+            ballGestureRows.add(
+                slider(
+                    getString(R.string.set_ball_hold),
+                    200,
+                    1200,
+                    prefs.ballLongPressMs,
+                    unit = "ms",
+                    hint = getString(R.string.ball_hold_hint),
+                    onChange = { prefs.ballLongPressMs = it },
+                )
+            )
             ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_up), prefs.ballActionSwipeUp, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeUp = it })
             ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_down), prefs.ballActionSwipeDown, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeDown = it })
             ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_left), prefs.ballActionSwipeLeft, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeLeft = it })

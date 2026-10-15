@@ -75,6 +75,8 @@
     <string name="set_opacity">Panel Opacity</string>
     <string name="set_ball_size">Floating Ball Diameter</string>
     <string name="set_ball_opacity">Floating Ball Opacity</string>
+    <string name="set_ball_hold">Floating Ball Long-Press Duration</string>
+    <string name="ball_hold_hint">Duration to hold the floating ball before entering drag/move mode or triggering its long-press action.</string>
     <string name="set_cursor_size">Cursor Size</string>
     <string name="set_cursor_color">Cursor Color</string>
     <string name="set_sensitivity">Cursor Sensitivity</string>

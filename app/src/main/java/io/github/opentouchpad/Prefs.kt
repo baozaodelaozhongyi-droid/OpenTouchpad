@@ -326,6 +326,11 @@ class Prefs(ctx: Context) {
         get() = PadAction.fromId(sp.getString("ballActionSwipeRight", null)) ?: PadAction.RECENTS
         set(v) = sp.edit().putString("ballActionSwipeRight", v.id).apply()
 
+    /** 悬浮球长按识别时长（移动悬浮球或触发长按手势），单位 ms。默认 450ms。 */
+    var ballLongPressMs: Int
+        get() = sp.getInt("ballLongPressMs", 450)
+        set(v) = sp.edit().putInt("ballLongPressMs", v).apply()
+
     fun resetBallActions() {
         sp.edit()
             .remove("ballActionSingleTap")
@@ -335,6 +340,7 @@ class Prefs(ctx: Context) {
             .remove("ballActionSwipeDown")
             .remove("ballActionSwipeLeft")
             .remove("ballActionSwipeRight")
+            .remove("ballLongPressMs")
             .apply()
     }
 

@@ -1648,7 +1648,7 @@ class TouchpadService : AccessibilityService() {
                     main.removeCallbacks(ballSingleTapRunnable)
                 }
                 main.removeCallbacks(ballLongPressRunnable)
-                val holdDuration = resolveBallLongPressHoldMs(prefs.longPressMs)
+                val holdDuration = resolveBallLongPressHoldMs(prefs.ballLongPressMs)
                 main.postDelayed(ballLongPressRunnable, holdDuration)
             }
             MotionEvent.ACTION_MOVE -> {
