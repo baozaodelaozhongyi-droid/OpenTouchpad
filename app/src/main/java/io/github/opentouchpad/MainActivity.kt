@@ -435,7 +435,9 @@ class MainActivity : Activity() {
                         svc.reload()
                         svc.updateTouchRingAppearance()
                     }
-                    recreateKeepingScroll()
+                    col.postDelayed({
+                        recreateKeepingScroll()
+                    }, 280)
                 },
             ),
             colorRow(
@@ -620,6 +622,7 @@ class MainActivity : Activity() {
         )
 
         // ── 按钮 ──
+        var holdSlider: View? = null
         val buttonRows = mutableListOf<View>(
             buttonLayoutModeRow(),
             buttonSlotMap(),
@@ -644,23 +647,21 @@ class MainActivity : Activity() {
                 hint = getString(R.string.switch_long_press_customize_hint),
                 onChange = {
                     prefs.longPressButtonToCustomize = it
-                    recreateKeepingScroll()
+                    holdSlider?.visibility = if (it) View.VISIBLE else View.GONE
                 },
             ),
+            slider(
+                getString(R.string.set_button_customize_hold),
+                BUTTON_CUSTOMIZE_HOLD_MIN_MS,
+                BUTTON_CUSTOMIZE_HOLD_MAX_MS,
+                prefs.buttonCustomizeHoldMs,
+                unit = "ms",
+                hint = getString(R.string.button_customize_hold_hint),
+                onChange = { prefs.buttonCustomizeHoldMs = it },
+            ).also { holdSlider = it }.apply {
+                visibility = if (prefs.longPressButtonToCustomize) View.VISIBLE else View.GONE
+            },
         )
-        if (prefs.longPressButtonToCustomize) {
-            buttonRows.add(
-                slider(
-                    getString(R.string.set_button_customize_hold),
-                    BUTTON_CUSTOMIZE_HOLD_MIN_MS,
-                    BUTTON_CUSTOMIZE_HOLD_MAX_MS,
-                    prefs.buttonCustomizeHoldMs,
-                    unit = "ms",
-                    hint = getString(R.string.button_customize_hold_hint),
-                    onChange = { prefs.buttonCustomizeHoldMs = it },
-                )
-            )
-        }
         val buttonsSummary = when (prefs.buttonCount) {
             4 -> getString(R.string.btn_mode_4)
             8 -> getString(R.string.btn_mode_8)
@@ -1163,7 +1164,14 @@ class MainActivity : Activity() {
 
         rows.forEachIndexed { i, row ->
             if (i > 0) {
-                contentBox.addView(View(this).apply { setBackgroundColor(borderColor) },
+                val div = View(this).apply {
+                    setBackgroundColor(borderColor)
+                    visibility = row.visibility
+                }
+                row.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    div.visibility = row.visibility
+                }
+                contentBox.addView(div,
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, dp(1) / 2)).apply {
                         marginStart = dp(18); marginEnd = dp(18)
                     })
@@ -1262,12 +1270,6 @@ class MainActivity : Activity() {
                                     headerDivider.alpha = 1f
                                     currentAnimator = null
                                     contentBox.requestLayout()
-                                    // 展开完成后，如卡片底部超出屏幕，轻柔平滑滚动使得新内容进入视野
-                                    box.post {
-                                        val visibleRect = android.graphics.Rect()
-                                        box.getDrawingRect(visibleRect)
-                                        box.requestRectangleOnScreen(visibleRect, false)
-                                    }
                                 }
                             }
                         })
