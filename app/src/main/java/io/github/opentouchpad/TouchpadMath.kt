@@ -599,6 +599,20 @@ internal fun computeBallDeformation(
     )
 }
 
+/**
+ * 饱满气泡曲线控制系数计算：
+ * - 当长宽比为 1.0（正圆）时，输出 0.552285f，四段贝塞尔曲线精确绘制纯正圆；
+ * - 当长宽比拉大时，端部穹顶保持饱满圆润（kt 逐渐趋向 0.82f），两侧长边形成柔和外凸的气泡微弧（ks 逐渐趋向 0.36f），
+ *   消除传统几何胶囊的平直硬边。
+ */
+internal fun bubbleControlCoefficients(aspectRatio: Float): Pair<Float, Float> {
+    val rho = aspectRatio.coerceAtLeast(1f)
+    val t = ((rho - 1f) / 1.5f).coerceIn(0f, 1f)
+    val kt = 0.552285f + t * (0.82f - 0.552285f)
+    val ks = 0.552285f + t * (0.36f - 0.552285f)
+    return kt to ks
+}
+
 internal data class DragMotionState(
     val stretch: Float,
     val squash: Float,

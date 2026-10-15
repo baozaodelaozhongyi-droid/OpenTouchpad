@@ -926,7 +926,9 @@ class TouchpadService : AccessibilityService() {
             view.layoutParams = rectParams(rect)
 
             val cornerRadius = minOf(rect.w, rect.h) / 2f
-            view.background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, cornerRadius)
+            val bg = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, cornerRadius)
+            bg.setBounds(0, 0, rect.w, rect.h)
+            view.background = bg
 
             val standardIconPx = (layout.button * 0.56f).roundToInt()
             val maxIconPx = (minOf(rect.w, rect.h) - dp(4)).coerceAtLeast(dp(8))
@@ -1073,14 +1075,22 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
-    /** 按钮背景，支持胶囊型与圆形（根据传入的圆角半径自适应），带按压水波纹反馈。 */
-    private fun buttonBackground(color: Int, stroke: Int, ripple: Int, cornerRadiusPx: Float): Drawable {
-        val mask = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = cornerRadiusPx
-            setColor(Color.WHITE)
-        }
-        val content = solidBackground(GradientDrawable.RECTANGLE, color, stroke, cornerRadiusPx)
+    /** 饱满气泡按钮背景：拉伸时呈柔和外凸张力微弧，正圆时为完美圆形，带按压水波纹反馈。 */
+    private fun buttonBackground(color: Int, stroke: Int, ripple: Int, cornerRadiusPx: Float = 0f): Drawable {
+        val mask = BubbleDrawable(
+            baseColor = Color.WHITE,
+            strokeColor = Color.TRANSPARENT,
+            strokeWidthPx = 0f,
+            opacityPercent = 100,
+            isMask = true,
+        )
+        val content = BubbleDrawable(
+            baseColor = color,
+            strokeColor = stroke,
+            strokeWidthPx = dp(1).toFloat(),
+            opacityPercent = prefs.opacityPercent,
+            isMask = false,
+        )
         return RippleDrawable(ColorStateList.valueOf(ripple), content, mask)
     }
 
@@ -2246,13 +2256,17 @@ class TouchpadService : AccessibilityService() {
             if (prefs.buttons.getOrNull(slot) != PadAction.DRAG_LOCK) return@forEachIndexed
             val iv = view as? ImageView ?: return@forEachIndexed
             val radius = minOf(view.width, view.height).takeIf { it > 0 }?.let { it / 2f } ?: dp(14).toFloat()
-            if (dragging) {
-                iv.background = buttonBackground(accent, accentSoftStrong, p.ripple, radius)
+            val bg = if (dragging) {
                 iv.setColorFilter(accentText)
+                buttonBackground(accent, accentSoftStrong, p.ripple, radius)
             } else {
-                iv.background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, radius)
                 iv.setColorFilter(p.buttonText)
+                buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, radius)
             }
+            if (view.width > 0 && view.height > 0) {
+                bg.setBounds(0, 0, view.width, view.height)
+            }
+            iv.background = bg
         }
     }
 
