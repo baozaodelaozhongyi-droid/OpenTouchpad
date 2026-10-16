@@ -16,8 +16,8 @@ import android.os.Build
 /**
  * 构建饱满气泡曲线路径：
  * - 当 w == h 时，绘制精确圆；
- * - 当高度或宽度被拉长时，长边两侧呈现柔和外凸的连续气泡张力弧线（鼓形微弧），
- *   两端平滑过渡为圆润饱满的穹顶，消除传统胶囊的笔直冷硬长边。
+ * - 两端严格保持 100% 圆润平滑的半球形穹顶（半圆钝头，严禁收缩变尖）；
+ * - 长边两侧呈现柔和外凸的连续气泡张力微弧，消除几何胶囊笔直硬边的同时保证视觉饱满圆润。
  */
 internal fun buildBubblePath(
     path: Path,
@@ -36,66 +36,54 @@ internal fun buildBubblePath(
     val cx = left + w2
     val cy = top + h2
 
-    val minDim = minOf(w, h)
-    val maxDim = maxOf(w, h)
-    val rho = maxDim / minDim.coerceAtLeast(1f)
-    val (kt, ks) = bubbleControlCoefficients(rho)
+    if (kotlin.math.abs(w - h) < 0.5f) {
+        path.addCircle(cx, cy, w2, Path.Direction.CW)
+        return
+    }
 
-    if (h >= w) {
-        // 纵向气泡（如侧边按键在高度拉高时）
-        val c1x = cx + w2 * kt
-        val c1y = top
-        val c2x = right
-        val c2y = cy - h2 * ks
+    if (h > w) {
+        // 纵向气泡（两端为圆润半球穹顶，左右侧边微鼓）
+        val rho = h / w
+        val b = bubbleBulgeAmount(rho, w2)
+        val r = w2 - b
+        val yt = top + r
+        val yb = bottom - r
+        val dyTop = cy - yt
+        val dyBot = yb - cy
 
-        val c3x = right
-        val c3y = cy + h2 * ks
-        val c4x = cx + w2 * kt
-        val c4y = bottom
-
-        val c5x = cx - w2 * kt
-        val c5y = bottom
-        val c6x = left
-        val c6y = cy + h2 * ks
-
-        val c7x = left
-        val c7y = cy - h2 * ks
-        val c8x = cx - w2 * kt
-        val c8y = top
-
-        path.moveTo(cx, top)
-        path.cubicTo(c1x, c1y, c2x, c2y, right, cy)
-        path.cubicTo(c3x, c3y, c4x, c4y, cx, bottom)
-        path.cubicTo(c5x, c5y, c6x, c6y, left, cy)
-        path.cubicTo(c7x, c7y, c8x, c8y, cx, top)
+        path.moveTo(cx - r, yt)
+        // 顶部半圆穹顶（圆润钝头）
+        path.arcTo(cx - r, top, cx + r, top + 2f * r, 180f, 180f, false)
+        // 右侧微凸气泡弧
+        path.cubicTo(cx + r, yt + dyTop * 0.5f, cx + w2, cy - dyTop * 0.5f, cx + w2, cy)
+        path.cubicTo(cx + w2, cy + dyBot * 0.5f, cx + r, yb - dyBot * 0.5f, cx + r, yb)
+        // 底部半圆穹顶（圆润钝头）
+        path.arcTo(cx - r, bottom - 2f * r, cx + r, bottom, 0f, 180f, false)
+        // 左侧微凸气泡弧
+        path.cubicTo(cx - r, yb - dyBot * 0.5f, cx - w2, cy + dyBot * 0.5f, cx - w2, cy)
+        path.cubicTo(cx - w2, cy - dyTop * 0.5f, cx - r, yt + dyTop * 0.5f, cx - r, yt)
         path.close()
     } else {
-        // 横向气泡（如上下按键在横向拉宽时）
-        val c1x = left
-        val c1y = cy - h2 * kt
-        val c2x = cx - w2 * ks
-        val c2y = top
+        // 横向气泡（左右两端为圆润半球穹顶，上下侧边微鼓）
+        val rho = w / h
+        val b = bubbleBulgeAmount(rho, h2)
+        val r = h2 - b
+        val xl = left + r
+        val xr = right - r
+        val dxL = cx - xl
+        val dxR = xr - cx
 
-        val c3x = cx + w2 * ks
-        val c3y = top
-        val c4x = right
-        val c4y = cy - h2 * kt
-
-        val c5x = right
-        val c5y = cy + h2 * kt
-        val c6x = cx + w2 * ks
-        val c6y = bottom
-
-        val c7x = cx - w2 * ks
-        val c7y = bottom
-        val c8x = left
-        val c8y = cy + h2 * kt
-
-        path.moveTo(left, cy)
-        path.cubicTo(c1x, c1y, c2x, c2y, cx, top)
-        path.cubicTo(c3x, c3y, c4x, c4y, right, cy)
-        path.cubicTo(c5x, c5y, c6x, c6y, cx, bottom)
-        path.cubicTo(c7x, c7y, c8x, c8y, left, cy)
+        path.moveTo(xl, cy + r)
+        // 左侧半圆穹顶（圆润钝头）
+        path.arcTo(left, cy - r, left + 2f * r, cy + r, 90f, 180f, false)
+        // 上边微凸气泡弧
+        path.cubicTo(xl + dxL * 0.5f, cy - r, cx - dxL * 0.5f, cy - h2, cx, cy - h2)
+        path.cubicTo(cx + dxR * 0.5f, cy - h2, xr - dxR * 0.5f, cy - r, xr, cy - r)
+        // 右侧半圆穹顶（圆润钝头）
+        path.arcTo(right - 2f * r, cy - r, right, cy + r, 270f, 180f, false)
+        // 下边微凸气泡弧
+        path.cubicTo(xr - dxR * 0.5f, cy + r, cx + dxR * 0.5f, cy + h2, cx, cy + h2)
+        path.cubicTo(cx - dxL * 0.5f, cy + h2, xl + dxL * 0.5f, cy + r, xl, cy + r)
         path.close()
     }
 }

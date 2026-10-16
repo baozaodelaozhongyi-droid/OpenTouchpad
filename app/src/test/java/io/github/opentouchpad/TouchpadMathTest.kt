@@ -1078,30 +1078,18 @@ class TouchpadMathTest {
     }
 
     @Test
-    fun bubbleControlCoefficientsGenerateExpectedCircleAndElongatedValues() {
-        // 1.0 (正圆)：精确输出 0.552285f
-        val (kt1, ks1) = bubbleControlCoefficients(1.0f)
-        assertEquals(0.552285f, kt1, 0.0001f)
-        assertEquals(0.552285f, ks1, 0.0001f)
+    fun bubbleBulgeAmountGeneratesExpectedValues() {
+        val baseR = 50f
+        // 1.0 (正圆)：外凸量为 0，严格保持纯正圆
+        assertEquals(0f, bubbleBulgeAmount(1.0f, baseR), 0.0001f)
+        assertEquals(0f, bubbleBulgeAmount(0.5f, baseR), 0.0001f)
 
-        // 小于 1.0 自动 clamp 为正圆
-        val (kt0, ks0) = bubbleControlCoefficients(0.8f)
-        assertEquals(0.552285f, kt0, 0.0001f)
-        assertEquals(0.552285f, ks0, 0.0001f)
+        // 2.0 (微拉长)：外凸量为 baseR * 0.035f = 1.75f
+        assertEquals(1.75f, bubbleBulgeAmount(2.0f, baseR), 0.0001f)
 
-        // 中度拉伸（长宽比 1.75）
-        val (ktMid, ksMid) = bubbleControlCoefficients(1.75f)
-        assertTrue(ktMid > 0.552285f && ktMid < 0.82f)
-        assertTrue(ksMid < 0.552285f && ksMid > 0.36f)
-
-        // 高度拉伸（长宽比 2.5 及以上，饱和状态）
-        val (ktMax, ksMax) = bubbleControlCoefficients(2.5f)
-        assertEquals(0.82f, ktMax, 0.0001f)
-        assertEquals(0.36f, ksMax, 0.0001f)
-
-        val (ktSuper, ksSuper) = bubbleControlCoefficients(4.0f)
-        assertEquals(0.82f, ktSuper, 0.0001f)
-        assertEquals(0.36f, ksSuper, 0.0001f)
+        // 高度拉伸（饱和上限）：外凸量为 baseR * 0.08f = 4.0f
+        assertEquals(4.0f, bubbleBulgeAmount(4.0f, baseR), 0.0001f)
+        assertEquals(4.0f, bubbleBulgeAmount(10.0f, baseR), 0.0001f)
     }
 }
 
