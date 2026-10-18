@@ -137,6 +137,11 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("touchpadColor", 0)
         set(v) = sp.edit().putInt("touchpadColor", v).apply()
 
+    /** 是否启用海玻璃 (Sea Glass) 材质风格：磨砂半透微光与底部透光彩色光晕。默认关闭。 */
+    var seaGlassEnabled: Boolean
+        get() = sp.getBoolean("seaGlassEnabled", false)
+        set(v) = sp.edit().putBoolean("seaGlassEnabled", v).apply()
+
     /** Legacy pad height retained for preference compatibility. */
     var padHeightDp: Int
         get() = sp.getInt("padHeight", 240)

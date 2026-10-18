@@ -501,7 +501,13 @@ class MainActivity : Activity() {
             .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
         val currentPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
             ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
-        val padSummary = "${currentPanelWidth}dp · ${prefs.opacityPercent}%"
+        val padSummary = buildString {
+            append("${currentPanelWidth}dp · ${prefs.opacityPercent}%")
+            if (prefs.seaGlassEnabled) {
+                append(" · ")
+                append(getString(R.string.switch_sea_glass))
+            }
+        }
         val hasTouchpadBg = CustomBackgroundManager.hasTouchpadBg(this)
         val padRows = mutableListOf(
             slider(
@@ -536,6 +542,16 @@ class MainActivity : Activity() {
                 { prefs.touchpadColor = it },
                 onServiceUpdate = { TouchpadService.instance?.updatePanelAppearance() },
                 allowCustomHex = true,
+            ),
+            switchRow(
+                getString(R.string.switch_sea_glass),
+                prefs.seaGlassEnabled,
+                hint = getString(R.string.switch_sea_glass_hint),
+                onChange = {
+                    prefs.seaGlassEnabled = it
+                    TouchpadService.instance?.updatePanelAppearance()
+                    recreateKeepingScroll()
+                },
             ),
             customBackgroundRow(
                 title = getString(R.string.set_touchpad_bg),
@@ -2530,7 +2546,9 @@ class MainActivity : Activity() {
         )
         /** 0 = 跟随主题默认色；COLOR_DYNAMIC = 跟随壁纸动态取色。 */
         val TOUCHPAD_COLORS = listOf(
-            0, COLOR_DYNAMIC, 0xFF141413.toInt(), 0xFF2A2A28.toInt(), 0xFF30302E.toInt(), 0xFF87867F.toInt(),
+            0, COLOR_DYNAMIC,
+            0xFF56B495.toInt(), 0xFF529ECC.toInt(), 0xFFD69A58.toInt(), 0xFFA588C8.toInt(), 0xFFDE7C70.toInt(),
+            0xFF141413.toInt(), 0xFF2A2A28.toInt(), 0xFF30302E.toInt(), 0xFF87867F.toInt(),
             0xFFE8E6DC.toInt(), 0xFFFAF9F5.toInt(), 0xFFD97757.toInt(), 0xFFB53333.toInt(),
             0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
             0xFF1E293B.toInt(), 0xFF1C3829.toInt(),

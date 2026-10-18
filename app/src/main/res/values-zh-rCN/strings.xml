@@ -199,4 +199,6 @@
     <string name="set_touchpad_bg_focus_y_hint" formatted="false">0% 顶端(优先显示脸部) · 50% 居中 · 100% 底部</string>
     <string name="set_touchpad_bg_focus_x">底图水平焦点 (宽度对齐)</string>
     <string name="set_touchpad_bg_focus_x_hint" formatted="false">0% 左侧 · 50% 居中 · 100% 右侧</string>
+    <string name="switch_sea_glass">海玻璃材质 (Sea Glass)</string>
+    <string name="switch_sea_glass_hint">灵感源自潮汐冲刷的海玻璃。按键与面板呈现磨砂半透微光质感与底部彩色透光光晕 (Light Beneath)。</string>
 </resources>

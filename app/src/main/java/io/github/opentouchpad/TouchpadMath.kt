@@ -745,7 +745,13 @@ internal data class TouchpadPalette(
     val padBg: Int,
     val padStroke: Int,
     val ripple: Int,
+    val glowColor: Int = 0,
+    val isSeaGlass: Boolean = false,
 )
+
+internal fun withAlpha(color: Int, alpha: Int): Int {
+    return (alpha.coerceIn(0, 255) shl 24) or (color and 0x00FFFFFF)
+}
 
 internal fun colorLuminance(color: Int): Float {
     fun toLinear(c: Int): Float {
@@ -823,6 +829,91 @@ internal fun resolveTouchpadPalette(customColor: Int, isDark: Boolean = true): T
             padBg = opaqueColor,
             padStroke = 0x26FAF9F5,
             ripple = 0x33FAF9F5,
+        )
+    }
+}
+
+/**
+ * 解析海玻璃 (Sea Glass) 专属调色板：
+ * 灵感源自自然冲刷打磨的磨砂海石（Frosted color, softly tumbled edges, and a little light beneath each piece）。
+ * 具备哑光半透质感、柔和漫反射、以及部件底部散发的同色系彩色透光辉光 (Caustic Bloom Glow)。
+ */
+internal fun resolveSeaGlassPalette(
+    customColor: Int,
+    isDark: Boolean = true,
+    dynamicAccent: Int? = null,
+): TouchpadPalette {
+    if (customColor == 0) {
+        // 默认海玻璃经典配色（潮汐薄荷 Tide Mint 🌊）
+        return if (isDark) {
+            TouchpadPalette(
+                buttonBg = 0xFF24483E.toInt(),
+                buttonStroke = 0x4D8AE0C5.toInt(),
+                buttonText = 0xFFE2F7F0.toInt(),
+                padBg = 0xFF19332C.toInt(),
+                padStroke = 0x338AE0C5.toInt(),
+                ripple = 0x338AE0C5.toInt(),
+                glowColor = 0x8852B393.toInt(),
+                isSeaGlass = true,
+            )
+        } else {
+            TouchpadPalette(
+                buttonBg = 0xFF8AE0C5.toInt(),
+                buttonStroke = 0x66FFFFFF,
+                buttonText = 0xFF123328.toInt(),
+                padBg = 0xFFD8F2E9.toInt(),
+                padStroke = 0x55FFFFFF,
+                ripple = 0x2E123328,
+                glowColor = 0x9052B393.toInt(),
+                isSeaGlass = true,
+            )
+        }
+    }
+
+    if (customColor == COLOR_DYNAMIC && dynamicAccent != null) {
+        return createSeaGlassPaletteFromBase(dynamicAccent, isDark)
+    }
+
+    val opaque = if ((customColor ushr 24) == 0) (customColor or 0xFF000000.toInt()) else customColor
+    return createSeaGlassPaletteFromBase(opaque, isDark)
+}
+
+internal fun createSeaGlassPaletteFromBase(baseRgb: Int, isDark: Boolean): TouchpadPalette {
+    val hsl = rgbToHsl(baseRgb)
+    val hue = hsl[0]
+    val sat = hsl[1].coerceIn(0.40f, 0.85f)
+
+    return if (isDark) {
+        val buttonBg = hslToRgb(hue, sat * 0.75f, 0.22f)
+        val padBg = hslToRgb(hue, sat * 0.65f, 0.15f)
+        val text = hslToRgb(hue, 0.25f, 0.94f)
+        val glow = withAlpha(hslToRgb(hue, (sat * 1.2f).coerceAtMost(1f), 0.50f), 0x90)
+        val stroke = withAlpha(hslToRgb(hue, sat * 0.5f, 0.85f), 0x50)
+        TouchpadPalette(
+            buttonBg = buttonBg,
+            buttonStroke = stroke,
+            buttonText = text,
+            padBg = padBg,
+            padStroke = stroke,
+            ripple = withAlpha(text, 0x33),
+            glowColor = glow,
+            isSeaGlass = true,
+        )
+    } else {
+        val buttonBg = hslToRgb(hue, sat * 0.70f, 0.75f)
+        val padBg = hslToRgb(hue, sat * 0.45f, 0.91f)
+        val text = hslToRgb(hue, (sat * 1.1f).coerceAtMost(1f), 0.16f)
+        val glow = withAlpha(hslToRgb(hue, (sat * 1.25f).coerceAtMost(1f), 0.48f), 0x99)
+        val stroke = 0x66FFFFFF
+        TouchpadPalette(
+            buttonBg = buttonBg,
+            buttonStroke = stroke,
+            buttonText = text,
+            padBg = padBg,
+            padStroke = stroke,
+            ripple = withAlpha(text, 0x28),
+            glowColor = glow,
+            isSeaGlass = true,
         )
     }
 }

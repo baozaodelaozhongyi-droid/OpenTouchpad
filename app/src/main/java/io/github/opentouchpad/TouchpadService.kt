@@ -436,7 +436,11 @@ class TouchpadService : AccessibilityService() {
         val lp = panelParams ?: return
         val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
         val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
-            ?: getAccentColor(isDarkTheme())
+            ?: if (prefs.seaGlassEnabled) {
+                if (isDarkTheme()) 0xFF24483E.toInt() else 0xFF8AE0C5.toInt()
+            } else {
+                getAccentColor(isDarkTheme())
+            }
         val light = Color.luminance(ballColor) > 0.55f
         val ballSize = (size * 0.86f).roundToInt()
         val halo = (ballSize * 0.06f).roundToInt().coerceAtLeast(dp(1))
@@ -823,6 +827,8 @@ class TouchpadService : AccessibilityService() {
             baseColor = p.padBg
             strokeColor = p.padStroke
             opacityPercent = prefs.opacityPercent
+            isSeaGlass = p.isSeaGlass
+            glowColor = p.glowColor
             bgFocusXPercent = prefs.touchpadBgFocusXPercent
             bgFocusYPercent = prefs.touchpadBgFocusYPercent
             if (touchpadCustomBgBitmap == null && CustomBackgroundManager.hasTouchpadBg(this@TouchpadService)) {
@@ -909,6 +915,8 @@ class TouchpadService : AccessibilityService() {
             baseColor = p.padBg
             strokeColor = p.padStroke
             opacityPercent = prefs.opacityPercent
+            isSeaGlass = p.isSeaGlass
+            glowColor = p.glowColor
             bgFocusXPercent = prefs.touchpadBgFocusXPercent
             bgFocusYPercent = prefs.touchpadBgFocusYPercent
             if (touchpadCustomBgBitmap == null && CustomBackgroundManager.hasTouchpadBg(this@TouchpadService)) {
@@ -926,7 +934,7 @@ class TouchpadService : AccessibilityService() {
             view.layoutParams = rectParams(rect)
 
             val cornerRadius = minOf(rect.w, rect.h) / 2f
-            val bg = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, cornerRadius)
+            val bg = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, cornerRadius, isSeaGlass = p.isSeaGlass, glowColor = p.glowColor)
             bg.setBounds(0, 0, rect.w, rect.h)
             view.background = bg
 
@@ -949,7 +957,11 @@ class TouchpadService : AccessibilityService() {
         }
         val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
         val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
-            ?: getAccentColor(isDarkTheme())
+            ?: if (prefs.seaGlassEnabled) {
+                if (isDarkTheme()) 0xFF24483E.toInt() else 0xFF8AE0C5.toInt()
+            } else {
+                getAccentColor(isDarkTheme())
+            }
         val light = Color.luminance(ballColor) > 0.55f
 
         val ballSize = (size * 0.86f).roundToInt()
@@ -1048,6 +1060,12 @@ class TouchpadService : AccessibilityService() {
     // ───────────────────────── 外观 ─────────────────────────
 
     private fun palette(dark: Boolean): TouchpadPalette {
+        if (prefs.seaGlassEnabled) {
+            val dynAccent = if (prefs.dynamicColor || prefs.touchpadColor == COLOR_DYNAMIC) {
+                resolveDynamicAccentColor(this, dark)
+            } else null
+            return resolveSeaGlassPalette(prefs.touchpadColor, dark, dynAccent)
+        }
         if (prefs.touchpadColor == COLOR_DYNAMIC || (prefs.dynamicColor && prefs.touchpadColor == 0)) {
             val dyn = resolveSettingsTheme(this, dark, isDynamic = true, customAccentColor = prefs.uiAccentColor)
             return TouchpadPalette(
@@ -1075,8 +1093,15 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
-    /** 饱满气泡按钮背景：拉伸时呈柔和外凸张力微弧，正圆时为完美圆形，带按压水波纹反馈。 */
-    private fun buttonBackground(color: Int, stroke: Int, ripple: Int, cornerRadiusPx: Float = 0f): Drawable {
+    /** 饱满气泡按钮背景：支持标准气泡与 Sea Glass 磨砂次表面透光质感，带按压水波纹反馈。 */
+    private fun buttonBackground(
+        color: Int,
+        stroke: Int,
+        ripple: Int,
+        cornerRadiusPx: Float = 0f,
+        isSeaGlass: Boolean = false,
+        glowColor: Int = Color.TRANSPARENT,
+    ): Drawable {
         val mask = BubbleDrawable(
             baseColor = Color.WHITE,
             strokeColor = Color.TRANSPARENT,
@@ -1090,6 +1115,8 @@ class TouchpadService : AccessibilityService() {
             strokeWidthPx = dp(1).toFloat(),
             opacityPercent = prefs.opacityPercent,
             isMask = false,
+            isSeaGlass = isSeaGlass,
+            glowColor = glowColor,
         )
         return RippleDrawable(ColorStateList.valueOf(ripple), content, mask)
     }
@@ -1101,7 +1128,7 @@ class TouchpadService : AccessibilityService() {
             setImageResource(iconRes)
             setColorFilter(p.buttonText)
             scaleType = ImageView.ScaleType.FIT_CENTER
-            background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, dp(14).toFloat())
+            background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, dp(14).toFloat(), isSeaGlass = p.isSeaGlass, glowColor = p.glowColor)
             isClickable = true
             isHapticFeedbackEnabled = false
             setOnTouchListener { v, e ->
@@ -1121,7 +1148,7 @@ class TouchpadService : AccessibilityService() {
         setImageResource(action.iconRes)
         setColorFilter(p.buttonText)
         scaleType = ImageView.ScaleType.FIT_CENTER
-        background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, dp(14).toFloat())
+        background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, dp(14).toFloat(), isSeaGlass = p.isSeaGlass, glowColor = p.glowColor)
         isClickable = true
         isHapticFeedbackEnabled = false
         contentDescription = getString(action.labelRes)

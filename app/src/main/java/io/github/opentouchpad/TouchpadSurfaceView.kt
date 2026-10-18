@@ -79,6 +79,18 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             invalidate()
         }
 
+    var isSeaGlass: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var glowColor: Int = Color.TRANSPARENT
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     // 动态 3D 倾斜光影参数
     var tiltNormX: Float = 0f
         private set
@@ -161,8 +173,8 @@ class TouchpadSurfaceView(context: Context) : View(context) {
                 canvas.drawBitmap(bgBmp, bgMatrix, bitmapPaint)
             }
         } else {
-            val topLightColor = lightenColor(baseColor, 0.16f)
-            val bottomDepthColor = darkenColor(baseColor, 0.08f)
+            val topLightColor = lightenColor(baseColor, if (isSeaGlass) 0.22f else 0.16f)
+            val bottomDepthColor = darkenColor(baseColor, if (isSeaGlass) 0.04f else 0.08f)
             val glassBaseShader = LinearGradient(
                 0f, 0f, w, h,
                 intArrayOf(
@@ -170,7 +182,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
                     Color.argb(fillAlpha, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor)),
                     Color.argb(fillAlpha, Color.red(bottomDepthColor), Color.green(bottomDepthColor), Color.blue(bottomDepthColor)),
                 ),
-                floatArrayOf(0f, 0.45f, 1f),
+                floatArrayOf(0f, if (isSeaGlass) 0.40f else 0.45f, 1f),
                 Shader.TileMode.CLAMP,
             )
             surfacePaint.shader = glassBaseShader
@@ -179,9 +191,9 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         }
 
         // 2. 毛玻璃漫反射透光层（顶部微光漫射与立体透光）
-        val restTopAlpha = (36 * opacityPercent / 100).coerceIn(0, 255)
-        val restMidAlpha = (12 * opacityPercent / 100).coerceIn(0, 255)
-        val restBottomAlpha = (26 * opacityPercent / 100).coerceIn(0, 255)
+        val restTopAlpha = if (isSeaGlass) (24 * opacityPercent / 100).coerceIn(0, 255) else (36 * opacityPercent / 100).coerceIn(0, 255)
+        val restMidAlpha = if (isSeaGlass) (16 * opacityPercent / 100).coerceIn(0, 255) else (12 * opacityPercent / 100).coerceIn(0, 255)
+        val restBottomAlpha = if (isSeaGlass) (18 * opacityPercent / 100).coerceIn(0, 255) else (26 * opacityPercent / 100).coerceIn(0, 255)
         val restShader = LinearGradient(
             0f, 0f, 0f, h,
             intArrayOf(
@@ -225,7 +237,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         }
 
         // 4. 顶部内边缘液态高光（模拟真实玻璃边缘内反射）
-        val innerGlowAlpha = (48 * opacityPercent / 100).coerceIn(0, 255)
+        val innerGlowAlpha = if (isSeaGlass) (32 * opacityPercent / 100).coerceIn(0, 255) else (48 * opacityPercent / 100).coerceIn(0, 255)
         val innerGlowShader = LinearGradient(
             0f, 0f, 0f, h * 0.35f,
             Color.argb(innerGlowAlpha, 255, 255, 255),
@@ -237,33 +249,49 @@ class TouchpadSurfaceView(context: Context) : View(context) {
 
         canvas.restore()
 
-        // 5. 外部液态玻璃流光高光描边（左上迎光高光，右下环境漫反射）
-        val strokeWidth = density * 1.2f
+        // 5. 外部流光/温润磨砂边缘描边
+        val strokeWidth = if (isSeaGlass) density * 1.0f else density * 1.2f
         strokePaint.strokeWidth = strokeWidth
         val isLightBase = colorLuminance(baseColor) > 0.55f
 
-        val highSpecularAlpha = if (isLightBase) {
-            (190 * opacityPercent / 100).coerceIn(0, 255)
+        if (isSeaGlass) {
+            val topAlpha = (if (isLightBase) 140 else 105) * opacityPercent / 100
+            val botAlpha = (if (isLightBase) 40 else 25) * opacityPercent / 100
+            val seaGlassStrokeShader = LinearGradient(
+                0f, 0f, 0f, h,
+                intArrayOf(
+                    Color.argb(topAlpha, 255, 255, 255),
+                    Color.argb((topAlpha + botAlpha) / 2, 255, 255, 255),
+                    Color.argb(botAlpha, 255, 255, 255),
+                ),
+                floatArrayOf(0f, 0.40f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            strokePaint.shader = seaGlassStrokeShader
         } else {
-            (160 * opacityPercent / 100).coerceIn(0, 255)
-        }
-        val lowSpecularAlpha = if (isLightBase) {
-            (60 * opacityPercent / 100).coerceIn(0, 255)
-        } else {
-            (40 * opacityPercent / 100).coerceIn(0, 255)
-        }
+            val highSpecularAlpha = if (isLightBase) {
+                (190 * opacityPercent / 100).coerceIn(0, 255)
+            } else {
+                (160 * opacityPercent / 100).coerceIn(0, 255)
+            }
+            val lowSpecularAlpha = if (isLightBase) {
+                (60 * opacityPercent / 100).coerceIn(0, 255)
+            } else {
+                (40 * opacityPercent / 100).coerceIn(0, 255)
+            }
 
-        val specularStrokeShader = LinearGradient(
-            0f, 0f, w, h,
-            intArrayOf(
-                Color.argb(highSpecularAlpha, 255, 255, 255),
-                Color.argb((highSpecularAlpha + lowSpecularAlpha) / 2, 255, 255, 255),
-                if (isLightBase) Color.argb(lowSpecularAlpha, 0, 0, 0) else Color.argb(lowSpecularAlpha, 255, 255, 255),
-            ),
-            floatArrayOf(0f, 0.42f, 1f),
-            Shader.TileMode.CLAMP,
-        )
-        strokePaint.shader = specularStrokeShader
+            val specularStrokeShader = LinearGradient(
+                0f, 0f, w, h,
+                intArrayOf(
+                    Color.argb(highSpecularAlpha, 255, 255, 255),
+                    Color.argb((highSpecularAlpha + lowSpecularAlpha) / 2, 255, 255, 255),
+                    if (isLightBase) Color.argb(lowSpecularAlpha, 0, 0, 0) else Color.argb(lowSpecularAlpha, 255, 255, 255),
+                ),
+                floatArrayOf(0f, 0.42f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+            strokePaint.shader = specularStrokeShader
+        }
 
         val halfStroke = strokeWidth / 2f
         boundsRect.set(halfStroke, halfStroke, w - halfStroke, h - halfStroke)

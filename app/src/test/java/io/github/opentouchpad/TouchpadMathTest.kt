@@ -780,6 +780,44 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun resolveSeaGlassPaletteDefaultThemes() {
+        val darkSeaGlass = resolveSeaGlassPalette(0, isDark = true)
+        assertTrue(darkSeaGlass.isSeaGlass)
+        assertEquals(0xFF24483E.toInt(), darkSeaGlass.buttonBg)
+        assertEquals(0xFF19332C.toInt(), darkSeaGlass.padBg)
+        assertEquals(0xFFE2F7F0.toInt(), darkSeaGlass.buttonText)
+        assertEquals(0x8852B393.toInt(), darkSeaGlass.glowColor)
+
+        val lightSeaGlass = resolveSeaGlassPalette(0, isDark = false)
+        assertTrue(lightSeaGlass.isSeaGlass)
+        assertEquals(0xFF8AE0C5.toInt(), lightSeaGlass.buttonBg)
+        assertEquals(0xFFD8F2E9.toInt(), lightSeaGlass.padBg)
+        assertEquals(0xFF123328.toInt(), lightSeaGlass.buttonText)
+        assertEquals(0x9052B393.toInt(), lightSeaGlass.glowColor)
+    }
+
+    @Test
+    fun resolveSeaGlassPaletteCustomColor() {
+        val customBlue = 0xFF529ECC.toInt()
+        val palette = resolveSeaGlassPalette(customBlue, isDark = false)
+        assertTrue(palette.isSeaGlass)
+        assertTrue((palette.glowColor ushr 24) > 0)
+        assertTrue(palette.buttonBg != palette.padBg)
+
+        val darkPalette = resolveSeaGlassPalette(customBlue, isDark = true)
+        assertTrue(darkPalette.isSeaGlass)
+        assertTrue((darkPalette.glowColor ushr 24) > 0)
+    }
+
+    @Test
+    fun withAlphaCalculatesExpectedArgb() {
+        val color = 0x112233
+        assertEquals(0x80112233.toInt(), withAlpha(color, 0x80))
+        assertEquals(0xFF112233.toInt(), withAlpha(color, 255))
+        assertEquals(0x00112233, withAlpha(color, 0))
+    }
+
+    @Test
     fun resolvePadNormalizedCoordsCalculatesNormalizedCenterAndBounds() {
         // Panel at (100, 200), pad at rect (20, 30, 200, 100)
         // Center of pad is screen X: 100 + 20 + 100 = 220, screen Y: 200 + 30 + 50 = 280

@@ -199,4 +199,6 @@
     <string name="set_touchpad_bg_focus_y_hint" formatted="false">0% Top (shows face/head) · 50% Center · 100% Bottom</string>
     <string name="set_touchpad_bg_focus_x">Background Horizontal Focus</string>
     <string name="set_touchpad_bg_focus_x_hint" formatted="false">0% Left · 50% Center · 100% Right</string>
+    <string name="switch_sea_glass">Sea Glass Material</string>
+    <string name="switch_sea_glass_hint">Inspired by natural beach glass. Translucent frosted buttons with softly tumbled edges and radiant colored light beneath each piece (Light Beneath).</string>
 </resources>
