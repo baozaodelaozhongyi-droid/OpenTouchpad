@@ -9,6 +9,7 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.DialogInterface
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Canvas
@@ -23,6 +24,7 @@ import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
 import android.view.Gravity
@@ -71,6 +73,9 @@ class MainActivity : Activity() {
 
 
     private var showPanelSwitch: Switch? = null
+    private var keepAliveSwitch: Switch? = null
+    private var batteryStatusTextView: TextView? = null
+    private var pendingKeepAliveToggle: ((Boolean) -> Unit)? = null
     private var baseStatusView: TextView? = null
     private var baseShowPanelSwitch: Switch? = null
     private var widthSliderController: SliderController? = null
@@ -225,6 +230,31 @@ class MainActivity : Activity() {
         settingsBgBitmap = null
     }
 
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        // 退到后台保活，不销毁 Activity，让多任务列表中的卡片保持运行状态，以便系统允许加锁
+        moveTaskToBack(true)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CODE_POST_NOTIFICATIONS) {
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            prefs.keepAliveNotification = granted
+            TouchpadService.instance?.updateKeepAliveNotification()
+            keepAliveSwitch?.isChecked = granted
+            pendingKeepAliveToggle?.invoke(granted)
+            pendingKeepAliveToggle = null
+            if (!granted) {
+                toast(getString(R.string.notification_permission_denied))
+            }
+        }
+    }
+
     private fun applySettingsBackground() {
         val bgFile = CustomBackgroundManager.getSettingsBgFile(this)
         if (bgFile.exists() && bgFile.length() > 0) {
@@ -347,6 +377,18 @@ class MainActivity : Activity() {
                 sw.isChecked = shown
                 sw.tag = null
             }
+        }
+        keepAliveSwitch?.let { sw ->
+            if (sw.isChecked != prefs.keepAliveNotification) {
+                sw.tag = SYNCING
+                sw.isChecked = prefs.keepAliveNotification
+                sw.tag = null
+            }
+        }
+        batteryStatusTextView?.text = if (isIgnoringBatteryOptimizations()) {
+            getString(R.string.btn_battery_whitelisted)
+        } else {
+            getString(R.string.btn_request_battery_whitelist)
         }
         val maxPanelWidth = pixelsToDp(resources.displayMetrics.widthPixels, resources.displayMetrics.density)
             .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
@@ -873,6 +915,57 @@ class MainActivity : Activity() {
                 prefs.excludeFromRecents = it
                 applyExcludeFromRecents(it)
             }),
+        )
+
+        // ── 后台保活与防杀加锁 ──
+        val isBattIgnored = isIgnoringBatteryOptimizations()
+        val keepAliveSummary = buildString {
+            if (prefs.keepAliveNotification) append(getString(R.string.summary_notif_enabled))
+            if (isBattIgnored) {
+                if (isNotEmpty()) append(" · ")
+                append(getString(R.string.summary_battery_whitelisted))
+            }
+            if (isEmpty()) append(getString(R.string.summary_keep_alive_suggested))
+        }
+        val keepAliveRows = mutableListOf<View>(
+            FrameLayout(this).apply {
+                setPadding(dp(16), dp(4), dp(16), dp(10))
+                addView(hintText(getString(R.string.keep_alive_explain_hint)))
+            },
+            switchRow(
+                getString(R.string.switch_keep_alive_notification),
+                prefs.keepAliveNotification,
+                hint = getString(R.string.switch_keep_alive_notification_hint),
+                bind = { keepAliveSwitch = it },
+                onChange = { enable ->
+                    checkAndEnableKeepAliveNotification(enable) {
+                        TouchpadService.instance?.updateKeepAliveNotification()
+                    }
+                }
+            ),
+            actionRow(
+                if (isIgnoringBatteryOptimizations()) getString(R.string.btn_battery_whitelisted) else getString(R.string.btn_request_battery_whitelist),
+                bindTitle = { batteryStatusTextView = it }
+            ) {
+                requestIgnoreBatteryOptimization()
+            },
+            actionRow(getString(R.string.btn_open_app_details)) {
+                openAppDetailsSettings()
+            },
+            actionRow(getString(R.string.btn_vendor_keep_alive_guide)) {
+                showDialog(
+                    getString(R.string.vendor_guide_title),
+                    getString(R.string.vendor_guide_body)
+                )
+            }
+        )
+        addCollapsible(
+            "keep_alive",
+            getString(R.string.sec_keep_alive),
+            R.drawable.ic_lu_lock,
+            keepAliveSummary,
+            defaultExpanded = false,
+            *keepAliveRows.toTypedArray(),
         )
 
         // ── 关于 ──
@@ -1468,7 +1561,12 @@ class MainActivity : Activity() {
         return row
     }
 
-    private fun actionRow(title: String, destructive: Boolean = false, onClick: () -> Unit): View =
+    private fun actionRow(
+        title: String,
+        destructive: Boolean = false,
+        bindTitle: ((TextView) -> Unit)? = null,
+        onClick: () -> Unit
+    ): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1477,9 +1575,11 @@ class MainActivity : Activity() {
             background = ripple(null, rippleColor, 0)
             isClickable = true
             setOnClickListener { onClick() }
-            addView(titleText(title).apply {
+            val tv = titleText(title).apply {
                 if (destructive) setTextColor(dangerColor)
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            bindTitle?.invoke(tv)
+            addView(tv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(TextView(this@MainActivity).apply {
                 text = "›"
                 textSize = 22f
@@ -2260,6 +2360,68 @@ class MainActivity : Activity() {
             .onFailure { toast(getString(R.string.cannot_open_settings)) }
     }
 
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            pm.isIgnoringBatteryOptimizations(packageName)
+        } else {
+            true
+        }
+    }
+
+    private fun requestIgnoreBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (isIgnoringBatteryOptimizations()) {
+                toast(getString(R.string.battery_already_whitelisted))
+                return
+            }
+            try {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                try {
+                    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    startActivity(intent)
+                } catch (e2: Exception) {
+                    toast(getString(R.string.cannot_open_settings))
+                }
+            }
+        } else {
+            toast(getString(R.string.battery_already_whitelisted))
+        }
+    }
+
+    private fun openAppDetailsSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            toast(getString(R.string.cannot_open_settings))
+        }
+    }
+
+    private fun checkAndEnableKeepAliveNotification(enable: Boolean, onComplete: (Boolean) -> Unit) {
+        if (!enable) {
+            prefs.keepAliveNotification = false
+            TouchpadService.instance?.updateKeepAliveNotification()
+            onComplete(false)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            pendingKeepAliveToggle = onComplete
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQUEST_CODE_POST_NOTIFICATIONS)
+        } else {
+            prefs.keepAliveNotification = true
+            TouchpadService.instance?.updateKeepAliveNotification()
+            onComplete(true)
+        }
+    }
+
     private fun updateStatus() {
         val on = isServiceEnabled()
         statusView.text = getString(if (on) R.string.status_on else R.string.status_off)
@@ -2597,6 +2759,7 @@ class MainActivity : Activity() {
         const val THEME_SELECTOR_TRACK_TAG = "theme_selector_track"
         const val REQUEST_CODE_PICK_TOUCHPAD_BG = 1001
         const val REQUEST_CODE_PICK_SETTINGS_BG = 1002
+        const val REQUEST_CODE_POST_NOTIFICATIONS = 1003
         val SYNCING = Any()
         val expandedCardIds = mutableSetOf<String>()
         var hasInitializedCardDefaults = false

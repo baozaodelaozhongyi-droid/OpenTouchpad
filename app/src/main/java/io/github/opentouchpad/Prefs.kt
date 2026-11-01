@@ -310,6 +310,11 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("excludeFromRecents", false)
         set(v) = sp.edit().putBoolean("excludeFromRecents", v).apply()
 
+    /** 是否开启常驻通知栏保活。开启后在系统状态栏显示一条静音通知，防止系统一键清理杀死服务。 */
+    var keepAliveNotification: Boolean
+        get() = sp.getBoolean("keepAliveNotification", false)
+        set(v) = sp.edit().putBoolean("keepAliveNotification", v).apply()
+
     /** 当前的收起是不是「键盘弹出自动收起」造成的（键盘收起时据此自动还原；存下来，服务重启后也有效）。 */
     var minimizedByKeyboard: Boolean
         get() = sp.getBoolean("minimizedByKeyboard", false)

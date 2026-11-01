@@ -6,6 +6,10 @@ import android.accessibilityservice.GestureDescription
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
@@ -53,6 +57,8 @@ class TouchpadService : AccessibilityService() {
         private const val TOUCH_RING_RADIUS_DP = 11
         /** 穿透点击前等待 FLAG_NOT_TOUCHABLE 真正同步到系统 InputDispatcher 的安全延时（毫秒）。 */
         private const val OVERLAY_PASS_THROUGH_DELAY_MS = 50L
+        private const val NOTIFICATION_CHANNEL_ID = "opentouchpad_keepalive"
+        private const val NOTIFICATION_ID_KEEPALIVE = 2001
 
         @Volatile
         var instance: TouchpadService? = null
@@ -305,9 +311,11 @@ class TouchpadService : AccessibilityService() {
         buildPanel()
         // 服务被重启时可能正处于「键盘自动收起」状态：键盘已经不在了就立刻还原
         syncKeyboardMinimize()
+        updateKeepAliveNotification()
     }
 
     override fun onDestroy() {
+        cancelKeepAliveNotification()
         main.removeCallbacksAndMessages(null)
         gestureQueue.clear()
         isDispatching = false
@@ -384,6 +392,85 @@ class TouchpadService : AccessibilityService() {
         buildCursor()
         buildPanel()
         updateCursor()
+        updateKeepAliveNotification()
+    }
+
+    /** 更新常驻通知栏保活。开启后在系统状态栏显示一条静音通知，让系统判定应用处于使用中。 */
+    fun updateKeepAliveNotification() {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        if (!prefs.keepAliveNotification) {
+            nm.cancel(NOTIFICATION_ID_KEEPALIVE)
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                getString(R.string.notification_channel_name),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = getString(R.string.notification_channel_desc)
+                setShowBadge(false)
+                enableLights(false)
+                enableVibration(false)
+            }
+            nm.createNotificationChannel(channel)
+        }
+
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val openPi = PendingIntent.getActivity(this, 0, openIntent, flags)
+
+        val toggleIntent = Intent(this, TouchpadActionReceiver::class.java).apply {
+            action = TouchpadActionReceiver.ACTION_TOGGLE_PANEL
+        }
+        val togglePi = PendingIntent.getBroadcast(this, 1, toggleIntent, flags)
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+
+        val toggleAction = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+            Notification.Action.Builder(
+                null,
+                getString(R.string.notification_action_toggle),
+                togglePi
+            ).build()
+        } else null
+
+        builder.setSmallIcon(R.drawable.ic_lu_touchpad)
+            .setContentTitle(getString(R.string.notification_keepalive_title))
+            .setContentText(getString(R.string.notification_keepalive_desc))
+            .setContentIntent(openPi)
+            .setOngoing(true)
+            .setAutoCancel(false)
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            @Suppress("DEPRECATION")
+            builder.setPriority(Notification.PRIORITY_LOW)
+        }
+
+        if (toggleAction != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+            builder.addAction(toggleAction)
+        }
+
+        runCatching {
+            nm.notify(NOTIFICATION_ID_KEEPALIVE, builder.build())
+        }
+    }
+
+    fun cancelKeepAliveNotification() {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        runCatching { nm.cancel(NOTIFICATION_ID_KEEPALIVE) }
     }
 
     /** 实时平滑更新触控板尺寸与边距（拖拽缩放键或滑动条时调用，绝不重建窗口，零闪烁）。 */

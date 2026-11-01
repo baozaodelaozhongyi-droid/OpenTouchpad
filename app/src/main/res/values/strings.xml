@@ -206,4 +206,26 @@
     <string name="material_liquid_glass">Liquid Glass</string>
     <string name="material_sea_glass">Sea Glass</string>
     <string name="material_classic">Classic</string>
+
+    <!-- Background Keep-Alive & Anti-Kill Lock -->
+    <string name="sec_keep_alive">Background Keep-Alive &amp; Task Lock</string>
+    <string name="summary_notif_enabled">Ongoing notification enabled</string>
+    <string name="summary_battery_whitelisted">Battery optimization ignored</string>
+    <string name="summary_keep_alive_suggested">Keep-alive setup recommended</string>
+    <string name="keep_alive_explain_hint">【Why does the system say "Lock not supported"?】\nThe "App Lock" in system settings is a privacy password lock (requiring password to open). Many OEM systems restrict accessibility tools from privacy locking, and it does not prevent background termination!\nThe real way to prevent being killed is: lock the app card in the Recent Tasks overview 🔒, combined with the ongoing notification and battery whitelist below.</string>
+    <string name="switch_keep_alive_notification">Ongoing Notification Keep-Alive</string>
+    <string name="switch_keep_alive_notification_hint">Displays a silent notification in the status bar. Many Android OEM ROMs consider apps with active notifications as "in-use", preventing one-click cleaners from killing the touchpad service.</string>
+    <string name="btn_battery_whitelisted">Battery Optimization: Whitelisted (Tap to view)</string>
+    <string name="btn_request_battery_whitelist">Battery Optimization: Not Whitelisted (Tap to request)</string>
+    <string name="battery_already_whitelisted">Battery optimization is already ignored for OpenTouchpad</string>
+    <string name="btn_open_app_details">Open System App Info (Auto-start &amp; Unrestricted battery)</string>
+    <string name="btn_vendor_keep_alive_guide">Brand-Specific Background Lock &amp; Keep-Alive Guide</string>
+    <string name="vendor_guide_title">Device Keep-Alive &amp; Task Lock Guide</string>
+    <string name="vendor_guide_body">1. Xiaomi / Redmi (HyperOS / MIUI):\n• Lock task: In Recent Tasks, long press the OpenTouchpad card and tap the Lock icon (or in Security app → Speed up settings → Lock apps).\n• Auto-start: Open App Info above → Enable "Auto-start".\n• Battery Saver: In App Info, set Battery saver to "No restrictions".\n• Note: Do not use the "App Lock" in system settings, which is a privacy password lock.\n\n2. vivo / iQOO (OriginOS):\n• Lock task: In Recent Tasks, drag the OpenTouchpad card down until the lock icon appears.\n• High background power: Settings → Battery → High background power consumption → Allow OpenTouchpad.\n• Auto-start: Enable "Auto-start" in permission management.\n\n3. OPPO / OnePlus / realme (ColorOS):\n• Lock task: In Recent Tasks, tap "⋮" on the card or pull down and select "Lock".\n• Battery: In App Info → Battery usage → Allow background activity and auto-launch.\n\n4. Huawei / Honor (HarmonyOS / MagicOS):\n• Lock task: In Recent Tasks, drag the OpenTouchpad card down to lock.\n• Launch management: Settings → Apps → App launch → Disable auto-manage, enable "Auto-launch" and "Run in background".\n• Battery optimization: Search "Battery optimization" in Settings and set to "Don\'t allow".\n\n5. General Tips:\n• Keep "Hide from Recent Tasks" disabled in Feel settings, otherwise the card will not appear in Recent Tasks.\n• Pressing the Back key will now move the app to background instead of finishing, ensuring the task stays lockable in Recent Tasks.</string>
+    <string name="notification_channel_name">Background Keep-Alive Service</string>
+    <string name="notification_channel_desc">Keeps OpenTouchpad running reliably in background and provides quick panel controls</string>
+    <string name="notification_keepalive_title">OpenTouchpad Running</string>
+    <string name="notification_keepalive_desc">Background keep-alive active · Tap to open settings</string>
+    <string name="notification_action_toggle">Toggle Panel</string>
+    <string name="notification_permission_denied">Notification permission is required for ongoing notification keep-alive</string>
 </resources>

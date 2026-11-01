@@ -206,4 +206,26 @@
     <string name="material_liquid_glass">液态玻璃</string>
     <string name="material_sea_glass">海玻璃</string>
     <string name="material_classic">经典机械</string>
+
+    <!-- 后台加锁与防杀保活 -->
+    <string name="sec_keep_alive">后台保活与防杀加锁</string>
+    <string name="summary_notif_enabled">常驻通知已开启</string>
+    <string name="summary_battery_whitelisted">电池优化已忽略</string>
+    <string name="summary_keep_alive_suggested">建议配置防杀策略</string>
+    <string name="keep_alive_explain_hint">【为什么系统提示「不支持加锁」？】\n系统设置里的「应用锁」是隐私密码锁（用来输密码防别人偷看），国内定制系统限制无障碍工具加密码锁故提示不支持，且应用锁无法防止被杀！\n真正防止被杀的方式是：在多任务界面长按或下拉卡片进行「后台加锁」🔒，配合下方的「常驻通知」与「忽略电池优化」。</string>
+    <string name="switch_keep_alive_notification">开启常驻通知栏保活</string>
+    <string name="switch_keep_alive_notification_hint">在系统状态栏显示一条静音通知。国内系统（澎湃/OriginOS/ColorOS等）会将带有通知的应用判定为「使用中」，大幅降低被一键清理误杀的概率，并支持快捷展开/收起面板。</string>
+    <string name="btn_battery_whitelisted">电池优化白名单：已加入（点击查看）</string>
+    <string name="btn_request_battery_whitelist">电池优化白名单：未加入（点击一键申请）</string>
+    <string name="battery_already_whitelisted">当前应用已加入电池优化白名单，后台不会受系统深度休眠限制</string>
+    <string name="btn_open_app_details">前往系统应用设置（开启自启动 / 无限制）</string>
+    <string name="btn_vendor_keep_alive_guide">主流手机品牌后台加锁与防杀步骤指南</string>
+    <string name="vendor_guide_title">主流机型后台加锁与防杀完整指南</string>
+    <string name="vendor_guide_body">【1. 小米 / 红米 (HyperOS / 澎湃OS / MIUI)】\n• 多任务加锁：底部上滑悬停进入多任务，长按 OpenTouchpad 卡片点击「小锁」图标（或在手机管家→加速设定→锁定任务中勾选）。\n• 自启动：点击上方「前往系统应用设置」→ 开启「自启动」与「允许关联启动」。\n• 省电策略：应用信息页中点击「省电策略」修改为「无限制」。\n• 提醒：请勿使用系统设置里的「应用锁」，那是隐私密码锁。\n\n【2. vivo / iQOO (OriginOS)】\n• 多任务加锁：多任务界面按住 OpenTouchpad 卡片向下拉动，出现锁定小锁即成功。\n• 后台高耗电：系统设置→电池→后台耗电管理→将 OpenTouchpad 设为「允许后台高耗电」。\n• 自启动：在系统权限管理中开启「自启动」。\n\n【3. OPPO / 一加 / realme (ColorOS)】\n• 多任务加锁：多任务界面点击 OpenTouchpad 卡片右上角「⋮」或向下拉动，点击「锁定」。\n• 耗电管理：前往系统应用设置→「耗电管理」→ 开启「允许完全后台行为」与「允许自启动」。\n\n【4. 华为 / 荣耀 (HarmonyOS / MagicOS)】\n• 多任务加锁：多任务界面按住 OpenTouchpad 卡片向下拉动加锁。\n• 启动管理：应用设置→应用启动管理→找到本应用关闭「自动管理」，手动开启「允许自启动」、「允许后台活动」。\n• 电池优化：系统设置搜索「电池优化」设为「不允许优化」。\n\n【5. 重要通用设置】\n• 请勿开启本应用手感设置里的「隐藏后台」，开启后多任务卡片将不可见导致无法加锁。\n• 按返回键退出本设置界面时，应用会自动退至后台保持存活，确保多任务卡片可随时加锁。</string>
+    <string name="notification_channel_name">后台运行保活服务</string>
+    <string name="notification_channel_desc">用于保持 OpenTouchpad 在后台稳定运行并提供快捷面板操作</string>
+    <string name="notification_keepalive_title">OpenTouchpad 触控板运行中</string>
+    <string name="notification_keepalive_desc">已开启后台保活 · 点击打开设置</string>
+    <string name="notification_action_toggle">收起/展开面板</string>
+    <string name="notification_permission_denied">需要允许通知权限才能开启常驻通知栏保活</string>
 </resources>
