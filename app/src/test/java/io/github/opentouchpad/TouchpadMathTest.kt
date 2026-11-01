@@ -750,12 +750,34 @@ class TouchpadMathTest {
 
     @Test
     fun resolveTouchpadPaletteDefaultThemes() {
+        // 默认使用 Lens 液态玻璃材质体系
         val darkPalette = resolveTouchpadPalette(0, isDark = true)
+        assertTrue(darkPalette.isLiquidGlass)
+        assertEquals(TouchpadMaterial.LIQUID_GLASS, darkPalette.material)
+        assertEquals(0xFF24507D.toInt(), darkPalette.buttonBg)
+        assertEquals(0xFF193F64.toInt(), darkPalette.padBg)
+        assertEquals(0xFFF2F7FC.toInt(), darkPalette.buttonText)
+        assertEquals(0x992875ED.toInt(), darkPalette.glowColor)
+
+        val lightPalette = resolveTouchpadPalette(0, isDark = false)
+        assertTrue(lightPalette.isLiquidGlass)
+        assertEquals(TouchpadMaterial.LIQUID_GLASS, lightPalette.material)
+        assertEquals(0xFFEAF3FB.toInt(), lightPalette.buttonBg)
+        assertEquals(0xFFCFDEED.toInt(), lightPalette.padBg)
+        assertEquals(0xFF1D2433.toInt(), lightPalette.buttonText)
+        assertEquals(0xA090E8FA.toInt(), lightPalette.glowColor)
+    }
+
+    @Test
+    fun resolveClassicTouchpadPaletteDefaultThemes() {
+        val darkPalette = resolveClassicTouchpadPalette(0, isDark = true)
+        assertEquals(TouchpadMaterial.CLASSIC, darkPalette.material)
         assertEquals(0xFF3A3936.toInt(), darkPalette.buttonBg)
         assertEquals(0xFF2A2A28.toInt(), darkPalette.padBg)
         assertEquals(0xFFFAF9F5.toInt(), darkPalette.buttonText)
 
-        val lightPalette = resolveTouchpadPalette(0, isDark = false)
+        val lightPalette = resolveClassicTouchpadPalette(0, isDark = false)
+        assertEquals(TouchpadMaterial.CLASSIC, lightPalette.material)
         assertEquals(0xFFF5F4ED.toInt(), lightPalette.buttonBg)
         assertEquals(0xFFE8E6DC.toInt(), lightPalette.padBg)
         assertEquals(0xFF141413.toInt(), lightPalette.buttonText)
@@ -764,7 +786,7 @@ class TouchpadMathTest {
     @Test
     fun resolveTouchpadPaletteCustomDarkColor() {
         val customBlue = 0xFF6A9BCC.toInt()
-        val palette = resolveTouchpadPalette(customBlue)
+        val palette = resolveTouchpadPalette(customBlue, material = TouchpadMaterial.CLASSIC)
         assertEquals(customBlue, palette.padBg)
         assertEquals(lightenColor(customBlue, 0.12f), palette.buttonBg)
         assertEquals(0xFFFAF9F5.toInt(), palette.buttonText)
@@ -773,10 +795,32 @@ class TouchpadMathTest {
     @Test
     fun resolveTouchpadPaletteCustomLightColor() {
         val customIvory = 0xFFFAF9F5.toInt()
-        val palette = resolveTouchpadPalette(customIvory)
+        val palette = resolveTouchpadPalette(customIvory, material = TouchpadMaterial.CLASSIC)
         assertEquals(customIvory, palette.buttonBg)
         assertEquals(darkenColor(customIvory, 0.06f), palette.padBg)
         assertEquals(0xFF141413.toInt(), palette.buttonText)
+    }
+
+    @Test
+    fun resolveLiquidGlassPaletteCustomColor() {
+        val customBlue = 0xFF2875ED.toInt()
+        val palette = resolveLiquidGlassPalette(customBlue, isDark = false)
+        assertTrue(palette.isLiquidGlass)
+        assertTrue((palette.glowColor ushr 24) > 0)
+        assertTrue(palette.buttonBg != palette.padBg)
+
+        val darkPalette = resolveLiquidGlassPalette(customBlue, isDark = true)
+        assertTrue(darkPalette.isLiquidGlass)
+        assertTrue((darkPalette.glowColor ushr 24) > 0)
+    }
+
+    @Test
+    fun touchpadMaterialEnumResolution() {
+        assertEquals(TouchpadMaterial.LIQUID_GLASS, TouchpadMaterial.fromId(null))
+        assertEquals(TouchpadMaterial.LIQUID_GLASS, TouchpadMaterial.fromId("liquid_glass"))
+        assertEquals(TouchpadMaterial.LIQUID_GLASS, TouchpadMaterial.fromId("unknown"))
+        assertEquals(TouchpadMaterial.SEA_GLASS, TouchpadMaterial.fromId("sea_glass"))
+        assertEquals(TouchpadMaterial.CLASSIC, TouchpadMaterial.fromId("classic"))
     }
 
     @Test

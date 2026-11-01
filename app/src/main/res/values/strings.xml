@@ -201,4 +201,9 @@
     <string name="set_touchpad_bg_focus_x_hint" formatted="false">0% Left · 50% Center · 100% Right</string>
     <string name="switch_sea_glass">Sea Glass Material</string>
     <string name="switch_sea_glass_hint">Inspired by natural beach glass. Translucent frosted buttons with softly tumbled edges and radiant colored light beneath each piece (Light Beneath).</string>
+    <string name="set_touchpad_material">Touchpad Material</string>
+    <string name="set_touchpad_material_hint">Choose material styling for touchpad panel and bubble buttons. Defaults to the Lens Liquid Glass system: crystalline optical refraction, dual-lip specular ridge, and luminous light beneath (Caustic Bloom).</string>
+    <string name="material_liquid_glass">Liquid Glass</string>
+    <string name="material_sea_glass">Sea Glass</string>
+    <string name="material_classic">Classic</string>
 </resources>

@@ -79,10 +79,22 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             invalidate()
         }
 
-    var isSeaGlass: Boolean = false
+    var material: TouchpadMaterial = TouchpadMaterial.LIQUID_GLASS
         set(value) {
             field = value
             invalidate()
+        }
+
+    var isLiquidGlass: Boolean
+        get() = material == TouchpadMaterial.LIQUID_GLASS
+        set(value) {
+            if (value) material = TouchpadMaterial.LIQUID_GLASS
+        }
+
+    var isSeaGlass: Boolean
+        get() = material == TouchpadMaterial.SEA_GLASS
+        set(value) {
+            material = if (value) TouchpadMaterial.SEA_GLASS else TouchpadMaterial.LIQUID_GLASS
         }
 
     var glowColor: Int = Color.TRANSPARENT
@@ -173,8 +185,16 @@ class TouchpadSurfaceView(context: Context) : View(context) {
                 canvas.drawBitmap(bgBmp, bgMatrix, bitmapPaint)
             }
         } else {
-            val topLightColor = lightenColor(baseColor, if (isSeaGlass) 0.22f else 0.16f)
-            val bottomDepthColor = darkenColor(baseColor, if (isSeaGlass) 0.04f else 0.08f)
+            val topLightColor = when {
+                isLiquidGlass -> lightenColor(baseColor, 0.28f)
+                isSeaGlass -> lightenColor(baseColor, 0.22f)
+                else -> lightenColor(baseColor, 0.16f)
+            }
+            val bottomDepthColor = when {
+                isLiquidGlass -> darkenColor(baseColor, 0.08f)
+                isSeaGlass -> darkenColor(baseColor, 0.04f)
+                else -> darkenColor(baseColor, 0.08f)
+            }
             val glassBaseShader = LinearGradient(
                 0f, 0f, w, h,
                 intArrayOf(
@@ -182,7 +202,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
                     Color.argb(fillAlpha, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor)),
                     Color.argb(fillAlpha, Color.red(bottomDepthColor), Color.green(bottomDepthColor), Color.blue(bottomDepthColor)),
                 ),
-                floatArrayOf(0f, if (isSeaGlass) 0.40f else 0.45f, 1f),
+                floatArrayOf(0f, if (isLiquidGlass) 0.38f else if (isSeaGlass) 0.40f else 0.45f, 1f),
                 Shader.TileMode.CLAMP,
             )
             surfacePaint.shader = glassBaseShader
@@ -191,9 +211,21 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         }
 
         // 2. 毛玻璃漫反射透光层（顶部微光漫射与立体透光）
-        val restTopAlpha = if (isSeaGlass) (24 * opacityPercent / 100).coerceIn(0, 255) else (36 * opacityPercent / 100).coerceIn(0, 255)
-        val restMidAlpha = if (isSeaGlass) (16 * opacityPercent / 100).coerceIn(0, 255) else (12 * opacityPercent / 100).coerceIn(0, 255)
-        val restBottomAlpha = if (isSeaGlass) (18 * opacityPercent / 100).coerceIn(0, 255) else (26 * opacityPercent / 100).coerceIn(0, 255)
+        val restTopAlpha = when {
+            isLiquidGlass -> (52 * opacityPercent / 100).coerceIn(0, 255)
+            isSeaGlass -> (24 * opacityPercent / 100).coerceIn(0, 255)
+            else -> (36 * opacityPercent / 100).coerceIn(0, 255)
+        }
+        val restMidAlpha = when {
+            isLiquidGlass -> (14 * opacityPercent / 100).coerceIn(0, 255)
+            isSeaGlass -> (16 * opacityPercent / 100).coerceIn(0, 255)
+            else -> (12 * opacityPercent / 100).coerceIn(0, 255)
+        }
+        val restBottomAlpha = when {
+            isLiquidGlass -> (22 * opacityPercent / 100).coerceIn(0, 255)
+            isSeaGlass -> (18 * opacityPercent / 100).coerceIn(0, 255)
+            else -> (26 * opacityPercent / 100).coerceIn(0, 255)
+        }
         val restShader = LinearGradient(
             0f, 0f, 0f, h,
             intArrayOf(
@@ -201,7 +233,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
                 Color.argb(restMidAlpha, 255, 255, 255),
                 Color.argb(restBottomAlpha, 0, 0, 0),
             ),
-            floatArrayOf(0f, 0.35f, 1f),
+            floatArrayOf(0f, if (isLiquidGlass) 0.30f else 0.35f, 1f),
             Shader.TileMode.CLAMP,
         )
         lightingPaint.shader = restShader
@@ -222,22 +254,41 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             val highAlpha = (95 * tiltIntensity * opacityPercent / 100).toInt().coerceIn(0, 255)
             val shadowAlpha = (110 * tiltIntensity * opacityPercent / 100).toInt().coerceIn(0, 255)
 
-            val tiltShader = LinearGradient(
-                raisedX, raisedY, sinkX, sinkY,
-                intArrayOf(
-                    Color.argb(highAlpha, 255, 255, 255),
-                    Color.TRANSPARENT,
-                    Color.argb(shadowAlpha, 0, 0, 0),
-                ),
-                floatArrayOf(0f, 0.45f, 1f),
-                Shader.TileMode.CLAMP,
-            )
+            val tiltShader = if (isLiquidGlass && glowColor != Color.TRANSPARENT && Color.alpha(glowColor) > 0) {
+                val beamAlpha = (85 * tiltIntensity * opacityPercent / 100).toInt().coerceIn(0, 255)
+                LinearGradient(
+                    raisedX, raisedY, sinkX, sinkY,
+                    intArrayOf(
+                        Color.argb(highAlpha, 255, 255, 255),
+                        Color.argb(beamAlpha, Color.red(glowColor), Color.green(glowColor), Color.blue(glowColor)),
+                        Color.TRANSPARENT,
+                        Color.argb(shadowAlpha, 0, 0, 0),
+                    ),
+                    floatArrayOf(0f, 0.18f, 0.48f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
+            } else {
+                LinearGradient(
+                    raisedX, raisedY, sinkX, sinkY,
+                    intArrayOf(
+                        Color.argb(highAlpha, 255, 255, 255),
+                        Color.TRANSPARENT,
+                        Color.argb(shadowAlpha, 0, 0, 0),
+                    ),
+                    floatArrayOf(0f, 0.45f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
+            }
             lightingPaint.shader = tiltShader
             canvas.drawRect(boundsRect, lightingPaint)
         }
 
         // 4. 顶部内边缘液态高光（模拟真实玻璃边缘内反射）
-        val innerGlowAlpha = if (isSeaGlass) (32 * opacityPercent / 100).coerceIn(0, 255) else (48 * opacityPercent / 100).coerceIn(0, 255)
+        val innerGlowAlpha = when {
+            isLiquidGlass -> (60 * opacityPercent / 100).coerceIn(0, 255)
+            isSeaGlass -> (32 * opacityPercent / 100).coerceIn(0, 255)
+            else -> (48 * opacityPercent / 100).coerceIn(0, 255)
+        }
         val innerGlowShader = LinearGradient(
             0f, 0f, 0f, h * 0.35f,
             Color.argb(innerGlowAlpha, 255, 255, 255),
@@ -249,48 +300,74 @@ class TouchpadSurfaceView(context: Context) : View(context) {
 
         canvas.restore()
 
-        // 5. 外部流光/温润磨砂边缘描边
-        val strokeWidth = if (isSeaGlass) density * 1.0f else density * 1.2f
+        // 5. 外部流光/双层折射边缘光刃/温润磨砂边缘描边
+        val strokeWidth = when {
+            isLiquidGlass -> density * 1.25f
+            isSeaGlass -> density * 1.0f
+            else -> density * 1.2f
+        }
         strokePaint.strokeWidth = strokeWidth
         val isLightBase = colorLuminance(baseColor) > 0.55f
 
-        if (isSeaGlass) {
-            val topAlpha = (if (isLightBase) 140 else 105) * opacityPercent / 100
-            val botAlpha = (if (isLightBase) 40 else 25) * opacityPercent / 100
-            val seaGlassStrokeShader = LinearGradient(
-                0f, 0f, 0f, h,
-                intArrayOf(
-                    Color.argb(topAlpha, 255, 255, 255),
-                    Color.argb((topAlpha + botAlpha) / 2, 255, 255, 255),
-                    Color.argb(botAlpha, 255, 255, 255),
-                ),
-                floatArrayOf(0f, 0.40f, 1f),
-                Shader.TileMode.CLAMP,
-            )
-            strokePaint.shader = seaGlassStrokeShader
-        } else {
-            val highSpecularAlpha = if (isLightBase) {
-                (190 * opacityPercent / 100).coerceIn(0, 255)
-            } else {
-                (160 * opacityPercent / 100).coerceIn(0, 255)
+        when {
+            isLiquidGlass -> {
+                // Lens 液态玻璃：锐利迎光面纯白双层折射光刃 (inset 0 1px 0 #fff9) 与边缘色散微辉光
+                val topAlpha = (if (isLightBase) 220 else 185) * opacityPercent / 100
+                val midAlpha = (if (isLightBase) 110 else 90) * opacityPercent / 100
+                val botAlpha = (if (isLightBase) 45 else 30) * opacityPercent / 100
+                val dispersionTint = if (isLightBase) 0x6690E8FA.toInt() else 0x4D38BDF8.toInt()
+                val liquidGlassStrokeShader = LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(
+                        Color.argb(topAlpha, 255, 255, 255),
+                        dispersionTint,
+                        Color.argb(midAlpha, 255, 255, 255),
+                        Color.argb(botAlpha, 255, 255, 255),
+                    ),
+                    floatArrayOf(0f, 0.22f, 0.55f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
+                strokePaint.shader = liquidGlassStrokeShader
             }
-            val lowSpecularAlpha = if (isLightBase) {
-                (60 * opacityPercent / 100).coerceIn(0, 255)
-            } else {
-                (40 * opacityPercent / 100).coerceIn(0, 255)
+            isSeaGlass -> {
+                val topAlpha = (if (isLightBase) 140 else 105) * opacityPercent / 100
+                val botAlpha = (if (isLightBase) 40 else 25) * opacityPercent / 100
+                val seaGlassStrokeShader = LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(
+                        Color.argb(topAlpha, 255, 255, 255),
+                        Color.argb((topAlpha + botAlpha) / 2, 255, 255, 255),
+                        Color.argb(botAlpha, 255, 255, 255),
+                    ),
+                    floatArrayOf(0f, 0.40f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
+                strokePaint.shader = seaGlassStrokeShader
             }
+            else -> {
+                val highSpecularAlpha = if (isLightBase) {
+                    (190 * opacityPercent / 100).coerceIn(0, 255)
+                } else {
+                    (160 * opacityPercent / 100).coerceIn(0, 255)
+                }
+                val lowSpecularAlpha = if (isLightBase) {
+                    (60 * opacityPercent / 100).coerceIn(0, 255)
+                } else {
+                    (40 * opacityPercent / 100).coerceIn(0, 255)
+                }
 
-            val specularStrokeShader = LinearGradient(
-                0f, 0f, w, h,
-                intArrayOf(
-                    Color.argb(highSpecularAlpha, 255, 255, 255),
-                    Color.argb((highSpecularAlpha + lowSpecularAlpha) / 2, 255, 255, 255),
-                    if (isLightBase) Color.argb(lowSpecularAlpha, 0, 0, 0) else Color.argb(lowSpecularAlpha, 255, 255, 255),
-                ),
-                floatArrayOf(0f, 0.42f, 1f),
-                Shader.TileMode.CLAMP,
-            )
-            strokePaint.shader = specularStrokeShader
+                val specularStrokeShader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(
+                        Color.argb(highSpecularAlpha, 255, 255, 255),
+                        Color.argb((highSpecularAlpha + lowSpecularAlpha) / 2, 255, 255, 255),
+                        if (isLightBase) Color.argb(lowSpecularAlpha, 0, 0, 0) else Color.argb(lowSpecularAlpha, 255, 255, 255),
+                    ),
+                    floatArrayOf(0f, 0.42f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
+                strokePaint.shader = specularStrokeShader
+            }
         }
 
         val halfStroke = strokeWidth / 2f

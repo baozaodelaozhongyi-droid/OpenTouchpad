@@ -103,7 +103,15 @@ class BubbleDrawable(
     private val isMask: Boolean = false,
     private val isSeaGlass: Boolean = false,
     private var glowColor: Int = Color.TRANSPARENT,
+    private val material: TouchpadMaterial = if (isSeaGlass) TouchpadMaterial.SEA_GLASS else TouchpadMaterial.LIQUID_GLASS,
 ) : Drawable() {
+
+    private val isLiquidGlass: Boolean
+        get() = material == TouchpadMaterial.LIQUID_GLASS && !isSeaGlass
+    private val isSeaGlassEffect: Boolean
+        get() = material == TouchpadMaterial.SEA_GLASS || isSeaGlass
+    private val hasGlow: Boolean
+        get() = (isLiquidGlass || isSeaGlassEffect) && glowColor != Color.TRANSPARENT && Color.alpha(glowColor) > 0
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -129,79 +137,124 @@ class BubbleDrawable(
             fillPaint.color = Color.WHITE
         } else {
             val a = (255 * opacityPercent / 100).coerceIn(0, 255)
-            if (isSeaGlass) {
-                // Sea Glass 磨砂次表面漫反射微光
-                val topC = withAlpha(lightenColor(baseColor, 0.16f), (a * 0.90f).toInt())
-                val midC = withAlpha(baseColor, a)
-                val botC = withAlpha(darkenColor(baseColor, 0.05f), a)
-                if (bounds.height() > 0) {
-                    fillPaint.shader = LinearGradient(
-                        bounds.exactCenterX(), bounds.top.toFloat(),
-                        bounds.exactCenterX(), bounds.bottom.toFloat(),
-                        intArrayOf(topC, midC, botC),
-                        floatArrayOf(0f, 0.42f, 1f),
-                        Shader.TileMode.CLAMP,
-                    )
-                } else {
-                    fillPaint.shader = null
-                    fillPaint.color = midC
+            val isLightBase = colorLuminance(baseColor) > 0.55f
+
+            when {
+                isLiquidGlass -> {
+                    // Lens 液态玻璃凸透镜质感：高光微凸穹顶、晶莹清透、底部微折射
+                    val topC = withAlpha(lightenColor(baseColor, if (isLightBase) 0.25f else 0.32f), a)
+                    val midC = withAlpha(lightenColor(baseColor, if (isLightBase) 0.06f else 0.08f), (a * 0.95f).toInt())
+                    val botC = withAlpha(darkenColor(baseColor, 0.08f), a)
+                    if (bounds.height() > 0) {
+                        fillPaint.shader = LinearGradient(
+                            bounds.exactCenterX(), bounds.top.toFloat(),
+                            bounds.exactCenterX(), bounds.bottom.toFloat(),
+                            intArrayOf(topC, midC, botC),
+                            floatArrayOf(0f, 0.38f, 1f),
+                            Shader.TileMode.CLAMP,
+                        )
+                    } else {
+                        fillPaint.shader = null
+                        fillPaint.color = midC
+                    }
                 }
-            } else {
-                val topC = withAlpha(lightenColor(baseColor, 0.08f), a)
-                val botC = withAlpha(baseColor, a)
-                if (bounds.height() > 0) {
-                    fillPaint.shader = LinearGradient(
-                        0f, bounds.top.toFloat(),
-                        0f, bounds.bottom.toFloat(),
-                        topC, botC,
-                        Shader.TileMode.CLAMP,
-                    )
-                } else {
-                    fillPaint.shader = null
-                    fillPaint.color = botC
+                isSeaGlassEffect -> {
+                    // Sea Glass 磨砂次表面漫反射微光
+                    val topC = withAlpha(lightenColor(baseColor, 0.16f), (a * 0.90f).toInt())
+                    val midC = withAlpha(baseColor, a)
+                    val botC = withAlpha(darkenColor(baseColor, 0.05f), a)
+                    if (bounds.height() > 0) {
+                        fillPaint.shader = LinearGradient(
+                            bounds.exactCenterX(), bounds.top.toFloat(),
+                            bounds.exactCenterX(), bounds.bottom.toFloat(),
+                            intArrayOf(topC, midC, botC),
+                            floatArrayOf(0f, 0.42f, 1f),
+                            Shader.TileMode.CLAMP,
+                        )
+                    } else {
+                        fillPaint.shader = null
+                        fillPaint.color = midC
+                    }
+                }
+                else -> {
+                    val topC = withAlpha(lightenColor(baseColor, 0.08f), a)
+                    val botC = withAlpha(baseColor, a)
+                    if (bounds.height() > 0) {
+                        fillPaint.shader = LinearGradient(
+                            0f, bounds.top.toFloat(),
+                            0f, bounds.bottom.toFloat(),
+                            topC, botC,
+                            Shader.TileMode.CLAMP,
+                        )
+                    } else {
+                        fillPaint.shader = null
+                        fillPaint.color = botC
+                    }
                 }
             }
 
             if (strokeWidthPx > 0f) {
-                if (isSeaGlass) {
-                    // 海浪冲刷打磨的温润磨砂边缘微光
-                    val isLightBase = colorLuminance(baseColor) > 0.55f
-                    val strokeA = (opacityPercent * 0.75f).toInt().coerceIn(0, 255)
-                    val rimTop = withAlpha(Color.WHITE, (strokeA * (if (isLightBase) 0.70f else 0.50f)).toInt())
-                    val rimBot = withAlpha(if (isLightBase) baseColor else Color.WHITE, (strokeA * 0.18f).toInt())
-                    if (bounds.height() > 0) {
-                        strokePaint.shader = LinearGradient(
-                            bounds.exactCenterX(), bounds.top.toFloat(),
-                            bounds.exactCenterX(), bounds.bottom.toFloat(),
-                            rimTop, rimBot,
-                            Shader.TileMode.CLAMP,
-                        )
-                    } else {
-                        strokePaint.shader = null
-                        strokePaint.color = rimTop
+                when {
+                    isLiquidGlass -> {
+                        // Lens 锐利双层折射边缘高光 (inset 0 1px 0 #fff9, inset 1px 0 0 #fff3) 与边缘色散
+                        val strokeA = (opacityPercent * 0.85f).toInt().coerceIn(0, 255)
+                        val topRidge = withAlpha(Color.WHITE, (strokeA * (if (isLightBase) 0.92f else 0.78f)).toInt())
+                        val midDispersion = withAlpha(if (isLightBase) 0xFF90E8FA.toInt() else 0xFF38BDF8.toInt(), (strokeA * 0.45f).toInt())
+                        val botRim = withAlpha(if (isLightBase) baseColor else Color.WHITE, (strokeA * 0.20f).toInt())
+                        if (bounds.height() > 0) {
+                            strokePaint.shader = LinearGradient(
+                                bounds.exactCenterX(), bounds.top.toFloat(),
+                                bounds.exactCenterX(), bounds.bottom.toFloat(),
+                                intArrayOf(topRidge, midDispersion, botRim),
+                                floatArrayOf(0f, 0.28f, 1f),
+                                Shader.TileMode.CLAMP,
+                            )
+                        } else {
+                            strokePaint.shader = null
+                            strokePaint.color = topRidge
+                        }
+                        strokePaint.strokeWidth = strokeWidthPx * 1.25f
                     }
-                    strokePaint.strokeWidth = strokeWidthPx * 1.15f
-                } else {
-                    strokePaint.shader = null
-                    val strokeAlpha = (Color.alpha(strokeColor) * opacityPercent / 100).coerceIn(0, 255)
-                    strokePaint.color = Color.argb(
-                        strokeAlpha,
-                        Color.red(strokeColor),
-                        Color.green(strokeColor),
-                        Color.blue(strokeColor),
-                    )
-                    strokePaint.strokeWidth = strokeWidthPx
+                    isSeaGlassEffect -> {
+                        // 海浪冲刷打磨的温润磨砂边缘微光
+                        val strokeA = (opacityPercent * 0.75f).toInt().coerceIn(0, 255)
+                        val rimTop = withAlpha(Color.WHITE, (strokeA * (if (isLightBase) 0.70f else 0.50f)).toInt())
+                        val rimBot = withAlpha(if (isLightBase) baseColor else Color.WHITE, (strokeA * 0.18f).toInt())
+                        if (bounds.height() > 0) {
+                            strokePaint.shader = LinearGradient(
+                                bounds.exactCenterX(), bounds.top.toFloat(),
+                                bounds.exactCenterX(), bounds.bottom.toFloat(),
+                                rimTop, rimBot,
+                                Shader.TileMode.CLAMP,
+                            )
+                        } else {
+                            strokePaint.shader = null
+                            strokePaint.color = rimTop
+                        }
+                        strokePaint.strokeWidth = strokeWidthPx * 1.15f
+                    }
+                    else -> {
+                        strokePaint.shader = null
+                        val strokeAlpha = (Color.alpha(strokeColor) * opacityPercent / 100).coerceIn(0, 255)
+                        strokePaint.color = Color.argb(
+                            strokeAlpha,
+                            Color.red(strokeColor),
+                            Color.green(strokeColor),
+                            Color.blue(strokeColor),
+                        )
+                        strokePaint.strokeWidth = strokeWidthPx
+                    }
                 }
             }
 
-            if (isSeaGlass && glowColor != Color.TRANSPARENT && Color.alpha(glowColor) > 0) {
+            if (hasGlow) {
                 val glowAlpha = (Color.alpha(glowColor) * opacityPercent / 100).coerceIn(0, 255)
                 val actualGlowColor = Color.argb(glowAlpha, Color.red(glowColor), Color.green(glowColor), Color.blue(glowColor))
                 glowPaint.color = Color.argb(1, Color.red(glowColor), Color.green(glowColor), Color.blue(glowColor))
                 glowPaint.setShadowLayer(
-                    16f,
+                    if (isLiquidGlass) 20f else 16f,
                     0f,
-                    5f,
+                    if (isLiquidGlass) 6f else 5f,
                     actualGlowColor,
                 )
             } else {
@@ -236,13 +289,15 @@ class BubbleDrawable(
             if (strokeWidthPx > 0f) {
                 strokePath.set(fillPath)
             }
-            if (isSeaGlass && glowColor != Color.TRANSPARENT && Color.alpha(glowColor) > 0) {
+            if (hasGlow) {
+                val dy = if (isLiquidGlass) 3.5f else 2.5f
+                val spread = if (isLiquidGlass) 1.5f else 1f
                 buildBubblePath(
                     glowPath,
-                    bounds.left + halfStroke - 1f,
-                    bounds.top + halfStroke + 2.5f,
-                    bounds.right - halfStroke + 1f,
-                    bounds.bottom - halfStroke + 4.5f,
+                    bounds.left + halfStroke - spread,
+                    bounds.top + halfStroke + dy,
+                    bounds.right - halfStroke + spread,
+                    bounds.bottom - halfStroke + dy + 2f,
                 )
             } else {
                 glowPath.reset()
@@ -255,7 +310,7 @@ class BubbleDrawable(
         if (fillPath.isEmpty && bounds.width() > 0 && bounds.height() > 0) {
             onBoundsChange(bounds)
         }
-        if (!isMask && isSeaGlass && glowColor != Color.TRANSPARENT && Color.alpha(glowColor) > 0) {
+        if (!isMask && hasGlow) {
             canvas.drawPath(if (!glowPath.isEmpty) glowPath else fillPath, glowPaint)
         }
         canvas.drawPath(fillPath, fillPaint)
