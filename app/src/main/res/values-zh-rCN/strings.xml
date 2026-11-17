@@ -199,13 +199,6 @@
     <string name="set_touchpad_bg_focus_y_hint" formatted="false">0% 顶端(优先显示脸部) · 50% 居中 · 100% 底部</string>
     <string name="set_touchpad_bg_focus_x">底图水平焦点 (宽度对齐)</string>
     <string name="set_touchpad_bg_focus_x_hint" formatted="false">0% 左侧 · 50% 居中 · 100% 右侧</string>
-    <string name="switch_sea_glass">海玻璃材质 (Sea Glass)</string>
-    <string name="switch_sea_glass_hint">灵感源自潮汐冲刷的海玻璃。按键与面板呈现磨砂半透微光质感与底部彩色透光光晕 (Light Beneath)。</string>
-    <string name="set_touchpad_material">触控板材质</string>
-    <string name="set_touchpad_material_hint">选择面板与气泡按键的材质风格。默认采用 Lens 液态玻璃体系：晶莹通透折射、双层折射边缘光刃与光斑透光辉光。</string>
-    <string name="material_liquid_glass">液态玻璃</string>
-    <string name="material_sea_glass">海玻璃</string>
-    <string name="material_classic">经典机械</string>
 
     <!-- 后台加锁与防杀保活 -->
     <string name="sec_keep_alive">后台保活与防杀加锁</string>

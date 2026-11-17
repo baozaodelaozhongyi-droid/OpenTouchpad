@@ -543,15 +543,7 @@ class MainActivity : Activity() {
             .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
         val currentPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
             ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
-        val padSummary = buildString {
-            append("${currentPanelWidth}dp · ${prefs.opacityPercent}%")
-            append(" · ")
-            append(when (prefs.touchpadMaterial) {
-                TouchpadMaterial.LIQUID_GLASS -> getString(R.string.material_liquid_glass)
-                TouchpadMaterial.SEA_GLASS -> getString(R.string.material_sea_glass)
-                TouchpadMaterial.CLASSIC -> getString(R.string.material_classic)
-            })
-        }
+        val padSummary = "${currentPanelWidth}dp · ${prefs.opacityPercent}%"
         val hasTouchpadBg = CustomBackgroundManager.hasTouchpadBg(this)
         val padRows = mutableListOf(
             slider(
@@ -579,7 +571,6 @@ class MainActivity : Activity() {
                     TouchpadService.instance?.updatePanelGeometry()
                 },
             ),
-            touchpadMaterialRow(),
             colorRow(
                 getString(R.string.set_touchpad_color),
                 TOUCHPAD_COLORS,
@@ -1734,85 +1725,6 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 触控板材质：三段式分段选择器 (液态玻璃 / 海玻璃 / 经典机械)。 */
-    private fun touchpadMaterialRow(): View {
-        val track = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            background = roundedSurface(trackColor, 12)
-        }
-        val options = listOf(
-            TouchpadMaterial.LIQUID_GLASS to R.string.material_liquid_glass,
-            TouchpadMaterial.SEA_GLASS to R.string.material_sea_glass,
-            TouchpadMaterial.CLASSIC to R.string.material_classic,
-        )
-        val buttons = mutableListOf<TextView>()
-
-        fun updateMaterialSelection(selected: TouchpadMaterial) {
-            options.forEachIndexed { index, (mat, _) ->
-                val btn = buttons.getOrNull(index) ?: return@forEachIndexed
-                val isSel = mat == selected
-                btn.typeface = if (isSel) sansMedium else Typeface.DEFAULT
-                btn.setTextColor(if (isSel) textColor else secondaryTextColor)
-                btn.background = if (isSel) {
-                    roundedSurface(elevatedColor, 9).apply { setStroke(maxOf(1, dp(1)), borderColor) }
-                } else {
-                    ripple(null, rippleColor, 9)
-                }
-                btn.elevation = if (isSel) dp(1).toFloat() else 0f
-            }
-        }
-
-        options.forEach { (mat, labelRes) ->
-            val isSelected = prefs.touchpadMaterial == mat
-            val tv = TextView(this).apply {
-                text = getString(labelRes)
-                textSize = 13.5f
-                gravity = Gravity.CENTER
-                typeface = if (isSelected) sansMedium else Typeface.DEFAULT
-                setTextColor(if (isSelected) textColor else secondaryTextColor)
-                background = if (isSelected) {
-                    roundedSurface(elevatedColor, 9).apply { setStroke(maxOf(1, dp(1)), borderColor) }
-                } else {
-                    ripple(null, rippleColor, 9)
-                }
-                if (isSelected) elevation = dp(1).toFloat()
-                isClickable = true
-                contentDescription = getString(labelRes)
-                setOnClickListener {
-                    if (prefs.touchpadMaterial != mat) {
-                        if (prefs.haptics) {
-                            runCatching {
-                                performHapticFeedback(
-                                    HapticFeedbackConstants.VIRTUAL_KEY,
-                                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
-                                )
-                            }
-                        }
-                        prefs.touchpadMaterial = mat
-                        updateMaterialSelection(mat)
-                        TouchpadService.instance?.updatePanelAppearance()
-                        recreateKeepingScroll()
-                    }
-                }
-            }
-            buttons.add(tv)
-            track.addView(tv, LinearLayout.LayoutParams(0, dp(40), 1f))
-        }
-
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(10), dp(16), dp(12))
-            addView(titleText(getString(R.string.set_touchpad_material)).apply {
-                textSize = 15f
-            })
-            addView(hintText(getString(R.string.set_touchpad_material_hint)).apply {
-                setPadding(0, dp(3), 0, dp(8))
-            })
-            addView(track)
-        }
-    }
-
     private fun slider(
         title: String,
         min: Int,
@@ -2781,10 +2693,7 @@ class MainActivity : Activity() {
         )
         /** 0 = 跟随主题默认色；COLOR_DYNAMIC = 跟随壁纸动态取色。 */
         val TOUCHPAD_COLORS = listOf(
-            0, COLOR_DYNAMIC,
-            0xFF90E8FA.toInt(), 0xFF2875ED.toInt(), 0xFF52BB83.toInt(), 0xFFE2B54E.toInt(),
-            0xFF56B495.toInt(), 0xFF529ECC.toInt(), 0xFFD69A58.toInt(), 0xFFA588C8.toInt(), 0xFFDE7C70.toInt(),
-            0xFF141413.toInt(), 0xFF2A2A28.toInt(), 0xFF30302E.toInt(), 0xFF87867F.toInt(),
+            0, COLOR_DYNAMIC, 0xFF141413.toInt(), 0xFF2A2A28.toInt(), 0xFF30302E.toInt(), 0xFF87867F.toInt(),
             0xFFE8E6DC.toInt(), 0xFFFAF9F5.toInt(), 0xFFD97757.toInt(), 0xFFB53333.toInt(),
             0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
             0xFF1E293B.toInt(), 0xFF1C3829.toInt(),

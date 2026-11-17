@@ -137,29 +137,6 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("touchpadColor", 0)
         set(v) = sp.edit().putInt("touchpadColor", v).apply()
 
-    /** 触控板材质风格：默认采用 Lens 液态玻璃体系 (LIQUID_GLASS)。 */
-    var touchpadMaterial: TouchpadMaterial
-        get() {
-            if (sp.contains("touchpadMaterial")) {
-                return TouchpadMaterial.fromId(sp.getString("touchpadMaterial", null))
-            }
-            if (sp.getBoolean("seaGlassEnabled", false)) {
-                return TouchpadMaterial.SEA_GLASS
-            }
-            return TouchpadMaterial.LIQUID_GLASS
-        }
-        set(v) = sp.edit()
-            .putString("touchpadMaterial", v.id)
-            .putBoolean("seaGlassEnabled", v == TouchpadMaterial.SEA_GLASS)
-            .apply()
-
-    /** 保持兼容旧版 seaGlassEnabled 属性 */
-    var seaGlassEnabled: Boolean
-        get() = touchpadMaterial == TouchpadMaterial.SEA_GLASS
-        set(v) {
-            touchpadMaterial = if (v) TouchpadMaterial.SEA_GLASS else TouchpadMaterial.LIQUID_GLASS
-        }
-
     /** Legacy pad height retained for preference compatibility. */
     var padHeightDp: Int
         get() = sp.getInt("padHeight", 240)
