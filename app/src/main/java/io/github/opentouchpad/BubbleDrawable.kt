@@ -8,10 +8,13 @@ import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.os.Build
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * 构建饱满气泡曲线路径：
@@ -89,10 +92,11 @@ internal fun buildBubblePath(
 }
 
 /**
- * 饱满气泡型 Drawable：
+ * 饱满气泡型 Drawable（支持双模态材质）：
  * - 纯正圆/连续弧度自适应；
- * - 垂直双色微渐变（顶部 8% 轻微提亮高光感）；
- * - 支持面板透明度与描边；
+ * - 高不透明度（80%–100%）：呈现干净柔和的 Material You 容器表面；
+ * - 中低不透明度（20%–60%）：呈现 Apple 液态玻璃（焦散透光基底、内部聚光、张力内高光弧、135° 菲涅尔折光描边）；
+ * - 60%–80% 之间平滑演进，并支持 [setInteractiveTilt] 实时按压流光；
  * - 作为遮罩时支持 RippleDrawable 精确剪裁水波纹。
  */
 class BubbleDrawable(
@@ -101,51 +105,218 @@ class BubbleDrawable(
     private var strokeWidthPx: Float = 0f,
     private var opacityPercent: Int = 100,
     private val isMask: Boolean = false,
+    private var dark: Boolean = true,
+    private var glassTint: Int = baseColor,
+    private var density: Float = 1f,
 ) : Drawable() {
+
+    private val clampedOpacity = opacityPercent.coerceIn(20, 100)
+    private val glassFactor = if (isMask) 0f else computeLiquidGlassFactor(clampedOpacity)
+
+    private var alphaMod = 255
+    private var tiltNormX = 0f
+    private var tiltNormY = 0f
+    private var shadersDirty = true
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
+    }
+    private val causticPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val bevelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
     }
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
     }
 
     private val fillPath = Path()
+    private val bevelPath = Path()
     private val strokePath = Path()
 
     init {
-        updatePaints()
+        rebuildShaders()
     }
 
-    private fun updatePaints() {
+    /** 接收 PressFeedback 的归一化 3D 按压倾斜坐标，驱动液态玻璃高光实时跟手偏移。 */
+    fun setInteractiveTilt(normX: Float, normY: Float) {
+        if (isMask) return
+        val cx = normX.coerceIn(-1f, 1f)
+        val cy = normY.coerceIn(-1f, 1f)
+        val resettingToZero = cx == 0f && cy == 0f && (tiltNormX != 0f || tiltNormY != 0f)
+        if (!resettingToZero && abs(cx - tiltNormX) < 0.005f && abs(cy - tiltNormY) < 0.005f) {
+            return
+        }
+        tiltNormX = cx
+        tiltNormY = cy
+        shadersDirty = true
+        invalidateSelf()
+    }
+
+    private fun effectiveStrokeWidthPx(): Float =
+        if (strokeWidthPx > 0f) strokeWidthPx * (1f + 0.25f * glassFactor) else 0f
+
+    private fun rebuildShaders() {
+        shadersDirty = false
         if (isMask) {
             fillPaint.shader = null
             fillPaint.color = Color.WHITE
+            return
+        }
+
+        val w = bounds.width().toFloat()
+        val h = bounds.height().toFloat()
+        val l = bounds.left.toFloat()
+        val t = bounds.top.toFloat()
+        val r = bounds.right.toFloat()
+        val btm = bounds.bottom.toFloat()
+
+        val alphaScale = alphaMod / 255f
+        val baseAlpha = (255f * (clampedOpacity / 100f) * alphaScale).roundToInt().coerceIn(0, 255)
+        val shift = computeSpecularShift(tiltNormX, tiltNormY)
+
+        if (w <= 0f || h <= 0f) {
+            fillPaint.shader = null
+            fillPaint.color = replaceAlpha(baseColor, baseAlpha)
+            return
+        }
+
+        // 1. 基底图层（Material You 容器表面 ⇄ 液态玻璃斜向焦散基底）
+        if (glassFactor <= 0.01f) {
+            val topC = replaceAlpha(lightenColor(baseColor, 0.05f), baseAlpha)
+            val botC = replaceAlpha(baseColor, baseAlpha)
+            fillPaint.color = Color.WHITE
+            fillPaint.shader = LinearGradient(
+                0f, t, 0f, btm,
+                topC, botC,
+                Shader.TileMode.CLAMP,
+            )
+            causticPaint.shader = null
+            bevelPaint.shader = null
         } else {
-            val a = (255 * opacityPercent / 100).coerceIn(0, 255)
-            val topC = withAlpha(lightenColor(baseColor, 0.08f), a)
-            val botC = withAlpha(baseColor, a)
-            if (bounds.height() > 0) {
-                fillPaint.shader = LinearGradient(
-                    0f, bounds.top.toFloat(),
-                    0f, bounds.bottom.toFloat(),
-                    topC, botC,
+            val topRgb = lerpArgb(
+                lerpArgb(baseColor, glassTint, 0.28f * glassFactor),
+                Color.WHITE,
+                (if (dark) 0.22f else 0.52f) * glassFactor,
+            )
+            val topAlpha = (baseAlpha * (1f + (0.14f + shift.boost * 0.5f) * glassFactor))
+                .roundToInt().coerceIn(0, 255)
+
+            val midRgb = lerpArgb(baseColor, glassTint, 0.12f * glassFactor)
+            val midAlpha = (baseAlpha * (1f - 0.18f * glassFactor)).roundToInt().coerceIn(0, 255)
+
+            val botRgb = lerpArgb(baseColor, glassTint, 0.35f * glassFactor)
+            val botAlpha = (baseAlpha * (1f + 0.06f * glassFactor)).roundToInt().coerceIn(0, 255)
+
+            fillPaint.color = Color.WHITE
+            fillPaint.shader = LinearGradient(
+                l + w * (0.05f + shift.shiftXRatio * 0.5f),
+                t + h * (0.05f + shift.shiftYRatio * 0.5f),
+                l + w * (0.95f + shift.shiftXRatio * 0.5f),
+                t + h * (0.95f + shift.shiftYRatio * 0.5f),
+                intArrayOf(
+                    replaceAlpha(topRgb, topAlpha),
+                    replaceAlpha(midRgb, midAlpha),
+                    replaceAlpha(botRgb, botAlpha),
+                ),
+                floatArrayOf(0f, 0.48f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+
+            // 2. 液态内部焦散光斑图层
+            if (glassFactor > 0.02f) {
+                val cx = l + w * (0.28f + shift.shiftXRatio)
+                val cy = t + h * (0.24f + shift.shiftYRatio)
+                val causticRadius = maxOf(w, h) * 0.72f
+                val causticRgb = lerpArgb(Color.WHITE, glassTint, if (dark) 0.30f else 0.15f)
+                val causticAlpha = ((if (dark) 56f else 82f) * glassFactor * (1f + shift.boost * 1.4f) * alphaScale)
+                    .roundToInt().coerceIn(0, 255)
+
+                causticPaint.color = Color.WHITE
+                causticPaint.shader = RadialGradient(
+                    cx, cy, causticRadius.coerceAtLeast(1f),
+                    intArrayOf(
+                        replaceAlpha(causticRgb, causticAlpha),
+                        replaceAlpha(causticRgb, (causticAlpha * 0.35f).roundToInt()),
+                        replaceAlpha(causticRgb, 0),
+                    ),
+                    floatArrayOf(0f, 0.45f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
+
+                // 3. 液态表面张力内高光弧
+                val bevelWidthPx = 1.1f * maxOf(density, 1f)
+                bevelPaint.strokeWidth = bevelWidthPx
+                val topHighlightAlpha = ((if (dark) 115f else 155f) * glassFactor * (1f + shift.boost) * alphaScale)
+                    .roundToInt().coerceIn(0, 255)
+                val bottomBounceColor = if (dark) {
+                    replaceAlpha(glassTint, (44f * glassFactor * alphaScale).roundToInt())
+                } else {
+                    val shadowRgb = lerpArgb(0xFF141413.toInt(), glassTint, 0.35f)
+                    replaceAlpha(shadowRgb, (38f * glassFactor * alphaScale).roundToInt())
+                }
+
+                bevelPaint.color = Color.WHITE
+                bevelPaint.shader = LinearGradient(
+                    l + w * (0.35f + shift.shiftXRatio * 0.4f),
+                    t,
+                    l + w * (0.65f - shift.shiftXRatio * 0.4f),
+                    btm,
+                    intArrayOf(
+                        replaceAlpha(Color.WHITE, topHighlightAlpha),
+                        0x00FFFFFF,
+                        0x00000000,
+                        bottomBounceColor,
+                    ),
+                    floatArrayOf(0f, 0.28f, 0.72f, 1f),
                     Shader.TileMode.CLAMP,
                 )
             } else {
-                fillPaint.shader = null
-                fillPaint.color = botC
+                causticPaint.shader = null
+                bevelPaint.shader = null
             }
+        }
 
-            if (strokeWidthPx > 0f) {
-                val strokeAlpha = (Color.alpha(strokeColor) * opacityPercent / 100).coerceIn(0, 255)
-                strokePaint.color = Color.argb(
-                    strokeAlpha,
-                    Color.red(strokeColor),
-                    Color.green(strokeColor),
-                    Color.blue(strokeColor),
+        // 4. 外轮廓描边图层（Material You 微描边 ⇄ 菲涅尔双高光折光描边）
+        val outerStrokePx = effectiveStrokeWidthPx()
+        if (outerStrokePx > 0f) {
+            strokePaint.strokeWidth = outerStrokePx
+            if (glassFactor <= 0.01f) {
+                strokePaint.shader = null
+                val strokeAlpha = (Color.alpha(strokeColor) * (clampedOpacity / 100f) * alphaScale)
+                    .roundToInt().coerceIn(0, 255)
+                strokePaint.color = replaceAlpha(strokeColor, strokeAlpha)
+            } else {
+                val rimAlphaBase = computeGlassRimAlpha(clampedOpacity, glassFactor)
+                val primaryRimAlpha = (rimAlphaBase * (1f + shift.boost) * alphaScale)
+                    .roundToInt().coerceIn(0, 255)
+
+                val stop0Color = replaceAlpha(lerpArgb(strokeColor, Color.WHITE, glassFactor), primaryRimAlpha)
+                val stop1Color = replaceAlpha(
+                    lerpArgb(strokeColor, Color.WHITE, 0.60f * glassFactor),
+                    (primaryRimAlpha * (0.28f + 0.35f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
                 )
-                strokePaint.strokeWidth = strokeWidthPx
+                val stop2Color = replaceAlpha(
+                    lerpArgb(strokeColor, glassTint, 0.50f * glassFactor),
+                    (primaryRimAlpha * (0.16f + 0.45f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
+                )
+                val stop3Rgb = lerpArgb(strokeColor, lerpArgb(glassTint, Color.WHITE, 0.45f), glassFactor)
+                val stop3Color = replaceAlpha(
+                    stop3Rgb,
+                    (primaryRimAlpha * (0.68f + 0.15f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
+                )
+
+                strokePaint.color = Color.WHITE
+                strokePaint.shader = LinearGradient(
+                    l + w * shift.shiftXRatio * 0.4f,
+                    t + h * shift.shiftYRatio * 0.4f,
+                    r + w * shift.shiftXRatio * 0.4f,
+                    btm + h * shift.shiftYRatio * 0.4f,
+                    intArrayOf(stop0Color, stop1Color, stop2Color, stop3Color),
+                    floatArrayOf(0f, 0.42f, 0.62f, 1f),
+                    Shader.TileMode.CLAMP,
+                )
             }
         }
     }
@@ -156,14 +327,18 @@ class BubbleDrawable(
         val h = bounds.height().toFloat()
         if (w <= 0f || h <= 0f) {
             fillPath.reset()
+            bevelPath.reset()
             strokePath.reset()
             return
         }
 
         if (isMask) {
             buildBubblePath(fillPath, bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat())
+            bevelPath.reset()
+            strokePath.reset()
         } else {
-            val halfStroke = if (strokeWidthPx > 0f) strokeWidthPx / 2f else 0f
+            val outerStrokePx = effectiveStrokeWidthPx()
+            val halfStroke = if (outerStrokePx > 0f) outerStrokePx / 2f else 0f
             buildBubblePath(
                 fillPath,
                 bounds.left + halfStroke,
@@ -171,31 +346,62 @@ class BubbleDrawable(
                 bounds.right - halfStroke,
                 bounds.bottom - halfStroke,
             )
-            if (strokeWidthPx > 0f) {
+            if (outerStrokePx > 0f) {
                 strokePath.set(fillPath)
+            } else {
+                strokePath.reset()
             }
-            updatePaints()
+
+            val safeDensity = maxOf(density, 1f)
+            val bevelInset = 1.1f * safeDensity + (1.1f * safeDensity) * 0.3f
+            if (glassFactor > 0.02f && w > bevelInset * 2.5f && h > bevelInset * 2.5f) {
+                buildBubblePath(
+                    bevelPath,
+                    bounds.left + bevelInset,
+                    bounds.top + bevelInset,
+                    bounds.right - bevelInset,
+                    bounds.bottom - bevelInset,
+                )
+            } else {
+                bevelPath.reset()
+            }
+            shadersDirty = true
         }
     }
 
     override fun draw(canvas: Canvas) {
-        if (fillPath.isEmpty && bounds.width() > 0 && bounds.height() > 0) {
+        if (bounds.width() <= 0 || bounds.height() <= 0) return
+        if (fillPath.isEmpty) {
             onBoundsChange(bounds)
         }
+        if (shadersDirty) {
+            rebuildShaders()
+        }
         canvas.drawPath(fillPath, fillPaint)
-        if (!isMask && strokeWidthPx > 0f) {
+        if (!isMask && glassFactor > 0.02f) {
+            canvas.drawPath(fillPath, causticPaint)
+            if (!bevelPath.isEmpty) {
+                canvas.drawPath(bevelPath, bevelPaint)
+            }
+        }
+        if (!isMask && !strokePath.isEmpty && effectiveStrokeWidthPx() > 0f) {
             canvas.drawPath(strokePath, strokePaint)
         }
     }
 
     override fun setAlpha(alpha: Int) {
-        fillPaint.alpha = alpha
-        strokePaint.alpha = alpha
-        invalidateSelf()
+        val clamped = alpha.coerceIn(0, 255)
+        if (alphaMod != clamped) {
+            alphaMod = clamped
+            shadersDirty = true
+            invalidateSelf()
+        }
     }
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
         fillPaint.colorFilter = colorFilter
+        causticPaint.colorFilter = colorFilter
+        bevelPaint.colorFilter = colorFilter
         strokePaint.colorFilter = colorFilter
         invalidateSelf()
     }
@@ -217,9 +423,5 @@ class BubbleDrawable(
                 outline.setRect(bounds)
             }
         }
-    }
-
-    private fun withAlpha(color: Int, alpha: Int): Int {
-        return Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
     }
 }

@@ -1091,5 +1091,67 @@ class TouchpadMathTest {
         assertEquals(4.0f, bubbleBulgeAmount(4.0f, baseR), 0.0001f)
         assertEquals(4.0f, bubbleBulgeAmount(10.0f, baseR), 0.0001f)
     }
+
+    @Test
+    fun liquidGlassFactorMapsHighOpacityToMaterialYouAndLowOpacityToGlass() {
+        assertEquals(0f, computeLiquidGlassFactor(100), 0.001f)
+        assertEquals(0f, computeLiquidGlassFactor(85), 0.001f)
+        assertEquals(0f, computeLiquidGlassFactor(80), 0.001f)
+
+        assertEquals(1f, computeLiquidGlassFactor(60), 0.001f)
+        assertEquals(1f, computeLiquidGlassFactor(40), 0.001f)
+        assertEquals(1f, computeLiquidGlassFactor(20), 0.001f)
+
+        assertEquals(0.5f, computeLiquidGlassFactor(70), 0.001f)
+
+        var prev = computeLiquidGlassFactor(60)
+        for (p in 61..80) {
+            val cur = computeLiquidGlassFactor(p)
+            assertTrue("Expected monotonic decrease at $p%", cur <= prev)
+            prev = cur
+        }
+    }
+
+    @Test
+    fun glassRimAlphaKeepsEdgeVisibleAtLowOpacityInGlassMode() {
+        val lowOpacityGlassFactor = computeLiquidGlassFactor(25)
+        val lowOpacityRim = computeGlassRimAlpha(25, lowOpacityGlassFactor)
+        assertTrue("Expected visible glass rim at 25% opacity, got $lowOpacityRim", lowOpacityRim in 165..225)
+
+        val highOpacityMaterialFactor = computeLiquidGlassFactor(90)
+        val highOpacityRim = computeGlassRimAlpha(90, highOpacityMaterialFactor)
+        assertTrue("Expected subtle Material You rim at 90% opacity, got $highOpacityRim", highOpacityRim in 40..90)
+        assertTrue(lowOpacityRim > highOpacityRim)
+    }
+
+    @Test
+    fun specularShiftTracksTouchTiltAndClamps() {
+        val center = computeSpecularShift(0f, 0f)
+        assertEquals(0f, center.shiftXRatio, 0.001f)
+        assertEquals(0f, center.shiftYRatio, 0.001f)
+        assertEquals(0f, center.boost, 0.001f)
+
+        // 按压右下角 (+1, +1)，高光反向流向左上 (-, -)
+        val bottomRight = computeSpecularShift(1f, 1f, maxRatio = 0.28f)
+        assertEquals(-0.28f, bottomRight.shiftXRatio, 0.001f)
+        assertEquals(-0.28f, bottomRight.shiftYRatio, 0.001f)
+        assertEquals(0.25f, bottomRight.boost, 0.001f)
+
+        // 超出 [-1, 1] 的输入应被钳制
+        val clamped = computeSpecularShift(2.5f, -3.0f, maxRatio = 0.28f)
+        assertEquals(-0.28f, clamped.shiftXRatio, 0.001f)
+        assertEquals(0.28f, clamped.shiftYRatio, 0.001f)
+        assertEquals(0.25f, clamped.boost, 0.001f)
+    }
+
+    @Test
+    fun argbColorHelpersInterpolateAndReplaceAlphaCorrectly() {
+        assertEquals(0x80112233.toInt(), replaceAlpha(0xFF112233.toInt(), 0x80))
+        assertEquals(0x00112233, replaceAlpha(0xFF112233.toInt(), -10))
+        assertEquals(0xFF112233.toInt(), replaceAlpha(0x00112233, 300))
+
+        val mid = lerpArgb(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 0.5f)
+        assertEquals(0xFF808080.toInt(), mid)
+    }
 }
 

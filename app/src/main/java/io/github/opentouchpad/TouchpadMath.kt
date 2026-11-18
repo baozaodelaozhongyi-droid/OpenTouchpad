@@ -745,6 +745,12 @@ internal data class TouchpadPalette(
     val padBg: Int,
     val padStroke: Int,
     val ripple: Int,
+    val handleBg: Int = buttonBg,
+    val handleStroke: Int = buttonStroke,
+    val handleText: Int = buttonText,
+    val padTint: Int = buttonBg,
+    val buttonTint: Int = buttonBg,
+    val handleTint: Int = handleBg,
 )
 
 internal fun colorLuminance(color: Int): Float {
@@ -956,4 +962,70 @@ internal fun calculateCropOffset(
     val clampedFocus = (focusPercent.coerceIn(0, 100)) / 100f
     return (containerSize - scaledImageSize) * clampedFocus
 }
+
+/**
+ * 根据面板不透明度百分比计算 Apple 液态玻璃混合系数（0 = 纯 Material You，1 = 纯液态玻璃）。
+ * - 80%–100%（偏实心）：纯 Material You 材质（0f）
+ * - 20%–60%（半透明/高透光）：纯 Apple 液态玻璃材质（1f）
+ * - 60%–80%：Smoothstep 三次 Hermite 平滑过渡
+ */
+internal fun computeLiquidGlassFactor(opacityPercent: Int): Float {
+    val clamped = opacityPercent.coerceIn(20, 100)
+    if (clamped >= 80) return 0f
+    if (clamped <= 60) return 1f
+    val t = (80f - clamped) / 20f
+    return t * t * (3f - 2f * t)
+}
+
+/**
+ * 计算外轮廓高光描边的主 Alpha 值（0..255）。
+ * 在 Material You 模式下随不透明度柔和缩放；在液态玻璃模式下，即使主体高度透明，
+ * 边缘的菲涅尔镜面高光仍保持在 165..225 之间以勾勒清晰的玻璃轮廓。
+ */
+internal fun computeGlassRimAlpha(opacityPercent: Int, glassFactor: Float): Int {
+    val clamped = opacityPercent.coerceIn(20, 100)
+    val gf = glassFactor.coerceIn(0f, 1f)
+    val materialRim = 72f * (clamped / 100f)
+    val glassRim = 165f + ((clamped - 20) / 80f) * 60f
+    return (materialRim + (glassRim - materialRim) * gf).roundToInt().coerceIn(0, 255)
+}
+
+/** 按压 3D 倾斜时的液态玻璃高光流动偏移与亮度增益。 */
+internal data class SpecularShift(val shiftXRatio: Float, val shiftYRatio: Float, val boost: Float)
+
+internal fun computeSpecularShift(normX: Float, normY: Float, maxRatio: Float = 0.28f): SpecularShift {
+    val cx = normX.coerceIn(-1f, 1f)
+    val cy = normY.coerceIn(-1f, 1f)
+    val shiftX = if (cx == 0f) 0f else -cx * maxRatio
+    val shiftY = if (cy == 0f) 0f else -cy * maxRatio
+    val boost = (kotlin.math.hypot(cx, cy).coerceIn(0f, 1.4f) / 1.4f) * 0.25f
+    return SpecularShift(shiftXRatio = shiftX, shiftYRatio = shiftY, boost = boost)
+}
+
+/** 替换 ARGB 颜色的 Alpha 通道（纯位运算，兼容本地 JVM 单元测试）。 */
+internal fun replaceAlpha(color: Int, alpha: Int): Int {
+    val a = alpha.coerceIn(0, 255)
+    return (color and 0x00FFFFFF) or (a shl 24)
+}
+
+/** 在两个 ARGB 颜色之间进行四通道线性插值（纯位运算，兼容本地 JVM 单元测试）。 */
+internal fun lerpArgb(colorA: Int, colorB: Int, fraction: Float): Int {
+    val f = fraction.coerceIn(0f, 1f)
+    val aA = (colorA ushr 24) and 0xFF
+    val rA = (colorA ushr 16) and 0xFF
+    val gA = (colorA ushr 8) and 0xFF
+    val bA = colorA and 0xFF
+
+    val aB = (colorB ushr 24) and 0xFF
+    val rB = (colorB ushr 16) and 0xFF
+    val gB = (colorB ushr 8) and 0xFF
+    val bB = colorB and 0xFF
+
+    val a = (aA + (aB - aA) * f).roundToInt().coerceIn(0, 255)
+    val r = (rA + (rB - rA) * f).roundToInt().coerceIn(0, 255)
+    val g = (gA + (gB - gA) * f).roundToInt().coerceIn(0, 255)
+    val b = (bA + (bB - bA) * f).roundToInt().coerceIn(0, 255)
+    return (a shl 24) or (r shl 16) or (g shl 8) or b
+}
+
 

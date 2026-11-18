@@ -1,5 +1,6 @@
 package io.github.opentouchpad
 
+import android.annotation.TargetApi
 import android.app.WallpaperManager
 import android.content.Context
 import android.os.Build
@@ -275,3 +276,153 @@ internal fun resolveWarmSettingsTheme(
         dangerColor = danger,
     )
 }
+
+/**
+ * 解析触控板双模态默认材质调色板：
+ * - 当 [customColor] 为 0（默认）或 [COLOR_DYNAMIC] 时：
+ *   - Android 12+ (API 31+) 默认开启系统壁纸 Monet 动态取色（区分触控板底面、常规按键与移动/缩放把手三级容器色阶）；
+ *   - Android 8–11 在开启 [dynamicColor] 或 [COLOR_DYNAMIC] 时从壁纸提取动态色，否则回退到暖色系 M3 三级容器色板。
+ * - 当用户手动指定 [customColor] 时，保留其主色调并衍生温和的把手对比色与玻璃折射染色。
+ */
+internal fun resolveTouchpadMaterialPalette(
+    context: Context,
+    customColor: Int,
+    isDark: Boolean,
+    uiAccentColor: Int = 0,
+    dynamicColor: Boolean = false,
+): TouchpadPalette {
+    if (customColor == 0 || customColor == COLOR_DYNAMIC) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching { return resolveMonetTouchpadPalette(context, isDark) }
+        }
+        if (customColor == COLOR_DYNAMIC || dynamicColor) {
+            val dyn = resolveSettingsTheme(context, isDark, isDynamic = true, customAccentColor = uiAccentColor)
+            val handleBg = lerpArgb(dyn.trackStrongColor, dyn.accentColor, 0.28f)
+            return TouchpadPalette(
+                buttonBg = dyn.trackStrongColor,
+                buttonStroke = dyn.borderColor,
+                buttonText = dyn.textColor,
+                padBg = dyn.surfaceColor,
+                padStroke = dyn.borderColor,
+                ripple = dyn.rippleColor,
+                handleBg = handleBg,
+                handleStroke = replaceAlpha(dyn.accentColor, if (isDark) 0x59 else 0x50),
+                handleText = dyn.textColor,
+                padTint = dyn.accentColor,
+                buttonTint = dyn.accentColor,
+                handleTint = dyn.accentColor,
+            )
+        }
+        return resolveWarmFallbackTouchpadPalette(isDark)
+    }
+
+    val base = resolveTouchpadPalette(customColor, isDark)
+    val accentTint = resolveUiAccentColor(uiAccentColor, isDark)
+    val handleBg = lerpArgb(base.buttonBg, accentTint, 0.24f)
+    return base.copy(
+        handleBg = handleBg,
+        handleStroke = replaceAlpha(accentTint, if (isDark) 0x55 else 0x4D),
+        handleText = base.buttonText,
+        padTint = lerpArgb(base.padBg, accentTint, 0.35f),
+        buttonTint = lerpArgb(base.buttonBg, accentTint, 0.35f),
+        handleTint = accentTint,
+    )
+}
+
+@TargetApi(Build.VERSION_CODES.S)
+private fun resolveMonetTouchpadPalette(context: Context, isDark: Boolean): TouchpadPalette {
+    fun sysColor(resId: Int): Int = context.getColor(resId)
+
+    return if (isDark) {
+        val n1_800 = sysColor(android.R.color.system_neutral1_800)
+        val n1_100 = sysColor(android.R.color.system_neutral1_100)
+        val n2_500 = sysColor(android.R.color.system_neutral2_500)
+
+        val a1_800 = sysColor(android.R.color.system_accent1_800)
+        val a1_700 = sysColor(android.R.color.system_accent1_700)
+        val a1_400 = sysColor(android.R.color.system_accent1_400)
+        val a1_200 = sysColor(android.R.color.system_accent1_200)
+        val a1_100 = sysColor(android.R.color.system_accent1_100)
+
+        val a2_800 = sysColor(android.R.color.system_accent2_800)
+        val a2_500 = sysColor(android.R.color.system_accent2_500)
+        val a2_200 = sysColor(android.R.color.system_accent2_200)
+        val a2_100 = sysColor(android.R.color.system_accent2_100)
+
+        TouchpadPalette(
+            buttonBg = a2_800,
+            buttonStroke = replaceAlpha(a2_500, 0x4D),
+            buttonText = a2_100,
+            padBg = lerpArgb(n1_800, a1_800, 0.16f),
+            padStroke = replaceAlpha(n2_500, 0x40),
+            ripple = replaceAlpha(a1_100, 0x38),
+            handleBg = lerpArgb(a2_800, a1_700, 0.45f),
+            handleStroke = replaceAlpha(a1_400, 0x59),
+            handleText = a1_100,
+            padTint = a1_200,
+            buttonTint = a2_200,
+            handleTint = a1_200,
+        )
+    } else {
+        val n1_100 = sysColor(android.R.color.system_neutral1_100)
+        val n2_400 = sysColor(android.R.color.system_neutral2_400)
+
+        val a1_900 = sysColor(android.R.color.system_accent1_900)
+        val a1_800 = sysColor(android.R.color.system_accent1_800)
+        val a1_500 = sysColor(android.R.color.system_accent1_500)
+        val a1_200 = sysColor(android.R.color.system_accent1_200)
+        val a1_100 = sysColor(android.R.color.system_accent1_100)
+
+        val a2_900 = sysColor(android.R.color.system_accent2_900)
+        val a2_400 = sysColor(android.R.color.system_accent2_400)
+        val a2_100 = sysColor(android.R.color.system_accent2_100)
+
+        TouchpadPalette(
+            buttonBg = a2_100,
+            buttonStroke = replaceAlpha(a2_400, 0x45),
+            buttonText = a2_900,
+            padBg = lerpArgb(n1_100, a1_100, 0.14f),
+            padStroke = replaceAlpha(n2_400, 0x40),
+            ripple = replaceAlpha(a1_800, 0x26),
+            handleBg = lerpArgb(a2_100, a1_200, 0.50f),
+            handleStroke = replaceAlpha(a1_500, 0x50),
+            handleText = a1_900,
+            padTint = a1_200,
+            buttonTint = a2_100,
+            handleTint = a1_100,
+        )
+    }
+}
+
+private fun resolveWarmFallbackTouchpadPalette(isDark: Boolean): TouchpadPalette = if (isDark) {
+    TouchpadPalette(
+        buttonBg = 0xFF3A3936.toInt(),
+        buttonStroke = 0x3DFAF9F5,
+        buttonText = 0xFFFAF9F5.toInt(),
+        padBg = 0xFF2A2A28.toInt(),
+        padStroke = 0x33FAF9F5,
+        ripple = 0x33FAF9F5,
+        handleBg = lerpArgb(0xFF3A3936.toInt(), 0xFF5A3A2E.toInt(), 0.55f),
+        handleStroke = 0x4DD97757,
+        handleText = 0xFFF6D9CC.toInt(),
+        padTint = 0xFFD97757.toInt(),
+        buttonTint = 0xFFD4A27F.toInt(),
+        handleTint = 0xFFD97757.toInt(),
+    )
+} else {
+    TouchpadPalette(
+        buttonBg = 0xFFF5F4ED.toInt(),
+        buttonStroke = 0x40141413,
+        buttonText = 0xFF141413.toInt(),
+        padBg = 0xFFE8E6DC.toInt(),
+        padStroke = 0x40141413,
+        ripple = 0x26141413,
+        handleBg = lerpArgb(0xFFF5F4ED.toInt(), 0xFFF6E3DA.toInt(), 0.65f),
+        handleStroke = 0x4DC96442,
+        handleText = 0xFF8A3E24.toInt(),
+        padTint = 0xFFD4A27F.toInt(),
+        buttonTint = 0xFFC96442.toInt(),
+        handleTint = 0xFFC96442.toInt(),
+    )
+}
+

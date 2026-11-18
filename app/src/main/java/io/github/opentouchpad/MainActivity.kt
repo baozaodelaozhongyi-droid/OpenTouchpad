@@ -2502,6 +2502,11 @@ class MainActivity : Activity() {
     private fun switchThemeWithReveal(mode: ThemeMode, originView: View) {
         val targetDark = mode.resolvesToDark(systemIsDark())
         prefs.themeMode = mode
+        TouchpadService.instance?.let { svc ->
+            svc.updatePanelAppearance()
+            svc.updateBallAppearance()
+            svc.updateTouchRingAppearance()
+        }
 
         // 无论动效如何，立即更新两个层级上的分段选择器高亮状态
         baseScroller.findViewWithTag<LinearLayout>(THEME_SELECTOR_TRACK_TAG)?.let {

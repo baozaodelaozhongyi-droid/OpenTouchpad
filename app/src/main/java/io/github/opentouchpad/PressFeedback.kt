@@ -1,5 +1,6 @@
 package io.github.opentouchpad
 
+import android.graphics.drawable.RippleDrawable
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -23,6 +24,17 @@ object PressFeedback {
     val overshoot = OvershootInterpolator(1.25f)
 
     private var padDownTimeMs: Long = 0L
+
+    private fun updateBubbleTilt(view: View, normX: Float, normY: Float) {
+        when (val bg = view.background) {
+            is BubbleDrawable -> bg.setInteractiveTilt(normX, normY)
+            is RippleDrawable -> {
+                for (i in 0 until bg.numberOfLayers) {
+                    (bg.getDrawable(i) as? BubbleDrawable)?.setInteractiveTilt(normX, normY)
+                }
+            }
+        }
+    }
 
     /**
      * 为按钮等普通 View 挂载 3D 倾斜下沉按压反馈。
@@ -73,6 +85,7 @@ object PressFeedback {
         val sinkPx = (sinkDp * density).roundToInt().toFloat()
         val clampedNormX = normX.coerceIn(-1f, 1f)
         val clampedNormY = normY.coerceIn(-1f, 1f)
+        updateBubbleTilt(v, clampedNormX, clampedNormY)
         v.animate().cancel()
         v.animate()
             .rotationX(-clampedNormY * maxTiltX)
@@ -104,6 +117,7 @@ object PressFeedback {
         if (inside) {
             val clampedNormX = normX.coerceIn(-1f, 1f)
             val clampedNormY = normY.coerceIn(-1f, 1f)
+            updateBubbleTilt(v, clampedNormX, clampedNormY)
             v.animate()
                 .rotationX(-clampedNormY * maxTiltX)
                 .rotationY(clampedNormX * maxTiltY)
@@ -114,6 +128,7 @@ object PressFeedback {
                 .start()
         } else {
             // 手指拖移出按钮较远区域，平滑复原
+            updateBubbleTilt(v, 0f, 0f)
             v.animate().cancel()
             v.animate()
                 .rotationX(0f)
@@ -128,6 +143,7 @@ object PressFeedback {
     }
 
     fun applyButtonRelease(v: View) {
+        updateBubbleTilt(v, 0f, 0f)
         v.animate().cancel()
         v.animate()
             .rotationX(0f)

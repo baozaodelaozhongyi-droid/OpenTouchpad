@@ -647,7 +647,10 @@ class TouchpadService : AccessibilityService() {
         return orient == Configuration.ORIENTATION_LANDSCAPE
     }
 
-    private fun isDarkTheme(): Boolean = true
+    private fun isDarkTheme(): Boolean {
+        val sysDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        return prefs.themeMode.resolvesToDark(sysDark)
+    }
 
     private fun buildCursor() {
         cursorView?.let { runCatching { wm.removeView(it) } }
@@ -907,8 +910,10 @@ class TouchpadService : AccessibilityService() {
             cameraDistance = 1400f * resources.displayMetrics.density
             isHapticFeedbackEnabled = false
             cornerRadiusPx = dp(22).toFloat()
+            isDarkTheme = dark
             baseColor = p.padBg
             strokeColor = p.padStroke
+            glassTintColor = p.padTint
             opacityPercent = prefs.opacityPercent
             bgFocusXPercent = prefs.touchpadBgFocusXPercent
             bgFocusYPercent = prefs.touchpadBgFocusYPercent
@@ -987,14 +992,18 @@ class TouchpadService : AccessibilityService() {
             width, height, resources.displayMetrics.density, spacingPx(), buttonCount
         )
         padControlRect = layout.pad
-        val p = palette(isDarkTheme())
+        val dark = isDarkTheme()
+        val p = palette(dark)
+        val buttons = prefs.buttons.take(buttonCount)
         padCornerRadius = layout.button * 0.42f
 
         padArea?.layoutParams = rectParams(layout.pad)
         (padArea as? TouchpadSurfaceView)?.apply {
             cornerRadiusPx = padCornerRadius
+            isDarkTheme = dark
             baseColor = p.padBg
             strokeColor = p.padStroke
+            glassTintColor = p.padTint
             opacityPercent = prefs.opacityPercent
             bgFocusXPercent = prefs.touchpadBgFocusXPercent
             bgFocusYPercent = prefs.touchpadBgFocusYPercent
@@ -1012,8 +1021,14 @@ class TouchpadService : AccessibilityService() {
             val rect = layout.slots.getOrNull(slot) ?: return@forEachIndexed
             view.layoutParams = rectParams(rect)
 
-            val cornerRadius = minOf(rect.w, rect.h) / 2f
-            val bg = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, cornerRadius)
+            val action = buttons.getOrNull(slot)
+            val isHandle = action == PadAction.MOVE_PANEL || action == PadAction.RESIZE_PANEL
+            val btnBg = if (isHandle) p.handleBg else p.buttonBg
+            val btnStroke = if (isHandle) p.handleStroke else p.buttonStroke
+            val btnText = if (isHandle) p.handleText else p.buttonText
+            val btnTint = if (isHandle) p.handleTint else p.buttonTint
+
+            val bg = buttonBackground(btnBg, btnStroke, p.ripple, dark, btnTint)
             bg.setBounds(0, 0, rect.w, rect.h)
             view.background = bg
 
@@ -1023,7 +1038,7 @@ class TouchpadService : AccessibilityService() {
             val padX = ((rect.w - iconPx) / 2).coerceAtLeast(0)
             val padY = ((rect.h - iconPx) / 2).coerceAtLeast(0)
             view.setPadding(padX, padY, padX, padY)
-            (view as? ImageView)?.setColorFilter(p.buttonText)
+            (view as? ImageView)?.setColorFilter(btnText)
         }
         root.requestLayout()
     }
@@ -1134,20 +1149,14 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 外观 ─────────────────────────
 
-    private fun palette(dark: Boolean): TouchpadPalette {
-        if (prefs.touchpadColor == COLOR_DYNAMIC || (prefs.dynamicColor && prefs.touchpadColor == 0)) {
-            val dyn = resolveSettingsTheme(this, dark, isDynamic = true, customAccentColor = prefs.uiAccentColor)
-            return TouchpadPalette(
-                buttonBg = dyn.trackStrongColor,
-                buttonStroke = dyn.borderColor,
-                buttonText = dyn.textColor,
-                padBg = dyn.surfaceColor,
-                padStroke = dyn.borderColor,
-                ripple = dyn.rippleColor,
-            )
-        }
-        return resolveTouchpadPalette(prefs.touchpadColor, dark)
-    }
+    private fun palette(dark: Boolean): TouchpadPalette =
+        resolveTouchpadMaterialPalette(
+            context = this,
+            customColor = prefs.touchpadColor,
+            isDark = dark,
+            uiAccentColor = prefs.uiAccentColor,
+            dynamicColor = prefs.dynamicColor,
+        )
 
     private fun solidBackground(shape: Int, color: Int, stroke: Int, radiusPx: Float = 0f): GradientDrawable {
         val topC = lighten(color, 0.08f)
@@ -1162,8 +1171,14 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
-    /** 饱满气泡按钮背景：拉伸时呈柔和外凸张力微弧，正圆时为完美圆形，带按压水波纹反馈。 */
-    private fun buttonBackground(color: Int, stroke: Int, ripple: Int, cornerRadiusPx: Float = 0f): Drawable {
+    /** 饱满气泡按钮背景：高不透明度呈 Material You，中低不透明度呈 Apple 液态玻璃，带按压水波纹反馈。 */
+    private fun buttonBackground(
+        color: Int,
+        stroke: Int,
+        ripple: Int,
+        dark: Boolean = isDarkTheme(),
+        glassTint: Int = color,
+    ): Drawable {
         val mask = BubbleDrawable(
             baseColor = Color.WHITE,
             strokeColor = Color.TRANSPARENT,
@@ -1177,6 +1192,9 @@ class TouchpadService : AccessibilityService() {
             strokeWidthPx = dp(1).toFloat(),
             opacityPercent = prefs.opacityPercent,
             isMask = false,
+            dark = dark,
+            glassTint = glassTint,
+            density = resources.displayMetrics.density,
         )
         return RippleDrawable(ColorStateList.valueOf(ripple), content, mask)
     }
@@ -1186,9 +1204,9 @@ class TouchpadService : AccessibilityService() {
             val p = palette(dark)
             cameraDistance = 1400f * resources.displayMetrics.density
             setImageResource(iconRes)
-            setColorFilter(p.buttonText)
+            setColorFilter(p.handleText)
             scaleType = ImageView.ScaleType.FIT_CENTER
-            background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, dp(14).toFloat())
+            background = buttonBackground(p.handleBg, p.handleStroke, p.ripple, dark, p.handleTint)
             isClickable = true
             isHapticFeedbackEnabled = false
             setOnTouchListener { v, e ->
@@ -1208,7 +1226,7 @@ class TouchpadService : AccessibilityService() {
         setImageResource(action.iconRes)
         setColorFilter(p.buttonText)
         scaleType = ImageView.ScaleType.FIT_CENTER
-        background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, dp(14).toFloat())
+        background = buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, dark, p.buttonTint)
         isClickable = true
         isHapticFeedbackEnabled = false
         contentDescription = getString(action.labelRes)
@@ -2342,13 +2360,12 @@ class TouchpadService : AccessibilityService() {
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
             if (prefs.buttons.getOrNull(slot) != PadAction.DRAG_LOCK) return@forEachIndexed
             val iv = view as? ImageView ?: return@forEachIndexed
-            val radius = minOf(view.width, view.height).takeIf { it > 0 }?.let { it / 2f } ?: dp(14).toFloat()
             val bg = if (dragging) {
                 iv.setColorFilter(accentText)
-                buttonBackground(accent, accentSoftStrong, p.ripple, radius)
+                buttonBackground(accent, accentSoftStrong, p.ripple, dark, accent)
             } else {
                 iv.setColorFilter(p.buttonText)
-                buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, radius)
+                buttonBackground(p.buttonBg, p.buttonStroke, p.ripple, dark, p.buttonTint)
             }
             if (view.width > 0 && view.height > 0) {
                 bg.setBounds(0, 0, view.width, view.height)
