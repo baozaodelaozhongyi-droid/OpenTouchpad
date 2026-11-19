@@ -1113,15 +1113,33 @@ class TouchpadMathTest {
     }
 
     @Test
-    fun glassRimAlphaKeepsEdgeVisibleAtLowOpacityInGlassMode() {
+    fun glassRimAlphaKeepsEdgeSoftAndVisibleAtLowOpacityInGlassMode() {
         val lowOpacityGlassFactor = computeLiquidGlassFactor(25)
         val lowOpacityRim = computeGlassRimAlpha(25, lowOpacityGlassFactor)
-        assertTrue("Expected visible glass rim at 25% opacity, got $lowOpacityRim", lowOpacityRim in 165..225)
+        assertTrue("Expected soft visible glass rim at 25% opacity, got $lowOpacityRim", lowOpacityRim in 70..110)
+
+        val midOpacityGlassFactor = computeLiquidGlassFactor(60)
+        val midOpacityRim = computeGlassRimAlpha(60, midOpacityGlassFactor)
+        assertTrue("Expected glass rim to gently rise with opacity", midOpacityRim > lowOpacityRim)
+        assertTrue("Expected glass rim at 60% to stay restrained, got $midOpacityRim", midOpacityRim <= 125)
 
         val highOpacityMaterialFactor = computeLiquidGlassFactor(90)
         val highOpacityRim = computeGlassRimAlpha(90, highOpacityMaterialFactor)
         assertTrue("Expected subtle Material You rim at 90% opacity, got $highOpacityRim", highOpacityRim in 40..90)
         assertTrue(lowOpacityRim > highOpacityRim)
+    }
+
+    @Test
+    fun glassHighlightScaleSoftensLowOpacityReflections() {
+        assertEquals(0.45f, computeGlassHighlightScale(20), 0.001f)
+        assertEquals(0.45f, computeGlassHighlightScale(0), 0.001f)
+        assertEquals(1.0f, computeGlassHighlightScale(100), 0.001f)
+        assertEquals(1.0f, computeGlassHighlightScale(120), 0.001f)
+
+        val at25 = computeGlassHighlightScale(25)
+        val at60 = computeGlassHighlightScale(60)
+        assertTrue("Expected low opacity highlight scale to soften reflections, got $at25", at25 in 0.45f..0.55f)
+        assertTrue(at60 > at25)
     }
 
     @Test

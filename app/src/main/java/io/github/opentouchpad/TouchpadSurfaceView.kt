@@ -163,6 +163,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
 
         val clampedOpacity = opacityPercent.coerceIn(20, 100)
         val glassFactor = computeLiquidGlassFactor(clampedOpacity)
+        val highlightScale = computeGlassHighlightScale(clampedOpacity)
         val effectiveTiltX = (tiltNormX * tiltIntensity).coerceIn(-1f, 1f)
         val effectiveTiltY = (tiltNormY * tiltIntensity).coerceIn(-1f, 1f)
         val shift = computeSpecularShift(effectiveTiltX, effectiveTiltY)
@@ -171,8 +172,9 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         // 1. 底色渲染：优先使用用户自定义背景图片（Center-Crop 填充），未设置时渲染 Material You / 液态玻璃双模态表面
         val fillAlpha = (255 * clampedOpacity / 100).coerceIn(0, 255)
         val bgBmp = customBackgroundBitmap
-        if (bgBmp != null && !bgBmp.isRecycled) {
-            val srcW = bgBmp.width.toFloat()
+        val hasCustomBg = bgBmp != null && !bgBmp.isRecycled
+        if (hasCustomBg) {
+            val srcW = bgBmp!!.width.toFloat()
             val srcH = bgBmp.height.toFloat()
             if (srcW > 0f && srcH > 0f) {
                 val scale = maxOf(w / srcW, h / srcH)
@@ -203,18 +205,18 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         } else {
             // Apple 液态玻璃模式（20%–60%，及 60%–80% 平滑过渡）：135° 斜向通透焦散基底
             val topRgb = lerpArgb(
-                lerpArgb(baseColor, tint, 0.28f * glassFactor),
+                lerpArgb(baseColor, tint, 0.16f * glassFactor),
                 Color.WHITE,
-                (if (isDarkTheme) 0.22f else 0.52f) * glassFactor,
+                (if (isDarkTheme) 0.10f else 0.34f) * glassFactor,
             )
-            val topAlpha = (fillAlpha * (1f + (0.14f + shift.boost * 0.5f) * glassFactor))
+            val topAlpha = (fillAlpha * (1f + (0.08f + shift.boost * 0.35f) * glassFactor))
                 .roundToInt().coerceIn(0, 255)
 
-            val midRgb = lerpArgb(baseColor, tint, 0.12f * glassFactor)
-            val midAlpha = (fillAlpha * (1f - 0.18f * glassFactor)).roundToInt().coerceIn(0, 255)
+            val midRgb = lerpArgb(baseColor, tint, 0.08f * glassFactor)
+            val midAlpha = (fillAlpha * (1f - 0.14f * glassFactor)).roundToInt().coerceIn(0, 255)
 
-            val botRgb = lerpArgb(baseColor, tint, 0.35f * glassFactor)
-            val botAlpha = (fillAlpha * (1f + 0.06f * glassFactor)).roundToInt().coerceIn(0, 255)
+            val botRgb = lerpArgb(baseColor, tint, 0.20f * glassFactor)
+            val botAlpha = (fillAlpha * (1f + 0.02f * glassFactor)).roundToInt().coerceIn(0, 255)
 
             surfacePaint.color = Color.WHITE
             surfacePaint.shader = LinearGradient(
@@ -234,28 +236,29 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             surfacePaint.shader = null
         }
 
-        // 2. 液态内部焦散光斑（玻璃模式）或极轻哑光顶边（Material You 模式）
+        // 2. 液态内部轻焦散光斑（玻璃模式）或极轻哑光顶边（Material You 模式）
         if (glassFactor > 0.02f) {
             val cx = w * (0.28f + shift.shiftXRatio)
             val cy = h * (0.24f + shift.shiftYRatio)
-            val causticRadius = maxOf(w, h) * 0.72f
-            val causticRgb = lerpArgb(Color.WHITE, tint, if (isDarkTheme) 0.30f else 0.15f)
-            val causticAlpha = ((if (isDarkTheme) 56f else 82f) * glassFactor * (1f + shift.boost * 1.4f))
+            val causticRadius = maxOf(w, h) * 0.68f
+            val causticRgb = lerpArgb(Color.WHITE, tint, if (isDarkTheme) 0.25f else 0.15f)
+            val customBgDamp = if (hasCustomBg) 0.45f else 1f
+            val causticAlpha = ((if (isDarkTheme) 26f else 44f) * glassFactor * highlightScale * customBgDamp * (1f + shift.boost * 1.5f))
                 .roundToInt().coerceIn(0, 255)
             lightingPaint.color = Color.WHITE
             lightingPaint.shader = RadialGradient(
                 cx, cy, causticRadius.coerceAtLeast(1f),
                 intArrayOf(
                     replaceAlpha(causticRgb, causticAlpha),
-                    replaceAlpha(causticRgb, (causticAlpha * 0.35f).roundToInt()),
+                    replaceAlpha(causticRgb, (causticAlpha * 0.30f).roundToInt()),
                     replaceAlpha(causticRgb, 0),
                 ),
-                floatArrayOf(0f, 0.45f, 1f),
+                floatArrayOf(0f, 0.40f, 1f),
                 Shader.TileMode.CLAMP,
             )
             canvas.drawRect(boundsRect, lightingPaint)
             lightingPaint.shader = null
-        } else if (bgBmp == null || bgBmp.isRecycled) {
+        } else if (!hasCustomBg) {
             val restTopAlpha = (14 * clampedOpacity / 100).coerceIn(0, 255)
             val restBottomAlpha = (10 * clampedOpacity / 100).coerceIn(0, 255)
             lightingPaint.shader = LinearGradient(
@@ -301,18 +304,19 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             lightingPaint.shader = null
         }
 
-        // 4. 液态表面张力内高光弧（仅在液态玻璃过渡或激活区绘制）
-        val bevelWidth = 1.1f * density
-        val bevelInset = 1.1f * density + bevelWidth * 0.3f
+        // 4. 液态表面张力轻内高光弧（仅在液态玻璃过渡或激活区绘制，柔和不抢眼）
+        val strokeWidth = (1.0f - 0.12f * glassFactor) * density
+        val bevelWidth = 0.75f * density
+        val bevelInset = strokeWidth + bevelWidth * 0.5f
         if (glassFactor > 0.02f && w > bevelInset * 2.5f && h > bevelInset * 2.5f) {
             bevelPaint.strokeWidth = bevelWidth
-            val topHighlightAlpha = ((if (isDarkTheme) 115f else 155f) * glassFactor * (1f + shift.boost))
+            val topHighlightAlpha = ((if (isDarkTheme) 42f else 68f) * glassFactor * highlightScale * (1f + shift.boost * 1.15f))
                 .roundToInt().coerceIn(0, 255)
             val bottomBounceColor = if (isDarkTheme) {
-                replaceAlpha(tint, (44f * glassFactor).roundToInt())
+                replaceAlpha(tint, (16f * glassFactor * highlightScale).roundToInt())
             } else {
                 val shadowRgb = lerpArgb(0xFF141413.toInt(), tint, 0.35f)
-                replaceAlpha(shadowRgb, (38f * glassFactor).roundToInt())
+                replaceAlpha(shadowRgb, (20f * glassFactor * highlightScale).roundToInt())
             }
             bevelPaint.color = Color.WHITE
             bevelPaint.shader = LinearGradient(
@@ -326,7 +330,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
                     0x00000000,
                     bottomBounceColor,
                 ),
-                floatArrayOf(0f, 0.28f, 0.72f, 1f),
+                floatArrayOf(0f, 0.20f, 0.78f, 1f),
                 Shader.TileMode.CLAMP,
             )
             bevelRect.set(bevelInset, bevelInset, w - bevelInset, h - bevelInset)
@@ -337,8 +341,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
 
         canvas.restore()
 
-        // 5. 外轮廓描边（Material You 微描边 ⇄ 135° 菲涅尔不对称双高光折光描边）
-        val strokeWidth = (1.0f + 0.25f * glassFactor) * density
+        // 5. 外轮廓描边（Material You 微描边 ⇄ 轻盈 135° 菲涅尔折光细边）
         strokePaint.strokeWidth = strokeWidth
         if (glassFactor <= 0.01f) {
             strokePaint.shader = null
@@ -348,19 +351,22 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             val rimAlphaBase = computeGlassRimAlpha(clampedOpacity, glassFactor)
             val primaryRimAlpha = (rimAlphaBase * (1f + shift.boost)).roundToInt().coerceIn(0, 255)
 
-            val stop0Color = replaceAlpha(lerpArgb(strokeColor, Color.WHITE, glassFactor), primaryRimAlpha)
+            val stop0Color = replaceAlpha(
+                lerpArgb(strokeColor, Color.WHITE, 0.82f * glassFactor),
+                primaryRimAlpha,
+            )
             val stop1Color = replaceAlpha(
-                lerpArgb(strokeColor, Color.WHITE, 0.60f * glassFactor),
-                (primaryRimAlpha * (0.28f + 0.35f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
+                lerpArgb(strokeColor, Color.WHITE, (if (isDarkTheme) 0.45f else 0.25f) * glassFactor),
+                (primaryRimAlpha * (0.18f + 0.82f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
             )
             val stop2Color = replaceAlpha(
-                lerpArgb(strokeColor, tint, 0.50f * glassFactor),
-                (primaryRimAlpha * (0.16f + 0.45f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
+                lerpArgb(strokeColor, tint, 0.35f * glassFactor),
+                (primaryRimAlpha * (0.10f + 0.90f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
             )
-            val stop3Rgb = lerpArgb(strokeColor, lerpArgb(tint, Color.WHITE, 0.45f), glassFactor)
+            val stop3Rgb = lerpArgb(strokeColor, lerpArgb(tint, Color.WHITE, 0.50f), 0.78f * glassFactor)
             val stop3Color = replaceAlpha(
                 stop3Rgb,
-                (primaryRimAlpha * (0.68f + 0.15f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
+                (primaryRimAlpha * (0.38f + 0.62f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
             )
 
             strokePaint.color = Color.WHITE
@@ -370,7 +376,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
                 w * (1f + shift.shiftXRatio * 0.4f),
                 h * (1f + shift.shiftYRatio * 0.4f),
                 intArrayOf(stop0Color, stop1Color, stop2Color, stop3Color),
-                floatArrayOf(0f, 0.42f, 0.62f, 1f),
+                floatArrayOf(0f, 0.36f, 0.68f, 1f),
                 Shader.TileMode.CLAMP,
             )
         }

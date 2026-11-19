@@ -979,15 +979,24 @@ internal fun computeLiquidGlassFactor(opacityPercent: Int): Float {
 
 /**
  * 计算外轮廓高光描边的主 Alpha 值（0..255）。
- * 在 Material You 模式下随不透明度柔和缩放；在液态玻璃模式下，即使主体高度透明，
- * 边缘的菲涅尔镜面高光仍保持在 165..225 之间以勾勒清晰的玻璃轮廓。
+ * 在 Material You 模式下随不透明度柔和缩放；在液态玻璃模式下，
+ * 边缘的菲涅尔镜面反光保持克制通透（76..124 之间），在低不透明度下仍清晰勾勒轮廓且不刺眼。
  */
 internal fun computeGlassRimAlpha(opacityPercent: Int, glassFactor: Float): Int {
     val clamped = opacityPercent.coerceIn(20, 100)
     val gf = glassFactor.coerceIn(0f, 1f)
     val materialRim = 72f * (clamped / 100f)
-    val glassRim = 165f + ((clamped - 20) / 80f) * 60f
+    val glassRim = 76f + ((clamped - 20) / 80f) * 48f
     return (materialRim + (glassRim - materialRim) * gf).roundToInt().coerceIn(0, 255)
+}
+
+/**
+ * 计算液态玻璃内部高光（焦散光斑、表面张力内弧）随不透明度的缩放系数（0.45f..1.0f）。
+ * 在低不透明度下进一步收敛高光与反光强度，消除发白雾感与厚重亮边。
+ */
+internal fun computeGlassHighlightScale(opacityPercent: Int): Float {
+    val clamped = opacityPercent.coerceIn(20, 100)
+    return 0.45f + ((clamped - 20) / 80f) * 0.55f
 }
 
 /** 按压 3D 倾斜时的液态玻璃高光流动偏移与亮度增益。 */

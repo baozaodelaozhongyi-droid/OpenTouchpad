@@ -155,7 +155,7 @@ class BubbleDrawable(
     }
 
     private fun effectiveStrokeWidthPx(): Float =
-        if (strokeWidthPx > 0f) strokeWidthPx * (1f + 0.25f * glassFactor) else 0f
+        if (strokeWidthPx > 0f) strokeWidthPx * (1f - 0.12f * glassFactor) else 0f
 
     private fun rebuildShaders() {
         shadersDirty = false
@@ -174,6 +174,7 @@ class BubbleDrawable(
 
         val alphaScale = alphaMod / 255f
         val baseAlpha = (255f * (clampedOpacity / 100f) * alphaScale).roundToInt().coerceIn(0, 255)
+        val highlightScale = computeGlassHighlightScale(clampedOpacity)
         val shift = computeSpecularShift(tiltNormX, tiltNormY)
 
         if (w <= 0f || h <= 0f) {
@@ -182,7 +183,7 @@ class BubbleDrawable(
             return
         }
 
-        // 1. 基底图层（Material You 容器表面 ⇄ 液态玻璃斜向焦散基底）
+        // 1. 基底图层（Material You 容器表面 ⇄ 液态玻璃通透斜向基底）
         if (glassFactor <= 0.01f) {
             val topC = replaceAlpha(lightenColor(baseColor, 0.05f), baseAlpha)
             val botC = replaceAlpha(baseColor, baseAlpha)
@@ -196,18 +197,18 @@ class BubbleDrawable(
             bevelPaint.shader = null
         } else {
             val topRgb = lerpArgb(
-                lerpArgb(baseColor, glassTint, 0.28f * glassFactor),
+                lerpArgb(baseColor, glassTint, 0.16f * glassFactor),
                 Color.WHITE,
-                (if (dark) 0.22f else 0.52f) * glassFactor,
+                (if (dark) 0.10f else 0.34f) * glassFactor,
             )
-            val topAlpha = (baseAlpha * (1f + (0.14f + shift.boost * 0.5f) * glassFactor))
+            val topAlpha = (baseAlpha * (1f + (0.08f + shift.boost * 0.35f) * glassFactor))
                 .roundToInt().coerceIn(0, 255)
 
-            val midRgb = lerpArgb(baseColor, glassTint, 0.12f * glassFactor)
-            val midAlpha = (baseAlpha * (1f - 0.18f * glassFactor)).roundToInt().coerceIn(0, 255)
+            val midRgb = lerpArgb(baseColor, glassTint, 0.08f * glassFactor)
+            val midAlpha = (baseAlpha * (1f - 0.14f * glassFactor)).roundToInt().coerceIn(0, 255)
 
-            val botRgb = lerpArgb(baseColor, glassTint, 0.35f * glassFactor)
-            val botAlpha = (baseAlpha * (1f + 0.06f * glassFactor)).roundToInt().coerceIn(0, 255)
+            val botRgb = lerpArgb(baseColor, glassTint, 0.20f * glassFactor)
+            val botAlpha = (baseAlpha * (1f + 0.02f * glassFactor)).roundToInt().coerceIn(0, 255)
 
             fillPaint.color = Color.WHITE
             fillPaint.shader = LinearGradient(
@@ -224,13 +225,13 @@ class BubbleDrawable(
                 Shader.TileMode.CLAMP,
             )
 
-            // 2. 液态内部焦散光斑图层
+            // 2. 液态内部轻焦散光斑图层
             if (glassFactor > 0.02f) {
                 val cx = l + w * (0.28f + shift.shiftXRatio)
                 val cy = t + h * (0.24f + shift.shiftYRatio)
-                val causticRadius = maxOf(w, h) * 0.72f
-                val causticRgb = lerpArgb(Color.WHITE, glassTint, if (dark) 0.30f else 0.15f)
-                val causticAlpha = ((if (dark) 56f else 82f) * glassFactor * (1f + shift.boost * 1.4f) * alphaScale)
+                val causticRadius = maxOf(w, h) * 0.68f
+                val causticRgb = lerpArgb(Color.WHITE, glassTint, if (dark) 0.25f else 0.15f)
+                val causticAlpha = ((if (dark) 26f else 44f) * glassFactor * highlightScale * (1f + shift.boost * 1.5f) * alphaScale)
                     .roundToInt().coerceIn(0, 255)
 
                 causticPaint.color = Color.WHITE
@@ -238,23 +239,23 @@ class BubbleDrawable(
                     cx, cy, causticRadius.coerceAtLeast(1f),
                     intArrayOf(
                         replaceAlpha(causticRgb, causticAlpha),
-                        replaceAlpha(causticRgb, (causticAlpha * 0.35f).roundToInt()),
+                        replaceAlpha(causticRgb, (causticAlpha * 0.30f).roundToInt()),
                         replaceAlpha(causticRgb, 0),
                     ),
-                    floatArrayOf(0f, 0.45f, 1f),
+                    floatArrayOf(0f, 0.40f, 1f),
                     Shader.TileMode.CLAMP,
                 )
 
-                // 3. 液态表面张力内高光弧
-                val bevelWidthPx = 1.1f * maxOf(density, 1f)
+                // 3. 液态表面张力轻内高光弧（极细柔和反光，不与外描边叠成厚亮边）
+                val bevelWidthPx = 0.75f * maxOf(density, 1f)
                 bevelPaint.strokeWidth = bevelWidthPx
-                val topHighlightAlpha = ((if (dark) 115f else 155f) * glassFactor * (1f + shift.boost) * alphaScale)
+                val topHighlightAlpha = ((if (dark) 42f else 68f) * glassFactor * highlightScale * (1f + shift.boost * 1.15f) * alphaScale)
                     .roundToInt().coerceIn(0, 255)
                 val bottomBounceColor = if (dark) {
-                    replaceAlpha(glassTint, (44f * glassFactor * alphaScale).roundToInt())
+                    replaceAlpha(glassTint, (16f * glassFactor * highlightScale * alphaScale).roundToInt())
                 } else {
                     val shadowRgb = lerpArgb(0xFF141413.toInt(), glassTint, 0.35f)
-                    replaceAlpha(shadowRgb, (38f * glassFactor * alphaScale).roundToInt())
+                    replaceAlpha(shadowRgb, (20f * glassFactor * highlightScale * alphaScale).roundToInt())
                 }
 
                 bevelPaint.color = Color.WHITE
@@ -269,7 +270,7 @@ class BubbleDrawable(
                         0x00000000,
                         bottomBounceColor,
                     ),
-                    floatArrayOf(0f, 0.28f, 0.72f, 1f),
+                    floatArrayOf(0f, 0.20f, 0.78f, 1f),
                     Shader.TileMode.CLAMP,
                 )
             } else {
@@ -278,7 +279,7 @@ class BubbleDrawable(
             }
         }
 
-        // 4. 外轮廓描边图层（Material You 微描边 ⇄ 菲涅尔双高光折光描边）
+        // 4. 外轮廓描边图层（Material You 微描边 ⇄ 轻盈 135° 菲涅尔折光细边）
         val outerStrokePx = effectiveStrokeWidthPx()
         if (outerStrokePx > 0f) {
             strokePaint.strokeWidth = outerStrokePx
@@ -292,19 +293,22 @@ class BubbleDrawable(
                 val primaryRimAlpha = (rimAlphaBase * (1f + shift.boost) * alphaScale)
                     .roundToInt().coerceIn(0, 255)
 
-                val stop0Color = replaceAlpha(lerpArgb(strokeColor, Color.WHITE, glassFactor), primaryRimAlpha)
+                val stop0Color = replaceAlpha(
+                    lerpArgb(strokeColor, Color.WHITE, 0.82f * glassFactor),
+                    primaryRimAlpha,
+                )
                 val stop1Color = replaceAlpha(
-                    lerpArgb(strokeColor, Color.WHITE, 0.60f * glassFactor),
-                    (primaryRimAlpha * (0.28f + 0.35f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
+                    lerpArgb(strokeColor, Color.WHITE, (if (dark) 0.45f else 0.25f) * glassFactor),
+                    (primaryRimAlpha * (0.18f + 0.82f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
                 )
                 val stop2Color = replaceAlpha(
-                    lerpArgb(strokeColor, glassTint, 0.50f * glassFactor),
-                    (primaryRimAlpha * (0.16f + 0.45f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
+                    lerpArgb(strokeColor, glassTint, 0.35f * glassFactor),
+                    (primaryRimAlpha * (0.10f + 0.90f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
                 )
-                val stop3Rgb = lerpArgb(strokeColor, lerpArgb(glassTint, Color.WHITE, 0.45f), glassFactor)
+                val stop3Rgb = lerpArgb(strokeColor, lerpArgb(glassTint, Color.WHITE, 0.50f), 0.78f * glassFactor)
                 val stop3Color = replaceAlpha(
                     stop3Rgb,
-                    (primaryRimAlpha * (0.68f + 0.15f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
+                    (primaryRimAlpha * (0.38f + 0.62f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
                 )
 
                 strokePaint.color = Color.WHITE
@@ -314,7 +318,7 @@ class BubbleDrawable(
                     r + w * shift.shiftXRatio * 0.4f,
                     btm + h * shift.shiftYRatio * 0.4f,
                     intArrayOf(stop0Color, stop1Color, stop2Color, stop3Color),
-                    floatArrayOf(0f, 0.42f, 0.62f, 1f),
+                    floatArrayOf(0f, 0.36f, 0.68f, 1f),
                     Shader.TileMode.CLAMP,
                 )
             }
@@ -353,7 +357,8 @@ class BubbleDrawable(
             }
 
             val safeDensity = maxOf(density, 1f)
-            val bevelInset = 1.1f * safeDensity + (1.1f * safeDensity) * 0.3f
+            val bevelWidthPx = 0.75f * safeDensity
+            val bevelInset = outerStrokePx + bevelWidthPx * 0.5f
             if (glassFactor > 0.02f && w > bevelInset * 2.5f && h > bevelInset * 2.5f) {
                 buildBubblePath(
                     bevelPath,
