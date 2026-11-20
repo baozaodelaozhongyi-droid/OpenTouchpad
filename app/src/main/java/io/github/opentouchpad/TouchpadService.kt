@@ -27,6 +27,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.view.Choreographer
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -132,6 +133,22 @@ class TouchpadService : AccessibilityService() {
     private var movingFromY = 0f
     private var movingPanelX = 0
     private var movingPanelY = 0
+    private var movingHandleView: View? = null
+    private var moveAnchorX = 0f
+    private var moveAnchorY = 0f
+    private var moveLastClampedX = 0f
+    private var moveLastClampedY = 0f
+    private var movePendingDx = 0f
+    private var movePendingDy = 0f
+    private var moveLastEventTimeMs = 0L
+    private var moveLastSampleNs = 0L
+    private var moveSmoothedVx = 0f
+    private var moveSmoothedVy = 0f
+    private var panelSpringState = PanelSpringState()
+    private var panelDeformRunning = false
+    private var panelDeformLastFrameNs = 0L
+    private val panelDeformMatrixValues = FloatArray(9)
+    private var padFingerDown = false
     private var resizingPanel = false
     private var resizingFromX = 0f
     private var resizingFromY = 0f
@@ -337,6 +354,8 @@ class TouchpadService : AccessibilityService() {
 
     override fun onInterrupt() {
         main.removeCallbacksAndMessages(null)
+        padFingerDown = false
+        stopPanelDeformation(resetVisuals = true)
         gestureQueue.clear()
         isDispatching = false
         setOverlayTouchable(true)
@@ -478,6 +497,7 @@ class TouchpadService : AccessibilityService() {
         prefs = Prefs(this)
         val root = panel as? FrameLayout ?: return
         if (root === miniBallView) return
+        if (!movingPanel) stopPanelDeformation(resetVisuals = true)
         val window = panelParams ?: return
         val widthRange = controlWidthRange(screenW, resources.displayMetrics.density)
         val widthPx = if (prefs.panelWidthDp > 0) {
@@ -711,6 +731,7 @@ class TouchpadService : AccessibilityService() {
 
     /** 把当前面板/悬浮球从状态里摘出来（窗口暂不移除），供退场动画使用。 */
     private fun detachPanelForTransition(): Outgoing? {
+        stopPanelDeformation(resetVisuals = true)
         val v = panel ?: return null
         val lp = panelParams ?: return null
         // 退场期间不再接收触摸，避免误触
@@ -800,7 +821,9 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun removePanel() {
+        stopPanelDeformation(resetVisuals = false)
         padArea?.animate()?.cancel()
+        padFingerDown = false
         // 拖拽锁定状态（以及跟随光标的圆环）跨面板重建保留，不在这里结束
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
@@ -897,10 +920,9 @@ class TouchpadService : AccessibilityService() {
         val heightPx = panelHeightFor(widthPx)
 
         // 根容器本身不处理触摸：只有设成「移动触控板」的按键可以拖动面板。
-        val root = FrameLayout(this).apply {
+        // 使用 DeformablePanelLayout 以支持拖动面板移动时的整板方向形变与弹性回弹。
+        val root = DeformablePanelLayout(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
-            clipChildren = false
-            clipToPadding = false
             contentDescription = getString(R.string.control_surface_content_description)
         }
 
@@ -1387,7 +1409,12 @@ class TouchpadService : AccessibilityService() {
     private var padTouchIgnored = false
 
     private fun handlePadTouch(e: MotionEvent) {
-        if (isPassThroughActive) return
+        if (isPassThroughActive) {
+            if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
+                padFingerDown = false
+            }
+            return
+        }
         val slop = dp(6).toFloat()
         if (e.actionMasked == MotionEvent.ACTION_DOWN) {
             val pad = padArea
@@ -1412,6 +1439,7 @@ class TouchpadService : AccessibilityService() {
         }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                padFingerDown = true
                 if (prefs.pressFeedback) {
                     padArea?.let { pad ->
                         PressFeedback.applyPadDown(pad, normX, normY, resources.displayMetrics.density)
@@ -1468,6 +1496,7 @@ class TouchpadService : AccessibilityService() {
             }
 
             MotionEvent.ACTION_UP -> {
+                padFingerDown = false
                 if (prefs.pressFeedback) {
                     padArea?.let { pad ->
                         PressFeedback.applyPadRelease(pad)
@@ -1507,6 +1536,7 @@ class TouchpadService : AccessibilityService() {
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                padFingerDown = false
                 if (prefs.pressFeedback) {
                     padArea?.let { pad ->
                         PressFeedback.applyPadRelease(pad)
@@ -1528,21 +1558,191 @@ class TouchpadService : AccessibilityService() {
         haptic()
     }
 
+    private fun setBubbleViewTilt(view: View, normX: Float, normY: Float) {
+        when (val bg = view.background) {
+            is BubbleDrawable -> bg.setInteractiveTilt(normX, normY)
+            is RippleDrawable -> {
+                for (i in 0 until bg.numberOfLayers) {
+                    (bg.getDrawable(i) as? BubbleDrawable)?.setInteractiveTilt(normX, normY)
+                }
+            }
+        }
+    }
+
+    private val panelDeformFrameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!panelDeformRunning) return
+            val root = panel as? DeformablePanelLayout
+            if (root == null || root === miniBallView) {
+                stopPanelDeformation(resetVisuals = false)
+                return
+            }
+
+            val prevFrameNs = panelDeformLastFrameNs
+            panelDeformLastFrameNs = frameTimeNanos
+            val frameDt = if (prevFrameNs > 0L) {
+                ((frameTimeNanos - prevFrameNs) / 1_000_000_000f).coerceIn(0.004f, 0.040f)
+            } else {
+                1f / 60f
+            }
+
+            val nowMs = SystemClock.uptimeMillis()
+            if (movingPanel) {
+                val hasPendingMove = movePendingDx != 0f || movePendingDy != 0f
+                if (hasPendingMove) {
+                    val sampleGapNs = if (moveLastSampleNs > 0L) frameTimeNanos - moveLastSampleNs else 0L
+                    val sampleDt = if (sampleGapNs in 6_000_000L..50_000_000L) {
+                        sampleGapNs / 1_000_000_000f
+                    } else {
+                        frameDt.coerceIn(0.008f, 0.033f)
+                    }
+                    val rawVx = movePendingDx / sampleDt
+                    val rawVy = movePendingDy / sampleDt
+                    movePendingDx = 0f
+                    movePendingDy = 0f
+                    moveLastSampleNs = frameTimeNanos
+
+                    val alpha = 1f - kotlin.math.exp(-sampleDt / 0.032f)
+                    moveSmoothedVx += (rawVx - moveSmoothedVx) * alpha
+                    moveSmoothedVy += (rawVy - moveSmoothedVy) * alpha
+                } else if (nowMs - moveLastEventTimeMs >= 32L) {
+                    val decay = kotlin.math.exp(-frameDt / 0.045f)
+                    moveSmoothedVx *= decay
+                    moveSmoothedVy *= decay
+                    if (abs(moveSmoothedVx) < 1f && abs(moveSmoothedVy) < 1f) {
+                        moveSmoothedVx = 0f
+                        moveSmoothedVy = 0f
+                    }
+                }
+            } else {
+                movePendingDx = 0f
+                movePendingDy = 0f
+                moveSmoothedVx = 0f
+                moveSmoothedVy = 0f
+            }
+
+            val target = if (movingPanel) {
+                computePanelDragTarget(moveSmoothedVx, moveSmoothedVy, resources.displayMetrics.density)
+            } else {
+                PanelDragTarget(0f, 0f)
+            }
+            val targetGrab = if (movingPanel) 1f else 0f
+
+            panelSpringState = stepPanelDragSpring(
+                state = panelSpringState,
+                targetX = target.x,
+                targetY = target.y,
+                targetGrab = targetGrab,
+                dtSec = frameDt,
+                isDragging = movingPanel,
+            )
+
+            val w = root.width.toFloat().takeIf { it > 0f } ?: (panelParams?.width?.toFloat() ?: 0f)
+            val h = root.height.toFloat().takeIf { it > 0f } ?: (panelParams?.height?.toFloat() ?: 0f)
+            val active = computePanelDragMatrix(
+                outMatrix = panelDeformMatrixValues,
+                widthPx = w,
+                heightPx = h,
+                springX = panelSpringState.x,
+                springY = panelSpringState.y,
+                grabProgress = panelSpringState.grab,
+                anchorX = moveAnchorX,
+                anchorY = moveAnchorY,
+            )
+            root.setDeformationMatrix(panelDeformMatrixValues, active)
+
+            // 同步更新触控板表面与移动把手的动态流光（移动前缘提亮、尾缘微暗）
+            val mag = kotlin.math.hypot(panelSpringState.x, panelSpringState.y)
+            val tiltX = (-panelSpringState.x).coerceIn(-1f, 1f)
+            val tiltY = (-panelSpringState.y).coerceIn(-1f, 1f)
+            if (!padFingerDown) {
+                (padArea as? TouchpadSurfaceView)?.setTilt(tiltX, tiltY, (mag * 0.65f).coerceIn(0f, 0.8f))
+            }
+            movingHandleView?.let { setBubbleViewTilt(it, tiltX, tiltY) }
+
+            if (!movingPanel && panelSpringState.isSettled) {
+                stopPanelDeformation(resetVisuals = true)
+                return
+            }
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+
+    private fun startPanelDeformationLoop() {
+        if (panelDeformRunning) return
+        panelDeformRunning = true
+        panelDeformLastFrameNs = 0L
+        Choreographer.getInstance().postFrameCallback(panelDeformFrameCallback)
+    }
+
+    private fun stopPanelDeformation(resetVisuals: Boolean) {
+        if (panelDeformRunning) {
+            panelDeformRunning = false
+            runCatching { Choreographer.getInstance().removeFrameCallback(panelDeformFrameCallback) }
+        }
+        panelDeformLastFrameNs = 0L
+        movePendingDx = 0f
+        movePendingDy = 0f
+        moveLastSampleNs = 0L
+        moveSmoothedVx = 0f
+        moveSmoothedVy = 0f
+        panelSpringState = PanelSpringState()
+        if (resetVisuals) {
+            (panel as? DeformablePanelLayout)?.clearDeformation()
+            if (!padFingerDown) {
+                (padArea as? TouchpadSurfaceView)?.setTilt(0f, 0f, 0f)
+            }
+            movingHandleView?.let { setBubbleViewTilt(it, 0f, 0f) }
+        }
+        movingHandleView = null
+    }
+
     private fun handleMoveTouch(v: View, e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 movingPanel = true
+                if (movingHandleView !== v) {
+                    movingHandleView?.let { setBubbleViewTilt(it, 0f, 0f) }
+                    movingHandleView = v
+                }
                 movingFromX = e.rawX; movingFromY = e.rawY
                 movingPanelX = panelParams?.x ?: 0
                 movingPanelY = panelParams?.y ?: 0
+                moveLastClampedX = movingPanelX.toFloat()
+                moveLastClampedY = movingPanelY.toFloat()
+                movePendingDx = 0f
+                movePendingDy = 0f
+                moveSmoothedVx = 0f
+                moveSmoothedVy = 0f
+                moveLastSampleNs = 0L
+                moveLastEventTimeMs = SystemClock.uptimeMillis()
+                val panelW = panel?.width?.toFloat()?.takeIf { it > 0f } ?: (panelParams?.width?.toFloat() ?: 0f)
+                val panelH = panel?.height?.toFloat()?.takeIf { it > 0f } ?: (panelParams?.height?.toFloat() ?: 0f)
+                val (ax, ay) = computePanelHandleAnchor(
+                    handleLeft = v.left.toFloat(),
+                    handleTop = v.top.toFloat(),
+                    handleWidth = v.width.toFloat(),
+                    handleHeight = v.height.toFloat(),
+                    panelWidth = panelW,
+                    panelHeight = panelH,
+                )
+                moveAnchorX = ax
+                moveAnchorY = ay
+                startPanelDeformationLoop()
             }
             MotionEvent.ACTION_MOVE -> if (movingPanel) {
                 val lp = panelParams ?: return true
+                val panelW = panel?.width ?: 0
+                val panelH = panel?.height ?: 0
+                val maxX = (screenW - panelW.coerceAtLeast(0)).coerceAtLeast(0).toFloat()
+                val maxY = (screenH - panelH.coerceAtLeast(0)).coerceAtLeast(0).toFloat()
+                val clampedX = (movingPanelX + (e.rawX - movingFromX)).coerceIn(0f, maxX)
+                val clampedY = (movingPanelY + (e.rawY - movingFromY)).coerceIn(0f, maxY)
                 val position = clampPanelPosition(
                     movingPanelX + (e.rawX - movingFromX).roundToInt(),
                     movingPanelY + (e.rawY - movingFromY).roundToInt(),
-                    panel?.width ?: 0,
-                    panel?.height ?: 0,
+                    panelW,
+                    panelH,
                     screenW,
                     screenH,
                 )
@@ -1552,8 +1752,24 @@ class TouchpadService : AccessibilityService() {
                 val land = isLandscape()
                 prefs.setPadX(land, lp.x)
                 prefs.setPadY(land, lp.y)
+
+                val stepDx = clampedX - moveLastClampedX
+                val stepDy = clampedY - moveLastClampedY
+                moveLastClampedX = clampedX
+                moveLastClampedY = clampedY
+                if (stepDx != 0f || stepDy != 0f) {
+                    movePendingDx += stepDx
+                    movePendingDy += stepDy
+                    moveLastEventTimeMs = SystemClock.uptimeMillis()
+                }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> movingPanel = false
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                movingPanel = false
+                movePendingDx = 0f
+                movePendingDy = 0f
+                moveSmoothedVx = 0f
+                moveSmoothedVy = 0f
+            }
         }
         return true
     }
@@ -1561,6 +1777,7 @@ class TouchpadService : AccessibilityService() {
     private fun handleResizeTouch(v: View, e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                stopPanelDeformation(resetVisuals = true)
                 resizingPanel = true
                 resizingFromX = e.rawX
                 resizingFromY = e.rawY

@@ -1037,4 +1037,337 @@ internal fun lerpArgb(colorA: Int, colorB: Int, fraction: Float): Int {
     return (a shl 24) or (r shl 16) or (g shl 8) or b
 }
 
+// ───────────────────────── 触控板面板拖动整体形变物理模型 ─────────────────────────
+
+/** 面板拖动形变目标矢量（单位圆内，hypot(x, y) <= 1f）。 */
+internal data class PanelDragTarget(val x: Float, val y: Float)
+
+/**
+ * 将面板拖动瞬时速度（像素/秒）平滑饱和映射到单位圆内的形变目标矢量。
+ * - 低于 [deadzoneDpPerSec] 忽略微颤，避免静止抖动；
+ * - 常规拖动速度（~420 dp/s）即可呈现清晰饱满的方向形变；
+ * - 高速甩动平滑渐进饱和至 1.0，避免过度失真。
+ */
+internal fun computePanelDragTarget(
+    vxPxPerSec: Float,
+    vyPxPerSec: Float,
+    density: Float,
+    deadzoneDpPerSec: Float = 25f,
+    refSpeedDpPerSec: Float = 420f,
+): PanelDragTarget {
+    val safeDensity = density.coerceAtLeast(1f)
+    val speed = kotlin.math.hypot(vxPxPerSec, vyPxPerSec)
+    val deadzone = deadzoneDpPerSec * safeDensity
+    val refSpeed = (refSpeedDpPerSec * safeDensity).coerceAtLeast(1f)
+    if (speed <= deadzone) return PanelDragTarget(0f, 0f)
+
+    val effectiveSpeed = speed - deadzone
+    val normalized = (effectiveSpeed / refSpeed).coerceIn(0f, 4f)
+    val tension = (normalized / (1f + 0.55f * normalized)).coerceIn(0f, 1f)
+    val invSpeed = 1f / speed
+    return PanelDragTarget(
+        x = vxPxPerSec * invSpeed * tension,
+        y = vyPxPerSec * invSpeed * tension,
+    )
+}
+
+/**
+ * 计算移动把手中心点相对整个面板中心的归一化锚点坐标 [-1f, 1f]²。
+ * 用于根据抓握位置产生物理真实的惯性摆动（力矩 torque = anchor × motion）。
+ */
+internal fun computePanelHandleAnchor(
+    handleLeft: Float,
+    handleTop: Float,
+    handleWidth: Float,
+    handleHeight: Float,
+    panelWidth: Float,
+    panelHeight: Float,
+): Pair<Float, Float> {
+    if (panelWidth <= 0f || panelHeight <= 0f) return 0f to 0f
+    val halfW = (panelWidth / 2f).coerceAtLeast(1f)
+    val halfH = (panelHeight / 2f).coerceAtLeast(1f)
+    val hcx = handleLeft + handleWidth / 2f
+    val hcy = handleTop + handleHeight / 2f
+    val ax = ((hcx - halfW) / halfW).coerceIn(-1f, 1f)
+    val ay = ((hcy - halfH) / halfH).coerceIn(-1f, 1f)
+    return ax to ay
+}
+
+/** 触控板整体形变的弹簧动力学状态。 */
+internal data class PanelSpringState(
+    val x: Float = 0f,
+    val y: Float = 0f,
+    val vx: Float = 0f,
+    val vy: Float = 0f,
+    val grab: Float = 0f,
+    val grabVel: Float = 0f,
+) {
+    val isSettled: Boolean
+        get() = kotlin.math.abs(x) < 0.002f &&
+            kotlin.math.abs(y) < 0.002f &&
+            kotlin.math.abs(vx) < 0.015f &&
+            kotlin.math.abs(vy) < 0.015f &&
+            kotlin.math.abs(grab) < 0.002f &&
+            kotlin.math.abs(grabVel) < 0.015f
+}
+
+/**
+ * 半隐式欧拉子步弹簧积分：
+ * - 拖动中：高响应阻尼弹簧紧跟手指方向与速度；
+ * - 停顿或松手时：欠阻尼弹性弹簧自然回弹，呈现出 Q 弹果冻惯性收尾，绝不僵硬卡顿。
+ */
+internal fun stepPanelDragSpring(
+    state: PanelSpringState,
+    targetX: Float,
+    targetY: Float,
+    targetGrab: Float,
+    dtSec: Float,
+    isDragging: Boolean,
+): PanelSpringState {
+    val clampedDt = dtSec.coerceIn(0.001f, 0.040f)
+    val subSteps = if (clampedDt > 0.016f) 2 else 1
+    val stepDt = clampedDt / subSteps
+
+    val motionOmega = if (isDragging) 20f else 17f
+    val motionZeta = if (isDragging) 0.68f else 0.50f
+    val motionK = motionOmega * motionOmega
+    val motionC = 2f * motionZeta * motionOmega
+
+    val grabOmega = if (isDragging) 24f else 20f
+    val grabZeta = if (isDragging) 0.85f else 0.92f
+    val grabK = grabOmega * grabOmega
+    val grabC = 2f * grabZeta * grabOmega
+
+    var x = state.x
+    var y = state.y
+    var vx = state.vx
+    var vy = state.vy
+    var grab = state.grab
+    var grabVel = state.grabVel
+
+    repeat(subSteps) {
+        val ax = motionK * (targetX - x) - motionC * vx
+        val ay = motionK * (targetY - y) - motionC * vy
+        vx += ax * stepDt
+        vy += ay * stepDt
+        x += vx * stepDt
+        y += vy * stepDt
+
+        val aGrab = grabK * (targetGrab - grab) - grabC * grabVel
+        grabVel += aGrab * stepDt
+        grab = (grab + grabVel * stepDt).coerceIn(0f, 1.15f)
+    }
+
+    // 安全限幅，防止极端输入产生数值发散
+    val mag = kotlin.math.hypot(x, y)
+    if (mag > 1.35f) {
+        val s = 1.35f / mag
+        x *= s
+        y *= s
+    }
+
+    return PanelSpringState(
+        x = x,
+        y = y,
+        vx = vx,
+        vy = vy,
+        grab = grab,
+        grabVel = grabVel,
+    )
+}
+
+/** 使用 3×3 齐次矩阵（Android Matrix 行优先顺序）投影二维点 (x, y)。 */
+internal fun projectMatrixPoint(m: FloatArray, x: Float, y: Float): Pair<Float, Float> {
+    val w = m[6] * x + m[7] * y + m[8]
+    val invW = if (kotlin.math.abs(w) > 1e-6f) 1f / w else 1f
+    val px = (m[0] * x + m[1] * y + m[2]) * invW
+    val py = (m[3] * x + m[4] * y + m[5]) * invW
+    return px to py
+}
+
+/** 写入 3×3 单位矩阵。 */
+internal fun writeIdentityMatrix(out: FloatArray) {
+    out[0] = 1f; out[1] = 0f; out[2] = 0f
+    out[3] = 0f; out[4] = 1f; out[5] = 0f
+    out[6] = 0f; out[7] = 0f; out[8] = 1f
+}
+
+/**
+ * 构建触控板整体拖动形变的 3×3 像素空间齐次矩阵（直接写入 [outMatrix]，热路径零对象分配）。
+ *
+ * 在归一化面板空间 [-1, 1]² 内按物理顺序组合四重形变，保证任意宽高比下视觉均衡：
+ * 1. 抓握弹性微收（grabShrink）：手指按住把手时内收留出形变缓冲空间，松手弹性复原；
+ * 2. 任意方向各向异性果冻拉伸/挤压（R(θ)·S(stretch, squash)·R(-θ)）：沿移动方向柔韧拉长、垂直方向保面积收窄，不旋转翻转图标；
+ * 3. 把手力矩惯性微摆（torque = anchor × motion）：以移动把手为受力点产生轻盈的拖拽摆角；
+ * 4. 方向性 3D 透视倾斜与尾迹收束（leading lift / trailing taper）+ 细微惯性中心滞后；
+ * 5. 四角精确包络限幅（fitScale）：保证四个角点严格落在窗口 [0, W] × [0, H] 内部，彻底杜绝 Surface 边缘硬裁切。
+ *
+ * @return true 表示存在有效形变，需在 Canvas 上应用；false 表示已处于静止恒等态。
+ */
+internal fun computePanelDragMatrix(
+    outMatrix: FloatArray,
+    widthPx: Float,
+    heightPx: Float,
+    springX: Float,
+    springY: Float,
+    grabProgress: Float,
+    anchorX: Float = 0f,
+    anchorY: Float = 0f,
+    grabShrink: Float = 0.075f,
+    maxStretch: Float = 0.080f,
+    maxSquash: Float = 0.080f,
+    maxSwingDeg: Float = 3.6f,
+    maxTiltDeg: Float = 13.5f,
+    cameraDistNorm: Float = 3.8f,
+    maxLagNorm: Float = 0.022f,
+    safeLimit: Float = 0.992f,
+): Boolean {
+    if (widthPx <= 0f || heightPx <= 0f) {
+        writeIdentityMatrix(outMatrix)
+        return false
+    }
+
+    val clampedGrab = grabProgress.coerceIn(0f, 1.15f)
+    val mag = kotlin.math.hypot(springX, springY).coerceAtMost(1.35f)
+    if (clampedGrab < 0.001f && mag < 0.001f) {
+        writeIdentityMatrix(outMatrix)
+        return false
+    }
+
+    val baseScale = (1f - grabShrink * clampedGrab).coerceIn(0.80f, 1f)
+
+    // 1. 方向各向异性拉伸与挤压矩阵 M_strain * baseScale
+    val s00: Float
+    val s01: Float
+    val s11: Float
+    val dirX: Float
+    val dirY: Float
+    if (mag > 1e-4f) {
+        dirX = springX / mag
+        dirY = springY / mag
+        val stretch = 1f + maxStretch * mag
+        val squash = 1f / (1f + maxSquash * mag)
+        s00 = (stretch * dirX * dirX + squash * dirY * dirY) * baseScale
+        s11 = (stretch * dirY * dirY + squash * dirX * dirX) * baseScale
+        s01 = (stretch - squash) * dirX * dirY * baseScale
+    } else {
+        dirX = 0f
+        dirY = 0f
+        s00 = baseScale
+        s01 = 0f
+        s11 = baseScale
+    }
+
+    // 2. 把手力矩惯性微摆 M_swing * (M_strain * baseScale)
+    val torque = (anchorX * springY - anchorY * springX).coerceIn(-1.2f, 1.2f)
+    val swingRad = Math.toRadians((torque * maxSwingDeg).toDouble())
+    val cosPhi = kotlin.math.cos(swingRad).toFloat()
+    val sinPhi = kotlin.math.sin(swingRad).toFloat()
+
+    val a00 = cosPhi * s00 - sinPhi * s01
+    val a01 = cosPhi * s01 - sinPhi * s11
+    val a10 = sinPhi * s00 + cosPhi * s01
+    val a11 = sinPhi * s01 + cosPhi * s11
+
+    // 3. 方向性 3D 透视倾斜（前缘抬升展宽，尾缘退远收束）
+    val p00: Float
+    val p01: Float
+    val p10: Float
+    val p11: Float
+    val p20: Float
+    val p21: Float
+    if (mag > 1e-4f) {
+        val tiltRad = Math.toRadians((maxTiltDeg * mag.coerceAtMost(1.25f)).toDouble())
+        val cosAlpha = kotlin.math.cos(tiltRad).toFloat()
+        val sinAlpha = kotlin.math.sin(tiltRad).toFloat()
+        val safeCam = cameraDistNorm.coerceAtLeast(2.0f)
+        p00 = cosAlpha * dirX * dirX + dirY * dirY
+        p01 = (cosAlpha - 1f) * dirX * dirY
+        p10 = p01
+        p11 = dirX * dirX + cosAlpha * dirY * dirY
+        p20 = -(sinAlpha / safeCam) * dirX
+        p21 = -(sinAlpha / safeCam) * dirY
+    } else {
+        p00 = 1f; p01 = 0f
+        p10 = 0f; p11 = 1f
+        p20 = 0f; p21 = 0f
+    }
+
+    // B = M_persp * A
+    val b00 = p00 * a00 + p01 * a10
+    val b01 = p00 * a01 + p01 * a11
+    val b10 = p10 * a00 + p11 * a10
+    val b11 = p10 * a01 + p11 * a11
+    val b20 = p20 * a00 + p21 * a10
+    val b21 = p20 * a01 + p21 * a11
+
+    // 4. 惯性中心微滞后 T_lag * B
+    val lagU = -springX * maxLagNorm
+    val lagV = -springY * maxLagNorm
+
+    var n00 = b00 + lagU * b20
+    var n01 = b01 + lagU * b21
+    var n02 = lagU
+    var n10 = b10 + lagV * b20
+    var n11 = b11 + lagV * b21
+    var n12 = lagV
+    val n20 = b20
+    val n21 = b21
+    val n22 = 1f
+
+    // 5. 四角精确包络限幅，确保所有顶点严格落在 [-safeLimit, +safeLimit]² 内，零窗口裁切
+    var maxAbsCoord = 0f
+    for (c in 0 until 4) {
+        val cu = if (c == 0 || c == 3) -1f else 1f
+        val cv = if (c < 2) -1f else 1f
+        val cw = n20 * cu + n21 * cv + n22
+        val invW = if (kotlin.math.abs(cw) > 1e-5f) 1f / cw else 1f
+        val pu = kotlin.math.abs((n00 * cu + n01 * cv + n02) * invW)
+        val pv = kotlin.math.abs((n10 * cu + n11 * cv + n12) * invW)
+        if (pu > maxAbsCoord) maxAbsCoord = pu
+        if (pv > maxAbsCoord) maxAbsCoord = pv
+    }
+
+    if (maxAbsCoord > safeLimit) {
+        val fitScale = safeLimit / maxAbsCoord
+        n00 *= fitScale
+        n01 *= fitScale
+        n02 *= fitScale
+        n10 *= fitScale
+        n11 *= fitScale
+        n12 *= fitScale
+    }
+
+    // 6. 共轭映射回像素坐标空间：M_pixel = P * M_norm * P⁻¹
+    //    其中 P = diag(hw, hh, 1) + translate(hw, hh)，P⁻¹ = diag(1/hw, 1/hh, 1) + translate(-1, -1)
+    val hw = widthPx / 2f
+    val hh = heightPx / 2f
+    val invHw = 1f / hw
+    val invHh = 1f / hh
+
+    // 先算 Q = P * M_norm
+    val q00 = hw * n00 + hw * n20
+    val q01 = hw * n01 + hw * n21
+    val q02 = hw * n02 + hw * n22
+    val q10 = hh * n10 + hh * n20
+    val q11 = hh * n11 + hh * n21
+    val q12 = hh * n12 + hh * n22
+
+    // 再算 M_pixel = Q * P⁻¹
+    outMatrix[0] = q00 * invHw
+    outMatrix[1] = q01 * invHh
+    outMatrix[2] = q02 - q00 - q01
+
+    outMatrix[3] = q10 * invHw
+    outMatrix[4] = q11 * invHh
+    outMatrix[5] = q12 - q10 - q11
+
+    outMatrix[6] = n20 * invHw
+    outMatrix[7] = n21 * invHh
+    outMatrix[8] = n22 - n20 - n21
+
+    return true
+}
+
+
 

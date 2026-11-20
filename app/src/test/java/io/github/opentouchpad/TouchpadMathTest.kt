@@ -1171,5 +1171,212 @@ class TouchpadMathTest {
         val mid = lerpArgb(0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 0.5f)
         assertEquals(0xFF808080.toInt(), mid)
     }
+
+    @Test
+    fun panelDragTargetRespectsDeadzonePreservesDirectionAndSaturates() {
+        val density = 3f
+        // Below deadzone (25 dp/s = 75 px/s) -> neutral zero
+        val idle = computePanelDragTarget(vxPxPerSec = 50f, vyPxPerSec = 30f, density = density)
+        assertEquals(0f, idle.x, 0.0001f)
+        assertEquals(0f, idle.y, 0.0001f)
+
+        // Moderate rightward drag
+        val slowRight = computePanelDragTarget(vxPxPerSec = 600f, vyPxPerSec = 0f, density = density)
+        val fastRight = computePanelDragTarget(vxPxPerSec = 2400f, vyPxPerSec = 0f, density = density)
+        assertTrue(slowRight.x > 0.25f)
+        assertEquals(0f, slowRight.y, 0.0001f)
+        assertTrue(fastRight.x > slowRight.x)
+        assertTrue(fastRight.x <= 1f)
+
+        // Extreme diagonal drag preserves 45° unit direction and stays within unit disk
+        val extremeDiag = computePanelDragTarget(vxPxPerSec = -9000f, vyPxPerSec = 9000f, density = density)
+        val mag = kotlin.math.hypot(extremeDiag.x, extremeDiag.y)
+        assertTrue("Target magnitude must saturate within unit disk, got $mag", mag in 0.95f..1.001f)
+        assertEquals(-extremeDiag.y, extremeDiag.x, 0.001f)
+    }
+
+    @Test
+    fun panelHandleAnchorNormalizesPositionRelativeToPanelCenter() {
+        val topLeft = computePanelHandleAnchor(0f, 0f, 40f, 40f, 400f, 400f)
+        assertEquals(-0.9f, topLeft.first, 0.001f)
+        assertEquals(-0.9f, topLeft.second, 0.001f)
+
+        val bottomRight = computePanelHandleAnchor(360f, 360f, 40f, 40f, 400f, 400f)
+        assertEquals(0.9f, bottomRight.first, 0.001f)
+        assertEquals(0.9f, bottomRight.second, 0.001f)
+
+        val zeroPanel = computePanelHandleAnchor(0f, 0f, 40f, 40f, 0f, 0f)
+        assertEquals(0f, zeroPanel.first, 0.001f)
+        assertEquals(0f, zeroPanel.second, 0.001f)
+    }
+
+    @Test
+    fun panelDragSpringTracksTargetAndReboundsWithElasticOvershootOnRelease() {
+        var state = PanelSpringState()
+        // Dragging right for ~250ms at 60Hz -> tracks target and grab progress
+        repeat(15) {
+            state = stepPanelDragSpring(
+                state = state,
+                targetX = 0.85f,
+                targetY = 0f,
+                targetGrab = 1f,
+                dtSec = 1f / 60f,
+                isDragging = true,
+            )
+        }
+        assertTrue("Expected springX to track rightward drag, got ${state.x}", state.x > 0.70f)
+        assertTrue("Expected grabProgress near 1.0, got ${state.grab}", state.grab > 0.90f)
+        assertFalse(state.isSettled)
+
+        // Release -> under-damped spring produces elastic overshoot below 0 before settling
+        var sawOvershoot = false
+        repeat(60) {
+            state = stepPanelDragSpring(
+                state = state,
+                targetX = 0f,
+                targetY = 0f,
+                targetGrab = 0f,
+                dtSec = 1f / 60f,
+                isDragging = false,
+            )
+            if (state.x < -0.02f) sawOvershoot = true
+        }
+        assertTrue("Expected elastic jelly overshoot on release", sawOvershoot)
+        assertTrue("Expected spring to settle cleanly within 1s, state=$state", state.isSettled)
+    }
+
+    @Test
+    fun panelDragMatrixIsIdentityAtRestAndDeformsDirectionally() {
+        val w = 500f
+        val h = 500f
+        val m = FloatArray(9)
+
+        // 1. At rest -> identity & inactive
+        assertFalse(computePanelDragMatrix(m, w, h, springX = 0f, springY = 0f, grabProgress = 0f))
+        assertEquals(1f, m[0], 0.0001f)
+        assertEquals(1f, m[4], 0.0001f)
+        assertEquals(1f, m[8], 0.0001f)
+
+        // 2. Dragging RIGHT: stretches horizontally vs height, and right (leading) edge tapers taller than left (trailing)
+        assertTrue(computePanelDragMatrix(m, w, h, springX = 1f, springY = 0f, grabProgress = 1f))
+        val tlR = projectMatrixPoint(m, 0f, 0f)
+        val trR = projectMatrixPoint(m, w, 0f)
+        val brR = projectMatrixPoint(m, w, h)
+        val blR = projectMatrixPoint(m, 0f, h)
+        val leadingHeightR = brR.second - trR.second
+        val trailingHeightR = blR.second - tlR.second
+        val avgWidthR = ((trR.first - tlR.first) + (brR.first - blR.first)) / 2f
+        val avgHeightR = (leadingHeightR + trailingHeightR) / 2f
+        assertTrue("Right drag should stretch width > height ($avgWidthR vs $avgHeightR)", avgWidthR > avgHeightR * 1.08f)
+        assertTrue("Right drag leading edge should flare taller than trailing edge ($leadingHeightR vs $trailingHeightR)", leadingHeightR > trailingHeightR * 1.06f)
+
+        // 3. Dragging LEFT mirrors the directional taper: left (leading) edge is taller than right (trailing)
+        assertTrue(computePanelDragMatrix(m, w, h, springX = -1f, springY = 0f, grabProgress = 1f))
+        val tlL = projectMatrixPoint(m, 0f, 0f)
+        val trL = projectMatrixPoint(m, w, 0f)
+        val brL = projectMatrixPoint(m, w, h)
+        val blL = projectMatrixPoint(m, 0f, h)
+        val leadingHeightL = blL.second - tlL.second
+        val trailingHeightL = brL.second - trL.second
+        assertTrue("Left drag leading edge should flare taller than trailing edge ($leadingHeightL vs $trailingHeightL)", leadingHeightL > trailingHeightL * 1.06f)
+
+        // 4. Dragging DOWN: bottom (leading) edge is wider than top (trailing) edge, and height > width
+        assertTrue(computePanelDragMatrix(m, w, h, springX = 0f, springY = 1f, grabProgress = 1f))
+        val tlD = projectMatrixPoint(m, 0f, 0f)
+        val trD = projectMatrixPoint(m, w, 0f)
+        val brD = projectMatrixPoint(m, w, h)
+        val blD = projectMatrixPoint(m, 0f, h)
+        val topWidthD = trD.first - tlD.first
+        val bottomWidthD = brD.first - blD.first
+        val avgHeightD = ((blD.second - tlD.second) + (brD.second - trD.second)) / 2f
+        val avgWidthD = (topWidthD + bottomWidthD) / 2f
+        assertTrue("Down drag should stretch height > width ($avgHeightD vs $avgWidthD)", avgHeightD > avgWidthD * 1.08f)
+        assertTrue("Down drag bottom edge should flare wider than top edge ($bottomWidthD vs $topWidthD)", bottomWidthD > topWidthD * 1.06f)
+
+        // 5. Dragging UP mirrors: top (leading) edge is wider than bottom (trailing)
+        assertTrue(computePanelDragMatrix(m, w, h, springX = 0f, springY = -1f, grabProgress = 1f))
+        val tlU = projectMatrixPoint(m, 0f, 0f)
+        val trU = projectMatrixPoint(m, w, 0f)
+        val brU = projectMatrixPoint(m, w, h)
+        val blU = projectMatrixPoint(m, 0f, h)
+        assertTrue("Up drag top edge should flare wider than bottom edge", (trU.first - tlU.first) > (brU.first - blU.first) * 1.06f)
+
+        // 6. Dragging diagonally DOWN-RIGHT stretches main diagonal longer than off-diagonal
+        val diag = 0.7071f
+        assertTrue(computePanelDragMatrix(m, w, h, springX = diag, springY = diag, grabProgress = 1f))
+        val tlDR = projectMatrixPoint(m, 0f, 0f)
+        val trDR = projectMatrixPoint(m, w, 0f)
+        val brDR = projectMatrixPoint(m, w, h)
+        val blDR = projectMatrixPoint(m, 0f, h)
+        val mainDiagLen = kotlin.math.hypot(brDR.first - tlDR.first, brDR.second - tlDR.second)
+        val offDiagLen = kotlin.math.hypot(blDR.first - trDR.first, blDR.second - trDR.second)
+        assertTrue("Diagonal drag should elongate along motion diagonal ($mainDiagLen vs $offDiagLen)", mainDiagLen > offDiagLen * 1.08f)
+
+        // 7. Handle torque swing: grabbing TOP handle (0, -1) and moving RIGHT shifts top right relative to bottom
+        assertTrue(computePanelDragMatrix(m, w, h, springX = 1f, springY = 0f, grabProgress = 1f, anchorX = 0f, anchorY = -1f))
+        val topMidX = (projectMatrixPoint(m, 0f, 0f).first + projectMatrixPoint(m, w, 0f).first) / 2f
+        val botMidX = (projectMatrixPoint(m, 0f, h).first + projectMatrixPoint(m, w, h).first) / 2f
+        assertTrue("Top-anchored rightward drag should swing top ahead of bottom ($topMidX vs $botMidX)", topMidX > botMidX + 5f)
+    }
+
+    @Test
+    fun panelDragMatrixNeverClipsWindowBoundsAcrossAllDirectionsAndAspectRatios() {
+        val m = FloatArray(9)
+        val sizes = listOf(
+            400f to 400f,
+            600f to 300f,
+            300f to 900f,
+            504f to 420f,
+        )
+        val anchors = listOf(
+            0f to 0f,
+            0f to -1f,
+            0f to 1f,
+            -1f to 0f,
+            1f to 0f,
+            -0.9f to -0.9f,
+            0.9f to 0.9f,
+        )
+        val mags = listOf(0.5f, 1.0f, 1.35f)
+        val grabs = listOf(0f, 0.5f, 1.0f)
+
+        for ((w, h) in sizes) {
+            val corners = listOf(0f to 0f, w to 0f, w to h, 0f to h)
+            for ((ax, ay) in anchors) {
+                for (mag in mags) {
+                    for (grab in grabs) {
+                        for (deg in 0 until 360 step 15) {
+                            val rad = Math.toRadians(deg.toDouble())
+                            val sx = (kotlin.math.cos(rad) * mag).toFloat()
+                            val sy = (kotlin.math.sin(rad) * mag).toFloat()
+                            computePanelDragMatrix(
+                                outMatrix = m,
+                                widthPx = w,
+                                heightPx = h,
+                                springX = sx,
+                                springY = sy,
+                                grabProgress = grab,
+                                anchorX = ax,
+                                anchorY = ay,
+                            )
+                            for ((cx, cy) in corners) {
+                                val wDenom = m[6] * cx + m[7] * cy + m[8]
+                                assertTrue("Perspective w must stay strictly positive (got $wDenom)", wDenom > 0.5f)
+                                val (px, py) = projectMatrixPoint(m, cx, cy)
+                                assertTrue(
+                                    "Corner ($cx,$cy) clipped horizontally: px=$px outside [0, $w] at deg=$deg mag=$mag",
+                                    px >= -0.01f && px <= w + 0.01f,
+                                )
+                                assertTrue(
+                                    "Corner ($cx,$cy) clipped vertically: py=$py outside [0, $h] at deg=$deg mag=$mag",
+                                    py >= -0.01f && py <= h + 0.01f,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
