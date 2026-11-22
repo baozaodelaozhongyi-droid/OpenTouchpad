@@ -1102,7 +1102,6 @@ class MainActivity : Activity() {
             setTextColor(onAccentColor)
             background = ripple(roundedSurface(accentColor, 12), 0x33FAF9F5, 12)
             isClickable = true
-            PressFeedback.attach(this, isEnabled = { prefs.pressFeedback })
             setOnClickListener { openAccessibilitySettings() }
         }
         box.addView(primary, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply {
