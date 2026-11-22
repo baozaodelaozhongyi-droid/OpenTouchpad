@@ -76,8 +76,11 @@ class MainActivity : Activity() {
     private var keepAliveSwitch: Switch? = null
     private var batteryStatusTextView: TextView? = null
     private var pendingKeepAliveToggle: ((Boolean) -> Unit)? = null
+    private var baseContent: LinearLayout? = null
     private var baseStatusView: TextView? = null
     private var baseShowPanelSwitch: Switch? = null
+    private var baseKeepAliveSwitch: Switch? = null
+    private var baseBatteryStatusTextView: TextView? = null
     private var widthSliderController: SliderController? = null
     private var heightSliderController: SliderController? = null
     private var baseWidthSliderController: SliderController? = null
@@ -86,6 +89,8 @@ class MainActivity : Activity() {
     private var baseThemeDark = false
     private var currentReveal: RevealLayout? = null
     private var currentRevealDark = false
+    private var appliedStatusBarDark: Boolean? = null
+    private var appliedNavBarDark: Boolean? = null
     private var lastInsetsTop = 0
     private var lastInsetsBottom = 0
     private var activeAnimator: ValueAnimator? = null
@@ -138,8 +143,11 @@ class MainActivity : Activity() {
 
         baseScroller = buildUi()
         scroller = baseScroller
+        baseContent = content
         baseStatusView = statusView
         baseShowPanelSwitch = showPanelSwitch
+        baseKeepAliveSwitch = keepAliveSwitch
+        baseBatteryStatusTextView = batteryStatusTextView
         baseWidthSliderController = widthSliderController
         baseHeightSliderController = heightSliderController
         attachScrollSync(baseScroller)
@@ -178,7 +186,7 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
             applySettingsBackground()
-            // Android 15 起强制全面屏：内容会画到状态栏下面，这里按系统栏高度补内边距。
+            // Android 15 起强制全面屏：内容会画到状态栏下面，这里按系统栏高度补内边距并隔离顶部状态栏区。
             setOnApplyWindowInsetsListener { _, insets ->
                 val top: Int
                 val bottom: Int
@@ -201,7 +209,7 @@ class MainActivity : Activity() {
                             is RevealLayout -> c.scroller
                             else -> null
                         }
-                        s?.setPadding(0, top, 0, bottom)
+                        s?.let { applyScrollInsets(it, top, bottom) }
                     }
                 }
                 insets
@@ -226,6 +234,9 @@ class MainActivity : Activity() {
         val oldAnim = activeAnimator
         activeAnimator = null
         oldAnim?.cancel()
+        currentReveal?.release()
+        currentReveal = null
+        settingsBgImageView?.setImageDrawable(null)
         settingsBgBitmap?.recycle()
         settingsBgBitmap = null
     }
@@ -267,8 +278,7 @@ class MainActivity : Activity() {
             if (bmp != null) {
                 settingsBgImageView?.setImageBitmap(bmp)
                 settingsBgImageView?.visibility = View.VISIBLE
-                val scrimAlpha = (255 * prefs.settingsBgScrimPercent / 100).coerceIn(0, 255)
-                val scrimColor = Color.argb(scrimAlpha, Color.red(pageColor), Color.green(pageColor), Color.blue(pageColor))
+                val scrimColor = computeSettingsBgScrimColor(pageColor, prefs.settingsBgScrimPercent)
                 settingsBgScrimView?.setBackgroundColor(scrimColor)
                 settingsBgScrimView?.visibility = View.VISIBLE
                 return
@@ -368,27 +378,33 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         applyExcludeFromRecents(prefs.excludeFromRecents)
-        updateStatus()
+        baseStatusView?.let { updateStatus(it, baseThemeDark) } ?: updateStatus(statusView, darkUi)
+        if (currentReveal != null && statusView !== baseStatusView) {
+            updateStatus(statusView, currentRevealDark)
+        }
         // 用户可能在面板上点了收起/展开，回到设置页时同步开关（不触发回调）
-        showPanelSwitch?.let { sw ->
-            val shown = !prefs.minimized
+        val shown = !prefs.minimized
+        listOfNotNull(baseShowPanelSwitch, showPanelSwitch).distinct().forEach { sw ->
             if (sw.isChecked != shown) {
                 sw.tag = SYNCING
                 sw.isChecked = shown
                 sw.tag = null
             }
         }
-        keepAliveSwitch?.let { sw ->
+        listOfNotNull(baseKeepAliveSwitch, keepAliveSwitch).distinct().forEach { sw ->
             if (sw.isChecked != prefs.keepAliveNotification) {
                 sw.tag = SYNCING
                 sw.isChecked = prefs.keepAliveNotification
                 sw.tag = null
             }
         }
-        batteryStatusTextView?.text = if (isIgnoringBatteryOptimizations()) {
+        val batteryLabel = if (isIgnoringBatteryOptimizations()) {
             getString(R.string.btn_battery_whitelisted)
         } else {
             getString(R.string.btn_request_battery_whitelist)
+        }
+        listOfNotNull(baseBatteryStatusTextView, batteryStatusTextView).distinct().forEach { tv ->
+            tv.text = batteryLabel
         }
         val maxPanelWidth = pixelsToDp(resources.displayMetrics.widthPixels, resources.displayMetrics.density)
             .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
@@ -453,17 +469,7 @@ class MainActivity : Activity() {
         }
 
         // ── 外观 ──
-        val appearanceSummary = buildString {
-            append(when (prefs.themeMode) {
-                ThemeMode.SYSTEM -> getString(R.string.theme_system)
-                ThemeMode.LIGHT -> getString(R.string.theme_light)
-                ThemeMode.DARK -> getString(R.string.theme_dark)
-            })
-            if (prefs.dynamicColor) {
-                append(" · ")
-                append(getString(R.string.label_dynamic_color))
-            }
-        }
+        val appearanceSummary = buildAppearanceSummary()
         val hasSettingsBg = CustomBackgroundManager.hasSettingsBg(this)
         val appearanceRows = mutableListOf<View>(
             themeModeRow(),
@@ -504,6 +510,8 @@ class MainActivity : Activity() {
                 },
                 onClear = {
                     CustomBackgroundManager.clearBackground(CustomBackgroundManager.getSettingsBgFile(this))
+                    currentReveal?.release()
+                    settingsBgImageView?.setImageDrawable(null)
                     settingsBgBitmap?.recycle()
                     settingsBgBitmap = null
                     toast(getString(R.string.bg_image_cleared))
@@ -522,9 +530,7 @@ class MainActivity : Activity() {
                     hint = getString(R.string.set_settings_bg_scrim_hint),
                     onChange = {
                         prefs.settingsBgScrimPercent = it
-                        val scrimAlpha = (255 * it / 100).coerceIn(0, 255)
-                        val scrimColor = Color.argb(scrimAlpha, Color.red(pageColor), Color.green(pageColor), Color.blue(pageColor))
-                        settingsBgScrimView?.setBackgroundColor(scrimColor)
+                        settingsBgScrimView?.setBackgroundColor(computeSettingsBgScrimColor(pageColor, it))
                     },
                 )
             )
@@ -1008,15 +1014,34 @@ class MainActivity : Activity() {
             setPadding(0, dp(20), 0, 0)
         })
 
-        return ScrollView(this).apply {
+        return SettingsScrollView(this).apply {
             scroller = this
             // 固定 id：系统重建（换主题/换颜色后的 recreate）时会自动保存并恢复滚动位置
             id = R.id.settings_scroll
-            isFillViewport = true
-            isVerticalScrollBarEnabled = false
-            clipToPadding = false
             addView(col)
         }
+    }
+
+    /**
+     * 设置页专用滚动容器：
+     * - 顶部按系统状态栏高度留白并启用 clipToPadding = true，防止滚动后文字与时间/信号图标重叠；
+     * - 仅在顶部滚动后叠加柔和的 16dp 渐隐边缘，底部保持通透以适配全面屏手势导航栏。
+     */
+    private inner class SettingsScrollView(context: Context) : ScrollView(context) {
+        init {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            clipToPadding = true
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(16))
+        }
+
+        override fun getBottomFadingEdgeStrength(): Float = 0f
+    }
+
+    private fun applyScrollInsets(scrollView: ScrollView, top: Int, bottom: Int) {
+        scrollView.setPadding(0, top, 0, 0)
+        scrollView.getChildAt(0)?.setPadding(dp(16), dp(16), dp(16), dp(40) + bottom)
     }
 
     // ───────────────────────── 头部 ─────────────────────────
@@ -1223,6 +1248,9 @@ class MainActivity : Activity() {
         // 实时状态摘要胶囊 (Status Chip)
         if (!summary.isNullOrBlank()) {
             val chip = TextView(this).apply {
+                if (cardId == "appearance") {
+                    tag = APPEARANCE_SUMMARY_CHIP_TAG
+                }
                 text = summary
                 textSize = 12f
                 typeface = sansMedium
@@ -2334,23 +2362,24 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun updateStatus() {
+    private fun updateStatus(targetView: TextView = statusView, isDark: Boolean = darkUi) {
         val on = isServiceEnabled()
-        statusView.text = getString(if (on) R.string.status_on else R.string.status_off)
-        if (hasCustomSettingsBg || darkUi) {
-            statusView.setTextColor(0xFFE8E6DC.toInt())
-            statusView.background = roundedSurface(0x33000000.toInt(), 999).apply {
+        val theme = resolveSettingsTheme(this, isDark, prefs.dynamicColor, prefs.uiAccentColor)
+        targetView.text = getString(if (on) R.string.status_on else R.string.status_off)
+        if (hasCustomSettingsBg || isDark) {
+            targetView.setTextColor(0xFFE8E6DC.toInt())
+            targetView.background = roundedSurface(0x33000000.toInt(), 999).apply {
                 setStroke(maxOf(1, dp(1)), 0x33FFFFFF.toInt())
             }
         } else {
-            statusView.setTextColor(0xFF4D4C48.toInt())
-            statusView.background = roundedSurface(trackColor, 999).apply {
-                setStroke(maxOf(1, dp(1)), borderColor)
+            targetView.setTextColor(0xFF4D4C48.toInt())
+            targetView.background = roundedSurface(theme.trackColor, 999).apply {
+                setStroke(maxOf(1, dp(1)), theme.borderColor)
             }
         }
-        statusView.setCompoundDrawablesRelativeWithIntrinsicBounds(GradientDrawable().apply {
+        targetView.setCompoundDrawablesRelativeWithIntrinsicBounds(GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(if (on) 0xFF7A9A5B.toInt() else accentColor)
+            setColor(if (on) 0xFF7A9A5B.toInt() else theme.accentColor)
             setSize(dp(8), dp(8))
         }, null, null, null)
     }
@@ -2371,14 +2400,27 @@ class MainActivity : Activity() {
     }
 
     @Suppress("DEPRECATION")
-    private fun updateSystemBars() {
-        val lightStatus = !darkUi && !hasCustomSettingsBg
-        val lightNav = !darkUi
-        window.statusBarColor = pageColor
-        window.navigationBarColor = pageColor
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = (if (lightStatus) View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR else 0) or
-            (if (lightNav) View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0)
+    private fun updateSystemBars(
+        statusDark: Boolean = darkUi,
+        navDark: Boolean = darkUi,
+        force: Boolean = true,
+    ) {
+        if (!force && appliedStatusBarDark == statusDark && appliedNavBarDark == navDark) return
+        appliedStatusBarDark = statusDark
+        appliedNavBarDark = navDark
+
+        val statusTheme = resolveSettingsTheme(this, statusDark, prefs.dynamicColor, prefs.uiAccentColor)
+        val navTheme = if (navDark == statusDark) {
+            statusTheme
+        } else {
+            resolveSettingsTheme(this, navDark, prefs.dynamicColor, prefs.uiAccentColor)
+        }
+        val lightStatus = !statusDark && !hasCustomSettingsBg
+        val lightNav = !navDark
+
+        window.statusBarColor = statusTheme.pageColor
+        window.navigationBarColor = navTheme.pageColor
+
         if (Build.VERSION.SDK_INT >= 30) {
             val controller = window.insetsController
             val statusFlag = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
@@ -2387,15 +2429,68 @@ class MainActivity : Activity() {
                 (if (lightStatus) statusFlag else 0) or (if (lightNav) navFlag else 0),
                 statusFlag or navFlag
             )
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (if (lightStatus) View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR else 0) or
+                (if (lightNav) View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0)
         }
+    }
+
+    private fun buildAppearanceSummary(mode: ThemeMode = prefs.themeMode): String = buildString {
+        append(when (mode) {
+            ThemeMode.SYSTEM -> getString(R.string.theme_system)
+            ThemeMode.LIGHT -> getString(R.string.theme_light)
+            ThemeMode.DARK -> getString(R.string.theme_dark)
+        })
+        if (prefs.dynamicColor) {
+            append(" · ")
+            append(getString(R.string.label_dynamic_color))
+        }
+    }
+
+    private fun updateAppearanceSummaryChip(targetScroller: ScrollView?, mode: ThemeMode) {
+        targetScroller?.findViewWithTag<TextView>(APPEARANCE_SUMMARY_CHIP_TAG)?.text =
+            buildAppearanceSummary(mode)
     }
 
     /**
      * 以 (cx, cy) 为圆心进行圆形遮罩裁剪的容器，实现无缝可打断、可交互的扩散动效。
+     * 在同一圆形裁剪区域内先绘制目标主题底色（及可选的自定义壁纸与目标主题遮罩），
+     * 再绘制新主题滚动内容，确保卡片、页面背景与顶部状态栏区域沿圆波同步切换且无重影闪烁。
      */
-    private class RevealLayout(context: android.content.Context, val scroller: ScrollView) : FrameLayout(context) {
+    private class RevealLayout(
+        context: android.content.Context,
+        val scroller: ScrollView,
+        backdropColor: Int,
+        bgBitmap: android.graphics.Bitmap?,
+        scrimColor: Int,
+    ) : FrameLayout(context) {
+        private val backdropPaint = android.graphics.Paint().apply {
+            style = android.graphics.Paint.Style.FILL
+            color = backdropColor
+        }
+        private var bgImageView: ImageView? = null
+
         init {
+            if (bgBitmap != null && !bgBitmap.isRecycled) {
+                val iv = ImageView(context).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    setImageBitmap(bgBitmap)
+                }
+                bgImageView = iv
+                addView(iv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+
+                val scrim = View(context).apply {
+                    setBackgroundColor(scrimColor)
+                }
+                addView(scrim, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+            }
             addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        }
+
+        fun release() {
+            bgImageView?.setImageDrawable(null)
+            bgImageView = null
         }
 
         var cx = 0f
@@ -2411,14 +2506,14 @@ class MainActivity : Activity() {
 
         override fun dispatchDraw(canvas: Canvas) {
             if (radius <= 0f) return
-            if (radius >= maxRadius && maxRadius > 0f) {
-                super.dispatchDraw(canvas)
-                return
-            }
+            val fullReveal = radius >= maxRadius && maxRadius > 0f
             val save = canvas.save()
-            path.reset()
-            path.addCircle(cx, cy, radius, Path.Direction.CW)
-            canvas.clipPath(path)
+            if (!fullReveal) {
+                path.reset()
+                path.addCircle(cx, cy, radius, Path.Direction.CW)
+                canvas.clipPath(path)
+            }
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backdropPaint)
             super.dispatchDraw(canvas)
             canvas.restoreToCount(save)
         }
@@ -2462,7 +2557,33 @@ class MainActivity : Activity() {
             duration = animDuration
             interpolator = AccelerateDecelerateInterpolator()
             addUpdateListener { va ->
-                reveal.radius = va.animatedValue as Float
+                val r = va.animatedValue as Float
+                reveal.radius = r
+                val hostW = rootContainer.width.toFloat()
+                val hostH = rootContainer.height.toFloat()
+                if (hostW > 0f && hostH > 0f) {
+                    val statusY = (lastInsetsTop * 0.5f).coerceAtLeast(0f)
+                    val navY = (hostH - lastInsetsBottom * 0.5f).coerceAtLeast(0f)
+                    val statusDark = resolveRevealSystemBarDark(
+                        baseDark = baseThemeDark,
+                        revealDark = currentRevealDark,
+                        radius = r,
+                        cx = reveal.cx,
+                        cy = reveal.cy,
+                        targetX = hostW * 0.5f,
+                        targetY = statusY,
+                    )
+                    val navDark = resolveRevealSystemBarDark(
+                        baseDark = baseThemeDark,
+                        revealDark = currentRevealDark,
+                        radius = r,
+                        cx = reveal.cx,
+                        cy = reveal.cy,
+                        targetX = hostW * 0.5f,
+                        targetY = navY,
+                    )
+                    updateSystemBars(statusDark = statusDark, navDark = navDark, force = false)
+                }
             }
             addListener(object : AnimatorListenerAdapter() {
                 private var isCanceled = false
@@ -2476,13 +2597,18 @@ class MainActivity : Activity() {
                     if (activeAnimator === animation) {
                         activeAnimator = null
                         if (toBase) {
-                            rootContainer.removeView(reveal)
+                            reveal.release()
+                            (reveal.parent as? ViewGroup)?.removeView(reveal)
                             currentReveal = null
+                            baseContent?.let { content = it }
                             baseStatusView?.let { statusView = it }
                             baseShowPanelSwitch?.let { showPanelSwitch = it }
+                            baseKeepAliveSwitch?.let { keepAliveSwitch = it }
+                            baseBatteryStatusTextView?.let { batteryStatusTextView = it }
                             baseWidthSliderController?.let { widthSliderController = it }
                             baseHeightSliderController?.let { heightSliderController = it }
                             scroller = baseScroller
+                            updateSystemBars(statusDark = baseThemeDark, navDark = baseThemeDark, force = true)
                         } else {
                             finishThemeTransition(reveal, currentRevealDark)
                         }
@@ -2534,17 +2660,20 @@ class MainActivity : Activity() {
 
         when (action) {
             ThemeTransitionAction.NO_OP -> {
-                // 目标主题与底层主题外观一致（例如深色系统下在跟随系统与深色模式间切换），仅按钮高亮变化，无需动画
+                // 目标主题与底层主题外观一致（例如深色系统下在跟随系统与深色模式间切换），仅更新选中态与摘要标签
+                updateAppearanceSummaryChip(baseScroller, mode)
                 return
             }
             ThemeTransitionAction.EXPAND_REVEAL -> {
-                // 目标主题与当前正在扩散的主题一致，确保向外平滑展开至全屏
+                // 目标主题与当前正在扩散的主题一致，确保向外平滑展开至全屏并同步摘要标签
                 val reveal = currentReveal ?: return
+                updateAppearanceSummaryChip(reveal.scroller, mode)
                 startRevealAnimation(reveal, fromRadius = reveal.radius, toRadius = reveal.maxRadius, toBase = false)
             }
             ThemeTransitionAction.REVERSE_TO_BASE -> {
                 // 目标主题回到了底层主题，当前扩散波平滑收缩回圆心并清理，杜绝残留卡死
                 val reveal = currentReveal ?: return
+                updateAppearanceSummaryChip(baseScroller, mode)
                 startRevealAnimation(reveal, fromRadius = reveal.radius, toRadius = 0f, toBase = true)
             }
             ThemeTransitionAction.START_REVEAL -> {
@@ -2568,17 +2697,30 @@ class MainActivity : Activity() {
                 val dy = maxOf(cy, h - cy).toDouble()
                 val maxRadius = kotlin.math.hypot(dx, dy).toFloat() + dp(4).toFloat()
 
-                // 临时切换 darkUi 以构建新主题视图
+                // 临时切换 darkUi 以构建新主题视图与状态胶囊
                 darkUi = targetDark
+                val targetTheme = currentTheme
                 val newScroller = buildUi().apply {
-                    setPadding(0, lastInsetsTop, 0, lastInsetsBottom)
+                    applyScrollInsets(this, lastInsetsTop, lastInsetsBottom)
                 }
+                updateStatus(statusView, targetDark)
                 darkUi = baseThemeDark // 恢复底层 baseThemeDark
 
                 attachScrollSync(newScroller)
-                updateStatus()
 
-                val newReveal = RevealLayout(this, newScroller).apply {
+                val revealBgBitmap = settingsBgBitmap?.takeIf { hasCustomSettingsBg && !it.isRecycled }
+                val revealScrimColor = if (revealBgBitmap != null) {
+                    computeSettingsBgScrimColor(targetTheme.pageColor, prefs.settingsBgScrimPercent)
+                } else {
+                    0
+                }
+                val newReveal = RevealLayout(
+                    context = this,
+                    scroller = newScroller,
+                    backdropColor = targetTheme.pageColor,
+                    bgBitmap = revealBgBitmap,
+                    scrimColor = revealScrimColor,
+                ).apply {
                     this.cx = cx
                     this.cy = cy
                     this.radius = 0f
@@ -2596,7 +2738,9 @@ class MainActivity : Activity() {
                 newScroller.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
                     override fun onPreDraw(): Boolean {
                         newScroller.viewTreeObserver.removeOnPreDrawListener(this)
+                        isSyncingScroll = true
                         newScroller.scrollTo(0, baseScroller.scrollY)
+                        isSyncingScroll = false
                         return true
                     }
                 })
@@ -2611,6 +2755,7 @@ class MainActivity : Activity() {
         val winnerScroller = winnerReveal.scroller
         val currentScroll = winnerScroller.scrollY
 
+        winnerReveal.release()
         val host = contentHost ?: rootContainer
         host.removeAllViews()
         winnerReveal.removeView(winnerScroller)
@@ -2618,21 +2763,26 @@ class MainActivity : Activity() {
             winnerScroller,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
         )
+        isSyncingScroll = true
         winnerScroller.scrollTo(0, currentScroll)
+        isSyncingScroll = false
         baseScroller = winnerScroller
         baseThemeDark = newDark
         scroller = winnerScroller
         darkUi = newDark
         currentReveal = null
+        baseContent = content
         baseStatusView = statusView
         baseShowPanelSwitch = showPanelSwitch
+        baseKeepAliveSwitch = keepAliveSwitch
+        baseBatteryStatusTextView = batteryStatusTextView
         baseWidthSliderController = widthSliderController
         baseHeightSliderController = heightSliderController
 
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
         rootContainer.setBackgroundColor(pageColor)
         applySettingsBackground()
-        updateSystemBars()
+        updateSystemBars(statusDark = newDark, navDark = newDark, force = true)
     }
 
     /**
@@ -2674,6 +2824,7 @@ class MainActivity : Activity() {
     private companion object {
         const val KEY_SCROLL_Y = "settings_scroll_y"
         const val THEME_SELECTOR_TRACK_TAG = "theme_selector_track"
+        const val APPEARANCE_SUMMARY_CHIP_TAG = "appearance_summary_chip"
         const val REQUEST_CODE_PICK_TOUCHPAD_BG = 1001
         const val REQUEST_CODE_PICK_SETTINGS_BG = 1002
         const val REQUEST_CODE_POST_NOTIFICATIONS = 1003

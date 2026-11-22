@@ -435,6 +435,32 @@ internal fun computeRevealDuration(
     return (baseDurationMs * (distance / maxDist)).roundToLong().coerceIn(100L, baseDurationMs)
 }
 
+/**
+ * 计算设置页自定义壁纸的半透明主题遮罩颜色（保留 [pageColor] 的 RGB，按 [scrimPercent] 映射 Alpha）。
+ */
+internal fun computeSettingsBgScrimColor(pageColor: Int, scrimPercent: Int): Int {
+    val alpha = (255 * scrimPercent.coerceIn(0, 100) / 100).coerceIn(0, 255)
+    return (alpha shl 24) or (pageColor and 0x00FFFFFF)
+}
+
+/**
+ * 圆形主题扩散动效进行中，判断位于 ([targetX], [targetY]) 的系统栏（状态栏 / 导航栏）
+ * 是否已被扩散圆波覆盖，从而在圆波抵达系统栏瞬间同步切换图标深浅，回退时亦随之还原。
+ */
+internal fun resolveRevealSystemBarDark(
+    baseDark: Boolean,
+    revealDark: Boolean,
+    radius: Float,
+    cx: Float,
+    cy: Float,
+    targetX: Float,
+    targetY: Float,
+): Boolean {
+    if (radius <= 0f) return baseDark
+    val dist = kotlin.math.hypot((targetX - cx).toDouble(), (targetY - cy).toDouble()).toFloat()
+    return if (radius >= dist) revealDark else baseDark
+}
+
 internal enum class SwipeDirection { UP, DOWN, LEFT, RIGHT }
 
 internal fun resolveSwipeDirection(dx: Float, dy: Float): SwipeDirection {

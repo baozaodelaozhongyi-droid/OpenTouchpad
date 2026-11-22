@@ -195,6 +195,78 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun settingsBgScrimColorPreservesRgbAndClampsAlpha() {
+        val pageLight = 0xFFF5F4ED.toInt()
+        val pageDark = 0xFF1F1E1D.toInt()
+        assertEquals(0x00F5F4ED, computeSettingsBgScrimColor(pageLight, 0))
+        assertEquals(0x7FF5F4ED, computeSettingsBgScrimColor(pageLight, 50))
+        assertEquals(0xFFF5F4ED.toInt(), computeSettingsBgScrimColor(pageLight, 100))
+        assertEquals(0x001F1E1D, computeSettingsBgScrimColor(pageDark, -20))
+        assertEquals(0xFF1F1E1D.toInt(), computeSettingsBgScrimColor(pageDark, 150))
+    }
+
+    @Test
+    fun revealSystemBarDarkSwitchesWhenWaveCrossesTargetAndRevertsWhenShrinking() {
+        // 圆心 (300, 400)，顶部状态栏采样点 (300, 50)，距离 = 350
+        assertFalse(
+            resolveRevealSystemBarDark(
+                baseDark = false,
+                revealDark = true,
+                radius = 0f,
+                cx = 300f,
+                cy = 400f,
+                targetX = 300f,
+                targetY = 50f,
+            )
+        )
+        assertFalse(
+            resolveRevealSystemBarDark(
+                baseDark = false,
+                revealDark = true,
+                radius = 349f,
+                cx = 300f,
+                cy = 400f,
+                targetX = 300f,
+                targetY = 50f,
+            )
+        )
+        assertTrue(
+            resolveRevealSystemBarDark(
+                baseDark = false,
+                revealDark = true,
+                radius = 350f,
+                cx = 300f,
+                cy = 400f,
+                targetX = 300f,
+                targetY = 50f,
+            )
+        )
+        // 斜向距离：dx=300, dy=400 -> dist=500，切暗到亮时跨过阈值后变亮，收缩回阈值下恢复暗色
+        assertTrue(
+            resolveRevealSystemBarDark(
+                baseDark = true,
+                revealDark = false,
+                radius = 499f,
+                cx = 600f,
+                cy = 450f,
+                targetX = 300f,
+                targetY = 50f,
+            )
+        )
+        assertFalse(
+            resolveRevealSystemBarDark(
+                baseDark = true,
+                revealDark = false,
+                radius = 500f,
+                cx = 600f,
+                cy = 450f,
+                targetX = 300f,
+                targetY = 50f,
+            )
+        )
+    }
+
+    @Test
     fun swipeDirectionResolvesCorrectly() {
         assertEquals(SwipeDirection.LEFT, resolveSwipeDirection(dx = -50f, dy = 10f))
         assertEquals(SwipeDirection.RIGHT, resolveSwipeDirection(dx = 50f, dy = -10f))
