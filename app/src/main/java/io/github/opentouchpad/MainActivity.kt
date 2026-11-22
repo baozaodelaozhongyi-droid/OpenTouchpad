@@ -139,7 +139,6 @@ class MainActivity : Activity() {
         darkUi = baseThemeDark
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
         super.onCreate(savedInstanceState)
-        updateSystemBars()
 
         baseScroller = buildUi()
         scroller = baseScroller
@@ -216,6 +215,7 @@ class MainActivity : Activity() {
             }
         }
         setContentView(rootContainer)
+        updateSystemBars()
 
         val savedScroll = savedInstanceState?.getInt(KEY_SCROLL_Y, 0) ?: 0
         if (savedScroll > 0) {
@@ -2405,6 +2405,8 @@ class MainActivity : Activity() {
         navDark: Boolean = darkUi,
         force: Boolean = true,
     ) {
+        if (isFinishing || isDestroyed) return
+        val currentWindow = window ?: return
         if (!force && appliedStatusBarDark == statusDark && appliedNavBarDark == navDark) return
         appliedStatusBarDark = statusDark
         appliedNavBarDark = navDark
@@ -2418,22 +2420,26 @@ class MainActivity : Activity() {
         val lightStatus = !statusDark && !hasCustomSettingsBg
         val lightNav = !navDark
 
-        window.statusBarColor = statusTheme.pageColor
-        window.navigationBarColor = navTheme.pageColor
+        val decorView = currentWindow.decorView
+        currentWindow.statusBarColor = statusTheme.pageColor
+        currentWindow.navigationBarColor = navTheme.pageColor
 
         if (Build.VERSION.SDK_INT >= 30) {
-            val controller = window.insetsController
-            val statusFlag = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-            val navFlag = WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            controller?.setSystemBarsAppearance(
-                (if (lightStatus) statusFlag else 0) or (if (lightNav) navFlag else 0),
-                statusFlag or navFlag
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = (if (lightStatus) View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR else 0) or
-                (if (lightNav) View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0)
+            val controller = decorView.windowInsetsController
+                ?: runCatching { currentWindow.insetsController }.getOrNull()
+            if (controller != null) {
+                val statusFlag = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                val navFlag = WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+                controller.setSystemBarsAppearance(
+                    (if (lightStatus) statusFlag else 0) or (if (lightNav) navFlag else 0),
+                    statusFlag or navFlag
+                )
+                return
+            }
         }
+        @Suppress("DEPRECATION")
+        decorView.systemUiVisibility = (if (lightStatus) View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR else 0) or
+            (if (lightNav) View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0)
     }
 
     private fun buildAppearanceSummary(mode: ThemeMode = prefs.themeMode): String = buildString {
