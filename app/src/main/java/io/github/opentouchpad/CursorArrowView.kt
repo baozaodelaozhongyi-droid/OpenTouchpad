@@ -92,6 +92,17 @@ class CursorArrowView(context: Context) : View(context) {
         return bmp
     }
 
+    /**
+     * 安全释放光标预渲染缓存引用（供隐藏/最小化/内存紧张时调用）：
+     * 不在 View 仍附着窗口时同步调用 recycle()，避免 RenderThread 仍在回放上一帧 DisplayList 产生竞态崩溃；
+     * API 26+ Bitmap 像素由 NativeAllocationRegistry 自动回收，彻底脱离窗口后再在 onDetachedFromWindow 立即 recycle。
+     */
+    fun releaseCachedBitmap() {
+        cachedBitmap = null
+        cachedWidth = 0
+        cachedHeight = 0
+    }
+
     override fun onDetachedFromWindow() {
         cachedBitmap?.recycle()
         cachedBitmap = null

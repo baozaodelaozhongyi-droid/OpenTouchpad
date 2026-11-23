@@ -13,6 +13,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -65,6 +66,16 @@ class TouchpadService : AccessibilityService() {
         private const val OVERLAY_PASS_THROUGH_DELAY_MS = 50L
         private const val NOTIFICATION_CHANNEL_ID = "opentouchpad_keepalive"
         private const val NOTIFICATION_ID_KEEPALIVE = 2001
+        /** 面板收起/隐藏后延迟释放触控板自定义底图的防抖时长（避开 220ms 退场动画与快速反复切换）。 */
+        private const val TOUCHPAD_BG_RELEASE_DELAY_MS = 4000L
+        /** 滑块调整面板尺寸停止后按需升采样触控板底图的防抖时长。 */
+        private const val TOUCHPAD_BG_UPSAMPLE_DEBOUNCE_MS = 200L
+
+        private val OVERSHOOT_125 = OvershootInterpolator(1.25f)
+        private val OVERSHOOT_130 = OvershootInterpolator(1.3f)
+        private val OVERSHOOT_135 = OvershootInterpolator(1.35f)
+        private val OVERSHOOT_140 = OvershootInterpolator(1.4f)
+        private val OVERSHOOT_160 = OvershootInterpolator(1.6f)
 
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -226,17 +237,93 @@ class TouchpadService : AccessibilityService() {
         pendingPanelLayout = false
     }
 
-    fun reloadTouchpadBackground() {
+    private var touchpadBgDecodedTargetW = 0
+    private var touchpadBgDecodedTargetH = 0
+    private var touchpadBgReachedCeiling = false
+
+    private val releaseTouchpadBgRunnable = Runnable {
+        releaseTouchpadBgIfSafe()
+    }
+
+    private val bgUpsampleRunnable = Runnable {
+        maybeUpsampleTouchpadBg()
+    }
+
+    private fun isFullPanelVisible(): Boolean = panel != null && panel !== miniBallView
+
+    private fun loadTouchpadBgForRect(targetW: Int, targetH: Int) {
+        val safeW = if (targetW > 0) targetW else dp(120)
+        val safeH = if (targetH > 0) targetH else dp(90)
+        val decoded = CustomBackgroundManager.loadBackgroundBitmapForCrop(
+            CustomBackgroundManager.getTouchpadBgFile(this),
+            targetW = safeW,
+            targetH = safeH,
+            maxLongEdge = 1200,
+        )
+        // 旧图若仍被 attached 的 TouchpadSurfaceView / RenderThread 持有，不可同步 recycle，交给 NativeAllocationRegistry 回收
+        touchpadCustomBgBitmap = decoded?.bitmap
+        touchpadBgDecodedTargetW = if (decoded != null) safeW else 0
+        touchpadBgDecodedTargetH = if (decoded != null) safeH else 0
+        touchpadBgReachedCeiling = decoded?.reachedCeiling ?: true
+    }
+
+    private fun releaseTouchpadBgIfSafe() {
+        main.removeCallbacks(releaseTouchpadBgRunnable)
+        main.removeCallbacks(bgUpsampleRunnable)
+        if (isFullPanelVisible() || runningOutgoing.isNotEmpty()) return
         (padArea as? TouchpadSurfaceView)?.customBackgroundBitmap = null
         touchpadCustomBgBitmap?.recycle()
-        cachedHasTouchpadBg = CustomBackgroundManager.hasTouchpadBg(this)
-        touchpadCustomBgBitmap = if (cachedHasTouchpadBg) {
-            CustomBackgroundManager.loadBackgroundBitmap(
-                CustomBackgroundManager.getTouchpadBgFile(this),
-                maxDim = 1200
+        touchpadCustomBgBitmap = null
+        touchpadBgDecodedTargetW = 0
+        touchpadBgDecodedTargetH = 0
+        touchpadBgReachedCeiling = false
+    }
+
+    private fun scheduleTouchpadBgRelease() {
+        if (touchpadCustomBgBitmap == null) return
+        main.removeCallbacks(releaseTouchpadBgRunnable)
+        main.postDelayed(releaseTouchpadBgRunnable, TOUCHPAD_BG_RELEASE_DELAY_MS)
+    }
+
+    private fun maybeUpsampleTouchpadBg() {
+        if (!cachedHasTouchpadBg || !isFullPanelVisible()) return
+        val pad = padArea as? TouchpadSurfaceView ?: return
+        if (!shouldUpsampleTouchpadBg(
+                padW = padControlRect.w,
+                padH = padControlRect.h,
+                loadedTargetW = touchpadBgDecodedTargetW,
+                loadedTargetH = touchpadBgDecodedTargetH,
+                reachedCeiling = touchpadBgReachedCeiling,
             )
+        ) {
+            return
+        }
+        loadTouchpadBgForRect(padControlRect.w, padControlRect.h)
+        pad.customBackgroundBitmap = touchpadCustomBgBitmap
+    }
+
+    fun reloadTouchpadBackground() {
+        main.removeCallbacks(releaseTouchpadBgRunnable)
+        main.removeCallbacks(bgUpsampleRunnable)
+        cachedHasTouchpadBg = CustomBackgroundManager.hasTouchpadBg(this)
+        if (!isFullPanelVisible()) {
+            // 最小化/隐藏态不提前解码占内存；仅在无退场动画持有旧图时才同步 recycle
+            if (runningOutgoing.isEmpty()) {
+                touchpadCustomBgBitmap?.recycle()
+            }
+            touchpadCustomBgBitmap = null
+            touchpadBgDecodedTargetW = 0
+            touchpadBgDecodedTargetH = 0
+            touchpadBgReachedCeiling = false
+            return
+        }
+        if (cachedHasTouchpadBg) {
+            loadTouchpadBgForRect(padControlRect.w, padControlRect.h)
         } else {
-            null
+            touchpadCustomBgBitmap = null
+            touchpadBgDecodedTargetW = 0
+            touchpadBgDecodedTargetH = 0
+            touchpadBgReachedCeiling = false
         }
         (padArea as? TouchpadSurfaceView)?.let {
             it.customBackgroundBitmap = touchpadCustomBgBitmap
@@ -253,6 +340,16 @@ class TouchpadService : AccessibilityService() {
     private var screenH = 0
     private var cursorX = 0f
     private var cursorY = 0f
+
+    // 热路径复用的基本类型临时缓冲，消除 120–360Hz ACTION_MOVE / Choreographer 短命堆分配
+    private val padNormOut = FloatArray(2)
+    private val panelDragTargetOut = FloatArray(2)
+    private val ballOffsetOut = FloatArray(2)
+    private val ballDeformOut = FloatArray(5)
+
+    // 按钮水波纹 ColorStateList 缓存：18 键共享同一实例
+    private var cachedRippleColor = 0
+    private var cachedRippleCsl: ColorStateList? = null
 
     // 手指状态
     private var downRawX = 0f
@@ -293,7 +390,7 @@ class TouchpadService : AccessibilityService() {
     private var moveLastSampleNs = 0L
     private var moveSmoothedVx = 0f
     private var moveSmoothedVy = 0f
-    private var panelSpringState = PanelSpringState()
+    private val panelSpringState = MutablePanelSpringState()
     private var panelDeformRunning = false
     private var panelDeformLastFrameNs = 0L
     private val panelDeformMatrixValues = FloatArray(9)
@@ -324,9 +421,17 @@ class TouchpadService : AccessibilityService() {
     private var ballDragStartX = 0
     private var ballDragStartY = 0
     private var ballSnapAnimator: ValueAnimator? = null
-    private var ballSwipeTracker = BallSwipeTracker(0f, 0f)
+    private val ballSwipeTracker = BallSwipeTracker(0f, 0f)
     private var ballBgView: View? = null
     private var ballIconView: ImageView? = null
+    private var ballRingDrawable: GradientDrawable? = null
+    private var ballDiscDrawable: GradientDrawable? = null
+    private var ballLayerDrawable: LayerDrawable? = null
+    private var ballRippleDrawable: RippleDrawable? = null
+    private val ballDiscColors = IntArray(3)
+    private var ballCachedColor = 0
+    private var ballCachedSize = 0
+    private var ballCachedHalo = -1
     private var lastMoveHandleTiltMs = -1000L
     private var lastDragRawX = 0f
     private var lastDragRawY = 0f
@@ -373,7 +478,7 @@ class TouchpadService : AccessibilityService() {
                 ?.scaleX(1.18f)
                 ?.scaleY(1.18f)
                 ?.setDuration(180)
-                ?.setInterpolator(OvershootInterpolator(1.3f))
+                ?.setInterpolator(OVERSHOOT_130)
                 ?.start()
             ballIconView?.animate()
                 ?.scaleX(1.10f)
@@ -408,12 +513,12 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun applyBallDeformation(dx: Float, dy: Float, maxOffset: Float) {
-        val deform = computeBallDeformation(dx, dy, maxOffset)
-        ballBgView?.rotation = deform.rotationDeg
-        ballBgView?.scaleX = deform.stretch
-        ballBgView?.scaleY = deform.squash
-        ballIconView?.translationX = deform.iconTranslationX
-        ballIconView?.translationY = deform.iconTranslationY
+        computeBallDeformationInto(ballDeformOut, dx, dy, maxOffset)
+        ballBgView?.rotation = ballDeformOut[2]
+        ballBgView?.scaleX = ballDeformOut[0]
+        ballBgView?.scaleY = ballDeformOut[1]
+        ballIconView?.translationX = ballDeformOut[3]
+        ballIconView?.translationY = ballDeformOut[4]
     }
 
     private fun resetBallDeformation(animated: Boolean = true, duration: Long = 220L) {
@@ -423,7 +528,7 @@ class TouchpadService : AccessibilityService() {
                 ?.scaleX(1f)
                 ?.scaleY(1f)
                 ?.setDuration(duration)
-                ?.setInterpolator(OvershootInterpolator(1.4f))
+                ?.setInterpolator(OVERSHOOT_140)
                 ?.start()
 
             ballIconView?.animate()
@@ -432,7 +537,7 @@ class TouchpadService : AccessibilityService() {
                 ?.scaleX(1f)
                 ?.scaleY(1f)
                 ?.setDuration(duration)
-                ?.setInterpolator(OvershootInterpolator(1.4f))
+                ?.setInterpolator(OVERSHOOT_140)
                 ?.start()
         } else {
             ballBgView?.animate()?.cancel()
@@ -537,6 +642,10 @@ class TouchpadService : AccessibilityService() {
         cursorParams = null
         touchpadCustomBgBitmap?.recycle()
         touchpadCustomBgBitmap = null
+        touchpadBgDecodedTargetW = 0
+        touchpadBgDecodedTargetH = 0
+        touchpadBgReachedCeiling = false
+        cachedRippleCsl = null
     }
 
     private fun registerSystemListeners() {
@@ -568,6 +677,7 @@ class TouchpadService : AccessibilityService() {
         main.removeCallbacks(ballLongPressRunnable)
         main.removeCallbacks(ballSingleTapRunnable)
         main.removeCallbacks(deferredBoundsCheckRunnable)
+        main.removeCallbacks(bgUpsampleRunnable)
         pendingBoundsRebuild = false
         cancelPendingLayouts()
         padFingerDown = false
@@ -580,9 +690,44 @@ class TouchpadService : AccessibilityService() {
         ballSnapAnimator = null
         stopPanelDeformation(resetVisuals = true)
         resetBallDeformation(animated = false)
-        touchRing?.clear()
         customSwipeArmed = false
+        if (touchRing?.isIdle == true && !dragging) {
+            removeTouchRing()
+        } else {
+            touchRing?.clear()
+        }
+        // 仅在面板未展开（最小化/隐藏）时回收触控板底图；展开态底图按实际尺寸已极小，避免亮屏未重建导致丢图
+        if (!isFullPanelVisible()) {
+            cancelTransitions()
+            releaseTouchpadBgIfSafe()
+        }
+        if (cursorView?.visibility != View.VISIBLE) {
+            (cursorView as? CursorArrowView)?.releaseCachedBitmap()
+        }
         dismissActiveDialog()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // 注意：退出 MainActivity 回到桌面使用触控板时系统也会分发 TRIM_MEMORY_UI_HIDDEN，
+        // 因此触控板处于展开可见态时绝不释放 touchpadCustomBgBitmap。
+        if (!isFullPanelVisible() && runningOutgoing.isEmpty()) {
+            releaseTouchpadBgIfSafe()
+        }
+        if (cursorView?.visibility != View.VISIBLE) {
+            (cursorView as? CursorArrowView)?.releaseCachedBitmap()
+        }
+        val ringIdle = touchRing?.isIdle == true && !customSwipeArmed && !dragging
+        if (ringIdle && (!isFullPanelVisible() || level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND)) {
+            removeTouchRing()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun onLowMemory() {
+        super.onLowMemory()
+        onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
     }
 
     private fun dismissActiveDialog() {
@@ -765,11 +910,12 @@ class TouchpadService : AccessibilityService() {
             screenW * prefs.padWidthPercent / 100
         }.coerceIn(widthRange.first, widthRange.last)
         val heightPx = panelHeightFor(widthPx, prefs.extraHeightDp)
-        val position = clampPanelPosition(window.x, window.y, widthPx, heightPx, screenW, screenH)
-        val layoutChanged = window.x != position.x || window.y != position.y ||
+        val clampedX = clampCoordToScreen(window.x, widthPx, screenW)
+        val clampedY = clampCoordToScreen(window.y, heightPx, screenH)
+        val layoutChanged = window.x != clampedX || window.y != clampedY ||
             window.width != widthPx || window.height != heightPx
-        window.x = position.x
-        window.y = position.y
+        window.x = clampedX
+        window.y = clampedY
         window.width = widthPx
         window.height = heightPx
         root.layoutParams = window
@@ -777,6 +923,10 @@ class TouchpadService : AccessibilityService() {
         if (layoutChanged) {
             pendingPanelLayout = true
             scheduleLayoutFlush()
+        }
+        if (cachedHasTouchpadBg && !touchpadBgReachedCeiling) {
+            main.removeCallbacks(bgUpsampleRunnable)
+            main.postDelayed(bgUpsampleRunnable, TOUCHPAD_BG_UPSAMPLE_DEBOUNCE_MS)
         }
     }
 
@@ -797,61 +947,117 @@ class TouchpadService : AccessibilityService() {
         return resolveUiAccentColor(prefs.uiAccentColor, dark)
     }
 
-    /** 实时平滑更新悬浮球尺寸、透明度与颜色（零闪烁）。 */
+    /** 实时平滑更新悬浮球尺寸、透明度与颜色（零闪烁、原地复用 Drawable 与 LayoutParams）。 */
     fun updateBallAppearance() {
         if (!this::prefs.isInitialized) return
         val dot = miniBallView ?: return
         val lp = panelParams ?: return
+        dot.alpha = ballRestingAlpha()
+
         val size = dp(prefs.floatingBallSizeDp.coerceIn(FLOATING_BALL_MIN_DP, FLOATING_BALL_MAX_DP))
         val ballColor = prefs.floatingBallColor.takeIf { it != 0 }
             ?: getAccentColor(isDarkTheme())
+        val sizeChanged = size != ballCachedSize
+        val colorChanged = ballColor != ballCachedColor
+        if (!sizeChanged && !colorChanged && ballRippleDrawable != null) {
+            return
+        }
+
         val light = Color.luminance(ballColor) > 0.55f
         val ballSize = (size * 0.86f).roundToInt()
         val halo = (ballSize * 0.06f).roundToInt().coerceAtLeast(dp(1))
 
-        val ring = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor((ballColor and 0x00FFFFFF) or 0x40000000)
+        val ring = ballRingDrawable
+        val disc = ballDiscDrawable
+        val layer = ballLayerDrawable
+        val ripple = ballRippleDrawable
+        if (ring != null && disc != null && layer != null && ripple != null) {
+            if (colorChanged) {
+                ring.setColor((ballColor and 0x00FFFFFF) or 0x40000000)
+                ballDiscColors[0] = lighten(ballColor, 0.18f)
+                ballDiscColors[1] = ballColor
+                ballDiscColors[2] = darken(ballColor, 0.06f)
+                disc.colors = ballDiscColors
+                disc.setStroke(maxOf(1, dp(1)), if (light) 0x33141413 else 0x55FAF9F5)
+                ripple.setColor(ColorStateList.valueOf(if (light) 0x26141413 else 0x40FAF9F5))
+                ballIconView?.imageTintList = ColorStateList.valueOf(if (light) 0xFF141413.toInt() else 0xFFFAF9F5.toInt())
+                ballCachedColor = ballColor
+            }
+            if (halo != ballCachedHalo) {
+                layer.setLayerInset(1, halo, halo, halo, halo)
+                ballCachedHalo = halo
+                if (!sizeChanged && !layer.bounds.isEmpty) {
+                    val b = layer.bounds
+                    layer.setBounds(b.left, b.top, b.right, b.bottom)
+                }
+                layer.invalidateSelf()
+            }
+        } else {
+            val newRing = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor((ballColor and 0x00FFFFFF) or 0x40000000)
+            }
+            ballDiscColors[0] = lighten(ballColor, 0.18f)
+            ballDiscColors[1] = ballColor
+            ballDiscColors[2] = darken(ballColor, 0.06f)
+            val newDisc = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                ballDiscColors,
+            ).apply {
+                shape = GradientDrawable.OVAL
+                setStroke(maxOf(1, dp(1)), if (light) 0x33141413 else 0x55FAF9F5)
+            }
+            val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+            val newLayer = LayerDrawable(arrayOf(newRing, newDisc)).apply { setLayerInset(1, halo, halo, halo, halo) }
+            val newRipple = RippleDrawable(
+                ColorStateList.valueOf(if (light) 0x26141413 else 0x40FAF9F5),
+                newLayer,
+                mask,
+            )
+            ballRingDrawable = newRing
+            ballDiscDrawable = newDisc
+            ballLayerDrawable = newLayer
+            ballRippleDrawable = newRipple
+            ballCachedColor = ballColor
+            ballCachedHalo = halo
+            ballBgView?.background = newRipple
+            ballIconView?.imageTintList = ColorStateList.valueOf(if (light) 0xFF141413.toInt() else 0xFFFAF9F5.toInt())
         }
-        val disc = GradientDrawable(
-            GradientDrawable.Orientation.TL_BR,
-            intArrayOf(lighten(ballColor, 0.18f), ballColor, darken(ballColor, 0.06f)),
-        ).apply {
-            shape = GradientDrawable.OVAL
-            setStroke(maxOf(1, dp(1)), if (light) 0x33141413 else 0x55FAF9F5)
-        }
-        val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
 
-        ballBgView?.background = RippleDrawable(
-            ColorStateList.valueOf(if (light) 0x26141413 else 0x40FAF9F5),
-            LayerDrawable(arrayOf(ring, disc)).apply { setLayerInset(1, halo, halo, halo, halo) },
-            mask,
-        )
-        ballBgView?.layoutParams = FrameLayout.LayoutParams(ballSize, ballSize, Gravity.CENTER)
-
-        val icon = ballIconView
-        if (icon != null) {
-            icon.imageTintList = ColorStateList.valueOf(if (light) 0xFF141413.toInt() else 0xFFFAF9F5.toInt())
-            val iconPadding = (ballSize * 0.04f).roundToInt()
-            icon.setPadding(iconPadding, iconPadding, iconPadding, iconPadding)
-            val iconSize = (ballSize * 0.48f).roundToInt()
-            icon.layoutParams = FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER)
+        if (sizeChanged) {
+            ballCachedSize = size
+            ballBgView?.let { bg ->
+                val bgLp = (bg.layoutParams as? FrameLayout.LayoutParams)
+                    ?: FrameLayout.LayoutParams(ballSize, ballSize, Gravity.CENTER)
+                bgLp.width = ballSize
+                bgLp.height = ballSize
+                bg.layoutParams = bgLp
+            }
+            ballIconView?.let { icon ->
+                val iconPadding = (ballSize * 0.04f).roundToInt()
+                icon.setPadding(iconPadding, iconPadding, iconPadding, iconPadding)
+                val iconSize = (ballSize * 0.48f).roundToInt()
+                val iconLp = (icon.layoutParams as? FrameLayout.LayoutParams)
+                    ?: FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER)
+                iconLp.width = iconSize
+                iconLp.height = iconSize
+                icon.layoutParams = iconLp
+            }
+            if (lp.width != size || lp.height != size) {
+                lp.width = size
+                lp.height = size
+                val clampedX = clampCoordToScreen(lp.x, size, screenW)
+                val clampedY = clampCoordToScreen(lp.y, size, screenH)
+                lp.x = clampedX
+                lp.y = clampedY
+                prefs.setBallPosition(isLandscape(), clampedX, clampedY)
+                ballAnchorX = clampedX
+                ballAnchorY = clampedY
+                pendingPanelLayout = true
+                scheduleLayoutFlush()
+            }
+            dot.requestLayout()
         }
-
-        dot.alpha = ballRestingAlpha()
-        if (lp.width != size || lp.height != size) {
-            lp.width = size
-            lp.height = size
-            val position = clampFloatingBallPosition(lp.x, lp.y, size, screenW, screenH)
-            lp.x = position.x
-            lp.y = position.y
-            prefs.setBallPosition(isLandscape(), position.x, position.y)
-            ballAnchorX = position.x
-            ballAnchorY = position.y
-            pendingPanelLayout = true
-            scheduleLayoutFlush()
-        }
-        dot.requestLayout()
         dot.invalidate()
     }
 
@@ -872,19 +1078,18 @@ class TouchpadService : AccessibilityService() {
         cv.invalidate()
     }
 
-    /** 实时平滑更新光圈样式与开关（零闪烁），可选播放预览动画。 */
+    /** 实时平滑更新光圈样式与开关（零闪烁），关闭时彻底移除悬浮窗释放显存，开启可选播放预览动画。 */
     fun updateTouchRingAppearance(preview: Boolean = false) {
         if (!this::prefs.isInitialized) return
         refreshHotPrefs()
         val enabled = cachedTouchRingEnabled
-        val color = resolveTouchRingColor()
-        touchRing?.let { v ->
-            v.accent = color
-            if (!enabled) {
-                v.clear()
-            }
+        if (!enabled) {
+            removeTouchRing()
+            return
         }
-        if (enabled && preview) {
+        val color = resolveTouchRingColor()
+        touchRing?.accent = color
+        if (preview) {
             showTouchRing(cursorX, cursorY, 0L)
         }
     }
@@ -977,12 +1182,23 @@ class TouchpadService : AccessibilityService() {
             cursorView?.visibility = View.VISIBLE
             outgoing?.let { finishOutgoing(it) }
             enteringWithTransition = false
+            scheduleTouchpadBgRelease()
+            if (touchRing?.isIdle == true && !customSwipeArmed && !dragging) {
+                removeTouchRing()
+            }
             return
         }
         if (prefs.minimized) {
-            cursorView?.visibility = View.INVISIBLE
+            // 最小化悬浮球态不需要光标：切为 GONE 释放窗口 Surface 并安全丢弃预渲染位图引用
+            cursorView?.visibility = View.GONE
+            (cursorView as? CursorArrowView)?.releaseCachedBitmap()
             addMiniDot()
+            scheduleTouchpadBgRelease()
+            if (touchRing?.isIdle == true && !customSwipeArmed && !dragging) {
+                removeTouchRing()
+            }
         } else {
+            main.removeCallbacks(releaseTouchpadBgRunnable)
             cursorView?.visibility = View.VISIBLE
             addFullPanel()
         }
@@ -1092,7 +1308,7 @@ class TouchpadService : AccessibilityService() {
                 .scaleX(1f).scaleY(1f).alpha(targetAlpha)
                 .setStartDelay(if (collapsing) 120L else 40L)
                 .setDuration(if (collapsing) 200L else 260L)
-                .setInterpolator(if (collapsing) android.view.animation.OvershootInterpolator(1.6f) else transitionInterpolator)
+                .setInterpolator(if (collapsing) OVERSHOOT_160 else transitionInterpolator)
                 .withEndAction {
                     incoming.scaleX = 1f; incoming.scaleY = 1f; incoming.alpha = targetAlpha
                 }
@@ -1104,6 +1320,7 @@ class TouchpadService : AccessibilityService() {
         stopPanelDeformation(resetVisuals = false)
         dismissActiveDialog()
         pendingPanelLayout = false
+        main.removeCallbacks(bgUpsampleRunnable)
         padArea?.animate()?.cancel()
         padFingerDown = false
         // 拖拽锁定状态（以及跟随光标的圆环）跨面板重建保留，不在这里结束
@@ -1115,6 +1332,13 @@ class TouchpadService : AccessibilityService() {
         miniBallView = null
         ballBgView = null
         ballIconView = null
+        ballRingDrawable = null
+        ballDiscDrawable = null
+        ballLayerDrawable = null
+        ballRippleDrawable = null
+        ballCachedColor = 0
+        ballCachedSize = 0
+        ballCachedHalo = -1
         padArea = null
         padControlRect = ControlRect(0, 0, 0, 0)
         actionViews.clear()
@@ -1338,11 +1562,18 @@ class TouchpadService : AccessibilityService() {
                 opacityPercent = prefs.opacityPercent
                 bgFocusXPercent = prefs.touchpadBgFocusXPercent
                 bgFocusYPercent = prefs.touchpadBgFocusYPercent
-                if (touchpadCustomBgBitmap == null && cachedHasTouchpadBg) {
-                    touchpadCustomBgBitmap = CustomBackgroundManager.loadBackgroundBitmap(
-                        CustomBackgroundManager.getTouchpadBgFile(this@TouchpadService),
-                        maxDim = 1200
-                    )
+                if (cachedHasTouchpadBg && (
+                        touchpadCustomBgBitmap == null ||
+                            shouldUpsampleTouchpadBg(
+                                padW = layout.pad.w,
+                                padH = layout.pad.h,
+                                loadedTargetW = touchpadBgDecodedTargetW,
+                                loadedTargetH = touchpadBgDecodedTargetH,
+                                reachedCeiling = touchpadBgReachedCeiling,
+                            )
+                        )
+                ) {
+                    loadTouchpadBgForRect(layout.pad.w, layout.pad.h)
                 }
                 customBackgroundBitmap = touchpadCustomBgBitmap
             }
@@ -1404,21 +1635,33 @@ class TouchpadService : AccessibilityService() {
             shape = GradientDrawable.OVAL
             setColor((ballColor and 0x00FFFFFF) or 0x40000000)
         }
+        ballDiscColors[0] = lighten(ballColor, 0.18f)
+        ballDiscColors[1] = ballColor
+        ballDiscColors[2] = darken(ballColor, 0.06f)
         val disc = GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
-            intArrayOf(lighten(ballColor, 0.18f), ballColor, darken(ballColor, 0.06f)),
+            ballDiscColors,
         ).apply {
             shape = GradientDrawable.OVAL
             setStroke(maxOf(1, dp(1)), if (light) 0x33141413 else 0x55FAF9F5)
         }
         val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+        val layer = LayerDrawable(arrayOf(ring, disc)).apply { setLayerInset(1, halo, halo, halo, halo) }
+        val rippleBg = RippleDrawable(
+            ColorStateList.valueOf(if (light) 0x26141413 else 0x40FAF9F5),
+            layer,
+            mask,
+        )
+        ballRingDrawable = ring
+        ballDiscDrawable = disc
+        ballLayerDrawable = layer
+        ballRippleDrawable = rippleBg
+        ballCachedColor = ballColor
+        ballCachedSize = size
+        ballCachedHalo = halo
 
         val bg = View(this).apply {
-            background = RippleDrawable(
-                ColorStateList.valueOf(if (light) 0x26141413 else 0x40FAF9F5),
-                LayerDrawable(arrayOf(ring, disc)).apply { setLayerInset(1, halo, halo, halo, halo) },
-                mask,
-            )
+            background = rippleBg
             isClickable = false
             isFocusable = false
         }
@@ -1505,6 +1748,15 @@ class TouchpadService : AccessibilityService() {
             dynamicColor = prefs.dynamicColor,
         )
 
+    private fun rippleColorStateList(ripple: Int): ColorStateList {
+        val cached = cachedRippleCsl
+        if (cached != null && cachedRippleColor == ripple) return cached
+        return ColorStateList.valueOf(ripple).also {
+            cachedRippleColor = ripple
+            cachedRippleCsl = it
+        }
+    }
+
     /** 复用并原地更新气泡按钮的 RippleDrawable/BubbleDrawable，首次不存在时才创建。 */
     private fun applyButtonBackground(
         view: View,
@@ -1526,7 +1778,10 @@ class TouchpadService : AccessibilityService() {
             }
         }
         if (existing != null && existingContent != null) {
-            existing.setColor(ColorStateList.valueOf(ripple))
+            if (existingContent.cachedRippleColor != ripple) {
+                existingContent.cachedRippleColor = ripple
+                existing.setColor(rippleColorStateList(ripple))
+            }
             existingContent.updateStyle(
                 baseColor = color,
                 strokeColor = stroke,
@@ -1559,13 +1814,7 @@ class TouchpadService : AccessibilityService() {
         opacityPercent: Int = prefs.opacityPercent,
         density: Float = resources.displayMetrics.density,
     ): Drawable {
-        val mask = BubbleDrawable(
-            baseColor = Color.WHITE,
-            strokeColor = Color.TRANSPARENT,
-            strokeWidthPx = 0f,
-            opacityPercent = 100,
-            isMask = true,
-        )
+        val mask = BubbleMaskDrawable()
         val content = BubbleDrawable(
             baseColor = color,
             strokeColor = stroke,
@@ -1575,8 +1824,10 @@ class TouchpadService : AccessibilityService() {
             dark = dark,
             glassTint = glassTint,
             density = density,
-        )
-        return RippleDrawable(ColorStateList.valueOf(ripple), content, mask)
+        ).apply {
+            cachedRippleColor = ripple
+        }
+        return RippleDrawable(rippleColorStateList(ripple), content, mask)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1784,13 +2035,23 @@ class TouchpadService : AccessibilityService() {
         }
         val panelX = panelLocationOnScreen[0]
         val panelY = panelLocationOnScreen[1]
-        val (normX, normY) = if (padControlRect.w > 0 && padControlRect.h > 0) {
-            resolvePadNormalizedCoords(e.rawX, e.rawY, panelX, panelY, padControlRect.x, padControlRect.y, padControlRect.w, padControlRect.h)
+        val normX: Float
+        val normY: Float
+        if (padControlRect.w > 0 && padControlRect.h > 0) {
+            resolvePadNormalizedCoordsInto(
+                padNormOut,
+                e.rawX, e.rawY,
+                panelX, panelY,
+                padControlRect.x, padControlRect.y, padControlRect.w, padControlRect.h,
+            )
+            normX = padNormOut[0]
+            normY = padNormOut[1]
         } else {
             val pad = padArea
             val w = pad?.width?.toFloat()?.coerceAtLeast(1f) ?: 1f
             val h = pad?.height?.toFloat()?.coerceAtLeast(1f) ?: 1f
-            Pair(((e.x - w / 2f) / (w / 2f)).coerceIn(-1f, 1f), ((e.y - h / 2f) / (h / 2f)).coerceIn(-1f, 1f))
+            normX = ((e.x - w / 2f) / (w / 2f)).coerceIn(-1f, 1f)
+            normY = ((e.y - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
         }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -1986,17 +2247,22 @@ class TouchpadService : AccessibilityService() {
                 moveSmoothedVy = 0f
             }
 
-            val target = if (movingPanel) {
-                computePanelDragTarget(moveSmoothedVx, moveSmoothedVy, resources.displayMetrics.density)
+            val targetX: Float
+            val targetY: Float
+            if (movingPanel) {
+                computePanelDragTargetInto(panelDragTargetOut, moveSmoothedVx, moveSmoothedVy, resources.displayMetrics.density)
+                targetX = panelDragTargetOut[0]
+                targetY = panelDragTargetOut[1]
             } else {
-                PanelDragTarget(0f, 0f)
+                targetX = 0f
+                targetY = 0f
             }
             val targetGrab = if (movingPanel) 1f else 0f
 
-            panelSpringState = stepPanelDragSpring(
+            stepPanelDragSpringInPlace(
                 state = panelSpringState,
-                targetX = target.x,
-                targetY = target.y,
+                targetX = targetX,
+                targetY = targetY,
                 targetGrab = targetGrab,
                 dtSec = frameDt,
                 isDragging = movingPanel,
@@ -2025,7 +2291,7 @@ class TouchpadService : AccessibilityService() {
             }
             val shouldPause = movingPanel && !hasPendingMove &&
                 abs(moveSmoothedVx) < 0.5f && abs(moveSmoothedVy) < 0.5f &&
-                isPanelSpringAtRestForTarget(panelSpringState, target.x, target.y, targetGrab)
+                panelSpringState.isAtRestForTarget(targetX, targetY, targetGrab)
             if (shouldPause || shouldUpdateAmbientGlassShaders(nowMs, lastMoveHandleTiltMs, 1f, 1f, 13L)) {
                 lastMoveHandleTiltMs = nowMs
                 movingHandleView?.let { setBubbleViewTilt(it, tiltX, tiltY) }
@@ -2064,7 +2330,7 @@ class TouchpadService : AccessibilityService() {
         moveLastSampleNs = 0L
         moveSmoothedVx = 0f
         moveSmoothedVy = 0f
-        panelSpringState = PanelSpringState()
+        panelSpringState.reset()
         if (resetVisuals) {
             (panel as? DeformablePanelLayout)?.clearDeformation()
             if (!padFingerDown) {
@@ -2117,17 +2383,11 @@ class TouchpadService : AccessibilityService() {
                 val maxY = (screenH - panelH.coerceAtLeast(0)).coerceAtLeast(0).toFloat()
                 val clampedX = (movingPanelX + (e.rawX - movingFromX)).coerceIn(0f, maxX)
                 val clampedY = (movingPanelY + (e.rawY - movingFromY)).coerceIn(0f, maxY)
-                val position = clampPanelPosition(
-                    movingPanelX + (e.rawX - movingFromX).roundToInt(),
-                    movingPanelY + (e.rawY - movingFromY).roundToInt(),
-                    panelW,
-                    panelH,
-                    screenW,
-                    screenH,
-                )
-                if (lp.x != position.x || lp.y != position.y) {
-                    lp.x = position.x
-                    lp.y = position.y
+                val nextX = clampCoordToScreen(movingPanelX + (e.rawX - movingFromX).roundToInt(), panelW, screenW)
+                val nextY = clampCoordToScreen(movingPanelY + (e.rawY - movingFromY).roundToInt(), panelH, screenH)
+                if (lp.x != nextX || lp.y != nextY) {
+                    lp.x = nextX
+                    lp.y = nextY
                     pendingPanelLayout = true
                     scheduleLayoutFlush()
                 }
@@ -2221,6 +2481,7 @@ class TouchpadService : AccessibilityService() {
                         resizingCurrentWidthPercent,
                         resizingCurrentExtraHeightDp,
                     )
+                    maybeUpsampleTouchpadBg()
                     panel?.post { keepPanelInBounds() }
                     onPanelResized?.invoke(resizingCurrentWidthDp, resizingCurrentExtraHeightDp)
                 }
@@ -2248,16 +2509,17 @@ class TouchpadService : AccessibilityService() {
         val size = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
         val anim = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 200L
-            interpolator = OvershootInterpolator(1.25f)
+            interpolator = OVERSHOOT_125
             addUpdateListener { va ->
                 val frac = (va.animatedValue as? Float) ?: va.animatedFraction
                 val p = panelParams ?: return@addUpdateListener
                 val curX = (startX + (targetX - startX) * frac).roundToInt()
                 val curY = (startY + (targetY - startY) * frac).roundToInt()
-                val clamped = clampFloatingBallPosition(curX, curY, size, screenW, screenH)
-                if (p.x != clamped.x || p.y != clamped.y) {
-                    p.x = clamped.x
-                    p.y = clamped.y
+                val cx = clampCoordToScreen(curX, size, screenW)
+                val cy = clampCoordToScreen(curY, size, screenH)
+                if (p.x != cx || p.y != cy) {
+                    p.x = cx
+                    p.y = cy
                     panel?.let { runCatching { wm.updateViewLayout(it, p) } }
                 }
             }
@@ -2309,17 +2571,12 @@ class TouchpadService : AccessibilityService() {
                 }
                 if (ballMoved) {
                     val size = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
-                    val position = clampFloatingBallPosition(
-                        ballDragStartX + dx.roundToInt(),
-                        ballDragStartY + dy.roundToInt(),
-                        size,
-                        screenW,
-                        screenH,
-                    )
+                    val cx = clampCoordToScreen(ballDragStartX + dx.roundToInt(), size, screenW)
+                    val cy = clampCoordToScreen(ballDragStartY + dy.roundToInt(), size, screenH)
                     panelParams?.let { lp ->
-                        if (lp.x != position.x || lp.y != position.y) {
-                            lp.x = position.x
-                            lp.y = position.y
+                        if (lp.x != cx || lp.y != cy) {
+                            lp.x = cx
+                            lp.y = cy
                             pendingPanelLayout = true
                             scheduleLayoutFlush()
                         }
@@ -2374,8 +2631,7 @@ class TouchpadService : AccessibilityService() {
                 val ballSize = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
                 val swipeThreshold = maxOf(dp(16).toFloat(), ballSize * 0.4f)
                 val cancelThreshold = resolveBallCancelThreshold(swipeThreshold, dp(8).toFloat())
-                ballSwipeTracker = BallSwipeTracker(swipeThreshold, cancelThreshold)
-                ballSwipeTracker.reset()
+                ballSwipeTracker.configure(swipeThreshold, cancelThreshold)
 
                 isDraggingBall = false
                 ballDragHoverSettled = true
@@ -2415,13 +2671,12 @@ class TouchpadService : AccessibilityService() {
 
                 if (isDraggingBall) {
                     val size = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
-                    val position = clampFloatingBallPosition(
-                        ballDragStartX + dx.roundToInt(), ballDragStartY + dy.roundToInt(), size, screenW, screenH,
-                    )
+                    val cx = clampCoordToScreen(ballDragStartX + dx.roundToInt(), size, screenW)
+                    val cy = clampCoordToScreen(ballDragStartY + dy.roundToInt(), size, screenH)
                     panelParams?.let { lp ->
-                        if (lp.x != position.x || lp.y != position.y) {
-                            lp.x = position.x
-                            lp.y = position.y
+                        if (lp.x != cx || lp.y != cy) {
+                            lp.x = cx
+                            lp.y = cy
                             pendingPanelLayout = true
                             scheduleLayoutFlush()
                         }
@@ -2459,7 +2714,8 @@ class TouchpadService : AccessibilityService() {
                                 }
                                 val dirX = ballDragVelocityX / speed
                                 val dirY = ballDragVelocityY / speed
-                                val motionState = computeDragMotionState(
+                                computeDragMotionStateInto(
+                                    out = ballDeformOut,
                                     speedPxPerSec = speed,
                                     dirX = dirX,
                                     dirY = dirY,
@@ -2470,12 +2726,12 @@ class TouchpadService : AccessibilityService() {
                                     maxParallaxPx = dp(5).toFloat(),
                                 )
                                 val rotAlpha = computeVrrEmaAlpha(dt, 0.028f)
-                                ballDragCurrentRotation = lerpAngleDeg(ballDragCurrentRotation, motionState.rotationDeg, rotAlpha)
+                                ballDragCurrentRotation = lerpAngleDeg(ballDragCurrentRotation, ballDeformOut[2], rotAlpha)
                                 ballBgView?.rotation = ballDragCurrentRotation
-                                ballBgView?.scaleX = motionState.stretch
-                                ballBgView?.scaleY = motionState.squash
-                                ballIconView?.translationX = motionState.iconTranslationX
-                                ballIconView?.translationY = motionState.iconTranslationY
+                                ballBgView?.scaleX = ballDeformOut[0]
+                                ballBgView?.scaleY = ballDeformOut[1]
+                                ballIconView?.translationX = ballDeformOut[3]
+                                ballIconView?.translationY = ballDeformOut[4]
                             } else if (!ballDragHoverSettled) {
                                 // 速度降至悬停或微动时仅触发一次平滑回弹至饱满圆形，避免每帧打断重启
                                 ballDragHoverSettled = true
@@ -2494,14 +2750,13 @@ class TouchpadService : AccessibilityService() {
                         // 滑动手势滑动动效：以阻尼弹性位移跟手，直观展现滑动方向与距离感
                         val size = miniBallView?.width ?: dp(prefs.floatingBallSizeDp)
                         val maxOffset = size * 0.45f
-                        val offset = computeDampedSwipeOffset(dx, dy, maxOffset)
-                        val targetX = (ballAnchorX + offset.x).roundToInt()
-                        val targetY = (ballAnchorY + offset.y).roundToInt()
-                        val clamped = clampFloatingBallPosition(targetX, targetY, size, screenW, screenH)
+                        computeDampedSwipeOffsetInto(ballOffsetOut, dx, dy, maxOffset)
+                        val cx = clampCoordToScreen((ballAnchorX + ballOffsetOut[0]).roundToInt(), size, screenW)
+                        val cy = clampCoordToScreen((ballAnchorY + ballOffsetOut[1]).roundToInt(), size, screenH)
                         panelParams?.let { lp ->
-                            if (lp.x != clamped.x || lp.y != clamped.y) {
-                                lp.x = clamped.x
-                                lp.y = clamped.y
+                            if (lp.x != cx || lp.y != cy) {
+                                lp.x = cx
+                                lp.y = cy
                                 pendingPanelLayout = true
                                 scheduleLayoutFlush()
                             }
@@ -2530,7 +2785,7 @@ class TouchpadService : AccessibilityService() {
                         ?.scaleX(1f)
                         ?.scaleY(1f)
                         ?.setDuration(220)
-                        ?.setInterpolator(OvershootInterpolator(1.35f))
+                        ?.setInterpolator(OVERSHOOT_135)
                         ?.start()
                     ballIconView?.animate()
                         ?.translationX(0f)
@@ -2981,7 +3236,7 @@ class TouchpadService : AccessibilityService() {
         resolveTouchRingColor(prefs.touchRingColor, isDarkTheme(), getAccentColor(isDarkTheme()))
 
     /** 常驻的反馈圆环窗口（透明、不可触摸，空闲时自动隐藏），只移动位置，不反复 add/remove。 */
-    private fun ensureTouchRing(): Pair<TouchRingView, WindowManager.LayoutParams>? {
+    private fun ensureTouchRing(): TouchRingView? {
         touchRing?.let { v ->
             touchRingParams?.let { lp ->
                 if (touchRingNeedsRaise) {
@@ -2989,7 +3244,7 @@ class TouchpadService : AccessibilityService() {
                     runCatching { wm.removeViewImmediate(v) }
                     runCatching { wm.addView(v, lp) }
                 }
-                return v to lp
+                return v
             }
         }
         val radius = dp(TOUCH_RING_RADIUS_DP).toFloat()
@@ -3020,11 +3275,12 @@ class TouchpadService : AccessibilityService() {
         touchRingNeedsRaise = false
         touchRing = v
         touchRingParams = lp
-        return v to lp
+        return v
     }
 
     private fun moveTouchRing(x: Float, y: Float, immediate: Boolean = false) {
-        val (v, lp) = ensureTouchRing() ?: return
+        val v = ensureTouchRing() ?: return
+        val lp = touchRingParams ?: return
         val nx = (x - lp.width / 2f).roundToInt()
         val ny = (y - lp.height / 2f).roundToInt()
         if (lp.x == nx && lp.y == ny) return
@@ -3262,10 +3518,12 @@ class TouchpadService : AccessibilityService() {
 
     private fun updateCursor(immediate: Boolean = false) {
         val p = cursorParams ?: return
-        val origin = cursorViewOrigin(cursorX, cursorY, p.width.toFloat())
-        if (!immediate && p.x == origin.x && p.y == origin.y) return
-        p.x = origin.x
-        p.y = origin.y
+        val sizePx = p.width.toFloat()
+        val ox = cursorViewOriginCoord(cursorX, sizePx)
+        val oy = cursorViewOriginCoord(cursorY, sizePx)
+        if (!immediate && p.x == ox && p.y == oy) return
+        p.x = ox
+        p.y = oy
         if (immediate) {
             pendingCursorLayout = false
             cursorView?.let { runCatching { wm.updateViewLayout(it, p) } }

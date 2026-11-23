@@ -41,6 +41,8 @@ class TouchRingView(context: Context) : View(context) {
     private enum class Phase { IDLE, EXPANDING, HOLDING, COLLAPSING }
 
     private var phase = Phase.IDLE
+    /** 当前圆环是否处于完全静止态（无展开/保持/收缩动画），用于安全判定空闲窗口回收。 */
+    val isIdle: Boolean get() = phase == Phase.IDLE
     /** 0 = 不可见，1 = 完全展开。 */
     private var progress = 0f
     private var collapseFromProgress = 1f
@@ -138,7 +140,7 @@ class TouchRingView(context: Context) : View(context) {
         }
         animator = ValueAnimator.ofFloat(from, 1f).apply {
             duration = durationMs
-            interpolator = DecelerateInterpolator(1.5f)
+            interpolator = DECELERATE_INTERPOLATOR
             addUpdateListener { progress = it.animatedValue as Float; invalidate() }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
@@ -171,7 +173,7 @@ class TouchRingView(context: Context) : View(context) {
         animator = ValueAnimator.ofFloat(from, 0f).apply {
             duration = (COLLAPSE_MS * from).toLong().coerceAtLeast(MIN_COLLAPSE_MS)
             // 先快后慢：一开始就明显缩小，不会在原地停着不动
-            interpolator = DecelerateInterpolator(1.5f)
+            interpolator = DECELERATE_INTERPOLATOR
             addUpdateListener { progress = it.animatedValue as Float; invalidate() }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
@@ -302,5 +304,6 @@ class TouchRingView(context: Context) : View(context) {
         const val COLLAPSE_MS = 180L
         private const val MIN_COLLAPSE_MS = 80L
         private const val FILL_ALPHA = 0.18f
+        private val DECELERATE_INTERPOLATOR = DecelerateInterpolator(1.5f)
     }
 }

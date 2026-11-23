@@ -37,6 +37,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
     }
     private val tiltPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
+        color = Color.WHITE
     }
     private val bevelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -52,16 +53,11 @@ class TouchpadSurfaceView(context: Context) : View(context) {
     private val bevelRect = RectF()
     private val strokeRect = RectF()
     private val bgMatrix = Matrix()
+    private val tiltMatrix = Matrix()
+    private val tiltMatrixValues = FloatArray(9)
 
-    // 预分配渐变数组，避免绘制期频繁堆分配
-    private val colors3 = IntArray(3)
-    private val colors4 = IntArray(4)
-    private val posMatYou = floatArrayOf(0f, 0.5f, 1f)
-    private val posGlassFill = floatArrayOf(0f, 0.48f, 1f)
-    private val posCaustic = floatArrayOf(0f, 0.40f, 1f)
-    private val posTilt = floatArrayOf(0f, 0.45f, 1f)
-    private val posBevel = floatArrayOf(0f, 0.20f, 0.78f, 1f)
-    private val posRim = floatArrayOf(0f, 0.36f, 0.68f, 1f)
+    private var cachedTiltShader: LinearGradient? = null
+    private var cachedTiltShaderOpacity = -1
 
     private var cachedBgSource: Bitmap? = null
     private var bgBitmapShader: BitmapShader? = null
@@ -308,6 +304,10 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             trailingGlassScheduled = false
         }
         pendingGlassSurfaceSync = false
+        cachedBgSource = null
+        bgBitmapShader = null
+        bitmapPaint.shader = null
+        bgMatrixDirty = true
         super.onDetachedFromWindow()
     }
 
@@ -357,7 +357,10 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         val highlightScale = computeGlassHighlightScale(clampedOpacity)
         val effectiveTiltX = (tiltNormX * tiltIntensity).coerceIn(-1f, 1f)
         val effectiveTiltY = (tiltNormY * tiltIntensity).coerceIn(-1f, 1f)
-        val shift = computeSpecularShift(effectiveTiltX, effectiveTiltY)
+        computeSpecularShiftInto(tempShift, effectiveTiltX, effectiveTiltY)
+        val shiftXRatio = tempShift[0]
+        val shiftYRatio = tempShift[1]
+        val shiftBoost = tempShift[2]
         val tint = if (glassTintColor != 0) glassTintColor else baseColor
         val fillAlpha = (255 * clampedOpacity / 100).coerceIn(0, 255)
 
@@ -386,7 +389,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
                     Color.WHITE,
                     (if (isDarkTheme) 0.10f else 0.34f) * glassFactor,
                 )
-                val topAlpha = (fillAlpha * (1f + (0.08f + shift.boost * 0.35f) * glassFactor))
+                val topAlpha = (fillAlpha * (1f + (0.08f + shiftBoost * 0.35f) * glassFactor))
                     .roundToInt().coerceIn(0, 255)
 
                 val midRgb = lerpArgb(baseColor, tint, 0.08f * glassFactor)
@@ -400,10 +403,10 @@ class TouchpadSurfaceView(context: Context) : View(context) {
                 colors3[2] = replaceAlpha(botRgb, botAlpha)
                 surfacePaint.color = Color.WHITE
                 surfacePaint.shader = LinearGradient(
-                    w * (0.05f + shift.shiftXRatio * 0.5f),
-                    h * (0.05f + shift.shiftYRatio * 0.5f),
-                    w * (0.95f + shift.shiftXRatio * 0.5f),
-                    h * (0.95f + shift.shiftYRatio * 0.5f),
+                    w * (0.05f + shiftXRatio * 0.5f),
+                    h * (0.05f + shiftYRatio * 0.5f),
+                    w * (0.95f + shiftXRatio * 0.5f),
+                    h * (0.95f + shiftYRatio * 0.5f),
                     colors3,
                     posGlassFill,
                     Shader.TileMode.CLAMP,
@@ -416,12 +419,12 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         // 2. 液态内部轻焦散光斑（仅液态玻璃区间绘制）
         if (glassFactor > 0.02f) {
             drawCaustic = true
-            val cx = w * (0.28f + shift.shiftXRatio)
-            val cy = h * (0.24f + shift.shiftYRatio)
+            val cx = w * (0.28f + shiftXRatio)
+            val cy = h * (0.24f + shiftYRatio)
             val causticRadius = maxOf(w, h) * 0.68f
             val causticRgb = lerpArgb(Color.WHITE, tint, if (isDarkTheme) 0.25f else 0.15f)
             val customBgDamp = if (hasCustomBg) 0.45f else 1f
-            val causticAlpha = ((if (isDarkTheme) 26f else 44f) * glassFactor * highlightScale * customBgDamp * (1f + shift.boost * 1.5f))
+            val causticAlpha = ((if (isDarkTheme) 26f else 44f) * glassFactor * highlightScale * customBgDamp * (1f + shiftBoost * 1.5f))
                 .roundToInt().coerceIn(0, 255)
             colors3[0] = replaceAlpha(causticRgb, causticAlpha)
             colors3[1] = replaceAlpha(causticRgb, (causticAlpha * 0.30f).roundToInt())
@@ -445,7 +448,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         if (glassFactor > 0.02f && w > bevelInset * 2.5f && h > bevelInset * 2.5f) {
             drawBevel = true
             bevelPaint.strokeWidth = bevelWidth
-            val topHighlightAlpha = ((if (isDarkTheme) 42f else 68f) * glassFactor * highlightScale * (1f + shift.boost * 1.15f))
+            val topHighlightAlpha = ((if (isDarkTheme) 42f else 68f) * glassFactor * highlightScale * (1f + shiftBoost * 1.15f))
                 .roundToInt().coerceIn(0, 255)
             val bottomBounceColor = if (isDarkTheme) {
                 replaceAlpha(tint, (16f * glassFactor * highlightScale).roundToInt())
@@ -459,9 +462,9 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             colors4[3] = bottomBounceColor
             bevelPaint.color = Color.WHITE
             bevelPaint.shader = LinearGradient(
-                w * (0.35f + shift.shiftXRatio * 0.4f),
+                w * (0.35f + shiftXRatio * 0.4f),
                 0f,
-                w * (0.65f - shift.shiftXRatio * 0.4f),
+                w * (0.65f - shiftXRatio * 0.4f),
                 h,
                 colors4,
                 posBevel,
@@ -482,7 +485,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             strokePaint.color = replaceAlpha(strokeColor, strokeAlpha)
         } else {
             val rimAlphaBase = computeGlassRimAlpha(clampedOpacity, glassFactor)
-            val primaryRimAlpha = (rimAlphaBase * (1f + shift.boost)).roundToInt().coerceIn(0, 255)
+            val primaryRimAlpha = (rimAlphaBase * (1f + shiftBoost)).roundToInt().coerceIn(0, 255)
 
             colors4[0] = replaceAlpha(
                 lerpArgb(strokeColor, Color.WHITE, 0.82f * glassFactor),
@@ -503,10 +506,10 @@ class TouchpadSurfaceView(context: Context) : View(context) {
             )
             strokePaint.color = Color.WHITE
             strokePaint.shader = LinearGradient(
-                w * shift.shiftXRatio * 0.4f,
-                h * shift.shiftYRatio * 0.4f,
-                w * (1f + shift.shiftXRatio * 0.4f),
-                h * (1f + shift.shiftYRatio * 0.4f),
+                w * shiftXRatio * 0.4f,
+                h * shiftYRatio * 0.4f,
+                w * (1f + shiftXRatio * 0.4f),
+                h * (1f + shiftYRatio * 0.4f),
                 colors4,
                 posRim,
                 Shader.TileMode.CLAMP,
@@ -522,34 +525,39 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         val tiltLen = kotlin.math.hypot(tiltNormX, tiltNormY)
         if (tiltIntensity <= 0.01f || tiltLen <= 0.01f) {
             drawTilt = false
-            tiltPaint.shader = null
             return
         }
-        drawTilt = true
+        if (!writeTiltGradientMatrix(tiltMatrixValues, w, h, tiltNormX, tiltNormY)) {
+            drawTilt = false
+            return
+        }
+
         val clampedOpacity = opacityPercent.coerceIn(20, 100)
-        val glassFactor = computeLiquidGlassFactor(clampedOpacity)
-        val cx = w / 2f
-        val cy = h / 2f
-        val sinkX = cx + cx * tiltNormX
-        val sinkY = cy + cy * tiltNormY
-        val raisedX = cx - cx * tiltNormX
-        val raisedY = cy - cy * tiltNormY
+        var shader = cachedTiltShader
+        if (shader == null || cachedTiltShaderOpacity != clampedOpacity) {
+            val glassFactor = computeLiquidGlassFactor(clampedOpacity)
+            val highAlpha = ((60f + 40f * glassFactor) * clampedOpacity / 100f)
+                .roundToInt().coerceIn(0, 255)
+            val shadowAlpha = ((80f - 25f * glassFactor) * clampedOpacity / 100f)
+                .roundToInt().coerceIn(0, 255)
+            colors3[0] = Color.argb(highAlpha, 255, 255, 255)
+            colors3[1] = Color.TRANSPARENT
+            colors3[2] = Color.argb(shadowAlpha, 0, 0, 0)
+            shader = LinearGradient(
+                0f, 0f, 1f, 0f,
+                colors3,
+                posTilt,
+                Shader.TileMode.CLAMP,
+            )
+            cachedTiltShader = shader
+            cachedTiltShaderOpacity = clampedOpacity
+            tiltPaint.shader = shader
+        }
 
-        val highAlpha = ((60f + 40f * glassFactor) * tiltIntensity * clampedOpacity / 100f)
-            .roundToInt().coerceIn(0, 255)
-        val shadowAlpha = ((80f - 25f * glassFactor) * tiltIntensity * clampedOpacity / 100f)
-            .roundToInt().coerceIn(0, 255)
-
-        colors3[0] = Color.argb(highAlpha, 255, 255, 255)
-        colors3[1] = Color.TRANSPARENT
-        colors3[2] = Color.argb(shadowAlpha, 0, 0, 0)
-        tiltPaint.color = Color.WHITE
-        tiltPaint.shader = LinearGradient(
-            raisedX, raisedY, sinkX, sinkY,
-            colors3,
-            posTilt,
-            Shader.TileMode.CLAMP,
-        )
+        tiltMatrix.setValues(tiltMatrixValues)
+        shader.setLocalMatrix(tiltMatrix)
+        tiltPaint.alpha = (255f * tiltIntensity).roundToInt().coerceIn(0, 255)
+        drawTilt = true
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -606,5 +614,18 @@ class TouchpadSurfaceView(context: Context) : View(context) {
 
         // 5. 外轮廓描边
         canvas.drawRoundRect(strokeRect, cachedStrokeRadius, cachedStrokeRadius, strokePaint)
+    }
+
+    private companion object {
+        // 仅在主线程 onDraw() 同步使用，避免每实例重复持有数组
+        val colors3 = IntArray(3)
+        val colors4 = IntArray(4)
+        val tempShift = FloatArray(3)
+        val posMatYou = floatArrayOf(0f, 0.5f, 1f)
+        val posGlassFill = floatArrayOf(0f, 0.48f, 1f)
+        val posCaustic = floatArrayOf(0f, 0.40f, 1f)
+        val posTilt = floatArrayOf(0f, 0.45f, 1f)
+        val posBevel = floatArrayOf(0f, 0.20f, 0.78f, 1f)
+        val posRim = floatArrayOf(0f, 0.36f, 0.68f, 1f)
     }
 }

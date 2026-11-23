@@ -131,7 +131,8 @@ object CustomBackgroundManager {
                     }
                     val rawBmp = BitmapFactory.decodeFile(tempCacheFile.absolutePath, decodeOptions)
                     decodedBitmap = if (rawBmp != null) {
-                        applyExifOrientationIfNeeded(rawBmp, tempCacheFile.absolutePath)
+                        val oriented = applyExifOrientationIfNeeded(rawBmp, tempCacheFile.absolutePath)
+                        downscaleIfExceedsMaxDim(oriented, maxDim)
                     } else {
                         null
                     }
@@ -144,38 +145,70 @@ object CustomBackgroundManager {
             val parentDir = targetFile.parentFile ?: context.filesDir
             val tmpFile = File.createTempFile("bg_save_", ".tmp", parentDir)
             try {
-                FileOutputStream(tmpFile).use { fos ->
+                val compressed = try {
                     val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         Bitmap.CompressFormat.WEBP_LOSSY
                     } else {
                         @Suppress("DEPRECATION")
                         Bitmap.CompressFormat.WEBP
                     }
-                    if (!bmp.compress(format, 90, fos)) {
-                        bmp.compress(Bitmap.CompressFormat.PNG, 95, fos)
+                    val webpOk = FileOutputStream(tmpFile, false).use { fos ->
+                        bmp.compress(format, 90, fos)
                     }
+                    if (webpOk) {
+                        true
+                    } else {
+                        // WebP 失败时必须截断重写，防止与先前半截字节拼接成损坏文件
+                        FileOutputStream(tmpFile, false).use { fos ->
+                            bmp.compress(Bitmap.CompressFormat.PNG, 95, fos)
+                        }
+                    }
+                } finally {
+                    bmp.recycle()
+                    decodedBitmap = null
                 }
-            } finally {
-                bmp.recycle()
-                decodedBitmap = null
-            }
+                if (!compressed || !tmpFile.exists() || tmpFile.length() == 0L) {
+                    return false
+                }
 
-            if (!tmpFile.renameTo(targetFile)) {
-                tmpFile.copyTo(targetFile, overwrite = true)
-                tmpFile.delete()
+                if (!tmpFile.renameTo(targetFile)) {
+                    tmpFile.copyTo(targetFile, overwrite = true)
+                    tmpFile.delete()
+                }
+                // 写入新版 WebP 成功后，顺带清理同名旧版 PNG，避免旧文件残留
+                if (targetFile.name == TOUCHPAD_BG_WEBP) {
+                    clearBackground(File(parentDir, TOUCHPAD_BG_LEGACY_PNG))
+                } else if (targetFile.name == SETTINGS_BG_WEBP) {
+                    clearBackground(File(parentDir, SETTINGS_BG_LEGACY_PNG))
+                }
+                return true
+            } finally {
+                if (tmpFile.exists()) {
+                    tmpFile.delete()
+                }
             }
-            // 写入新版 WebP 成功后，顺带清理同名旧版 PNG，避免旧文件残留
-            if (targetFile.name == TOUCHPAD_BG_WEBP) {
-                clearBackground(File(parentDir, TOUCHPAD_BG_LEGACY_PNG))
-            } else if (targetFile.name == SETTINGS_BG_WEBP) {
-                clearBackground(File(parentDir, SETTINGS_BG_LEGACY_PNG))
-            }
-            return true
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to save background from uri: $uri", e)
             decodedBitmap?.recycle()
             return false
         }
+    }
+
+    private fun downscaleIfExceedsMaxDim(bitmap: Bitmap, maxDim: Int): Bitmap {
+        val srcW = bitmap.width
+        val srcH = bitmap.height
+        val maxSrc = maxOf(srcW, srcH)
+        if (maxSrc <= maxDim || maxDim <= 0) return bitmap
+        val scale = maxDim.toFloat() / maxSrc
+        val targetW = (srcW * scale).toInt().coerceAtLeast(1)
+        val targetH = (srcH * scale).toInt().coerceAtLeast(1)
+        val scaled = runCatching {
+            Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+        }.getOrNull() ?: return bitmap
+        if (scaled !== bitmap) {
+            bitmap.recycle()
+        }
+        return scaled
     }
 
     @SuppressLint("ExifInterface")
@@ -199,17 +232,44 @@ object CustomBackgroundManager {
         return rotated
     }
 
+    internal data class DecodedBackground(
+        val bitmap: Bitmap,
+        val reachedCeiling: Boolean,
+    )
+
     /**
-     * 从私有文件加载背景 Bitmap，自动进行采样以控制显存（无缝支持 WebP 与旧版 PNG）。
+     * 从私有文件加载背景 Bitmap，自动进行精确下采样以控制内存与显存（无缝支持 WebP 与旧版 PNG）。
+     * - API 28+ 优先采用 ImageDecoder.setTargetSize 精确按需缩放（保持 ALLOCATOR_SOFTWARE 与无损 ARGB_8888）；
+     * - 失败或低版本自动降级到 BitmapFactory 下采样。
      */
     fun loadBackgroundBitmap(targetFile: File, maxDim: Int = 1920): Bitmap? {
         if (!targetFile.exists() || targetFile.length() == 0L) return null
+        val safeMaxDim = maxDim.coerceAtLeast(1)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val decoded = runCatching {
+                val source = ImageDecoder.createSource(targetFile)
+                ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                    val srcW = info.size.width
+                    val srcH = info.size.height
+                    val maxSrc = maxOf(srcW, srcH)
+                    if (maxSrc > safeMaxDim && srcW > 0 && srcH > 0) {
+                        val scale = safeMaxDim.toFloat() / maxSrc
+                        val targetW = (srcW * scale).toInt().coerceIn(1, srcW)
+                        val targetH = (srcH * scale).toInt().coerceIn(1, srcH)
+                        decoder.setTargetSize(targetW, targetH)
+                    }
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    decoder.memorySizePolicy = ImageDecoder.MEMORY_POLICY_DEFAULT
+                }
+            }.getOrNull()
+            if (decoded != null) return decoded
+        }
         return runCatching {
             val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(targetFile.absolutePath, boundsOptions)
             val maxSrc = maxOf(boundsOptions.outWidth, boundsOptions.outHeight)
             var inSample = 1
-            while (maxSrc / (inSample * 2) >= maxDim) {
+            while (maxSrc / (inSample * 2) >= safeMaxDim) {
                 inSample *= 2
             }
             val decodeOptions = BitmapFactory.Options().apply {
@@ -217,6 +277,70 @@ object CustomBackgroundManager {
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
             BitmapFactory.decodeFile(targetFile.absolutePath, decodeOptions)
+        }.getOrNull()
+    }
+
+    /**
+     * 按 Center-Crop 最小覆盖尺寸加载触控板背景，既大幅削减默认小尺寸触控板的位图内存，
+     * 又确保竖屏长图/超宽图在任意焦点裁切下保持 >= 1:1 清晰度不发糊。
+     */
+    internal fun loadBackgroundBitmapForCrop(
+        targetFile: File,
+        targetW: Int,
+        targetH: Int,
+        maxLongEdge: Int = 1200,
+    ): DecodedBackground? {
+        if (!targetFile.exists() || targetFile.length() == 0L) return null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            var reachedCeiling = true
+            val decoded = runCatching {
+                val source = ImageDecoder.createSource(targetFile)
+                ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                    val srcW = info.size.width
+                    val srcH = info.size.height
+                    val plan = computeCenterCropDecodeSize(srcW, srcH, targetW, targetH, maxLongEdge)
+                    reachedCeiling = plan.reachedCeiling
+                    if (plan.targetWidth in 1 until srcW || plan.targetHeight in 1 until srcH) {
+                        decoder.setTargetSize(plan.targetWidth, plan.targetHeight)
+                    }
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    decoder.memorySizePolicy = ImageDecoder.MEMORY_POLICY_DEFAULT
+                }
+            }.getOrNull()
+            if (decoded != null) {
+                return DecodedBackground(decoded, reachedCeiling)
+            }
+        }
+        return runCatching {
+            val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(targetFile.absolutePath, boundsOptions)
+            val srcW = boundsOptions.outWidth
+            val srcH = boundsOptions.outHeight
+            if (srcW <= 0 || srcH <= 0) return@runCatching null
+            val plan = computeCenterCropDecodeSize(srcW, srcH, targetW, targetH, maxLongEdge)
+            var inSample = 1
+            while (srcW / (inSample * 2) >= plan.targetWidth && srcH / (inSample * 2) >= plan.targetHeight) {
+                inSample *= 2
+            }
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = inSample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val raw = BitmapFactory.decodeFile(targetFile.absolutePath, decodeOptions) ?: return@runCatching null
+            val bmp = if (raw.width > plan.targetWidth * 1.35f || raw.height > plan.targetHeight * 1.35f) {
+                val scaled = runCatching {
+                    Bitmap.createScaledBitmap(raw, plan.targetWidth, plan.targetHeight, true)
+                }.getOrNull()
+                if (scaled != null) {
+                    if (scaled !== raw) raw.recycle()
+                    scaled
+                } else {
+                    raw
+                }
+            } else {
+                raw
+            }
+            DecodedBackground(bmp, plan.reachedCeiling)
         }.getOrNull()
     }
 

@@ -7,6 +7,7 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.app.AlertDialog
 import android.app.NotificationManager
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.DialogInterface
 import android.content.Intent
@@ -25,6 +26,8 @@ import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
@@ -49,8 +52,9 @@ import android.widget.TextView
 import android.widget.Toast
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 /**
@@ -60,36 +64,68 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     private lateinit var prefs: Prefs
-    private lateinit var statusView: TextView
-    private lateinit var content: LinearLayout
     private lateinit var scroller: ScrollView
     private lateinit var baseScroller: ScrollView
     private lateinit var rootContainer: FrameLayout
+
     class SliderController(val setValue: (Int) -> Unit)
+
     private class CollapsibleCardController(
         val id: String,
         private val handler: (expand: Boolean, animate: Boolean, startDelay: Long) -> Unit,
         val isExpanded: () -> Boolean,
+        private val cancelHandler: () -> Unit,
     ) {
         fun setExpanded(expand: Boolean, animate: Boolean = true, startDelay: Long = 0L) {
             handler(expand, animate, startDelay)
         }
+
+        fun cancelAnimation() {
+            cancelHandler()
+        }
     }
 
+    /** 单次 buildUi() 作用域内共享的主题 ColorStateList 集合，避免每个开关/滑块/按钮重复分配。 */
+    private class UiColorStateLists(theme: SettingsTheme, isDark: Boolean) {
+        val accent: ColorStateList = ColorStateList.valueOf(theme.accentColor)
+        val track: ColorStateList = ColorStateList.valueOf(theme.trackColor)
+        val ripple: ColorStateList = ColorStateList.valueOf(theme.rippleColor)
+        val text: ColorStateList = ColorStateList.valueOf(theme.textColor)
+        val tertiaryText: ColorStateList = ColorStateList.valueOf(theme.tertiaryTextColor)
+        val switchThumb: ColorStateList = ColorStateList(
+            SWITCH_STATES,
+            intArrayOf(theme.accentColor, if (isDark) 0xFFB6B7BC.toInt() else 0xFFFFFFFF.toInt()),
+        )
+        val switchTrack: ColorStateList = ColorStateList(
+            SWITCH_STATES,
+            intArrayOf(theme.accentSoftStrongColor, theme.trackStrongColor),
+        )
+    }
 
-    private var showPanelSwitch: Switch? = null
-    private var keepAliveSwitch: Switch? = null
-    private var batteryStatusTextView: TextView? = null
+    /** 每个 ScrollView 视图树独占的绑定上下文，确保主题扩散双树与惰性卡片展开期间绝不串色或丢引用。 */
+    private class UiBindings(
+        val isDark: Boolean,
+        val colors: UiColorStateLists,
+    ) {
+        lateinit var content: LinearLayout
+        lateinit var statusView: TextView
+        var showPanelSwitch: Switch? = null
+        var keepAliveSwitch: Switch? = null
+        var batteryStatusTextView: TextView? = null
+        var widthSliderController: SliderController? = null
+        var heightSliderController: SliderController? = null
+        val cardControllers = mutableListOf<CollapsibleCardController>()
+
+        fun cancelAllCardAnimations() {
+            cardControllers.forEach { it.cancelAnimation() }
+        }
+    }
+
+    private lateinit var baseBindings: UiBindings
+    private var revealBindings: UiBindings? = null
+    private var activeBindings: UiBindings? = null
     private var pendingKeepAliveToggle: ((Boolean) -> Unit)? = null
-    private var baseContent: LinearLayout? = null
-    private var baseStatusView: TextView? = null
-    private var baseShowPanelSwitch: Switch? = null
-    private var baseKeepAliveSwitch: Switch? = null
-    private var baseBatteryStatusTextView: TextView? = null
-    private var widthSliderController: SliderController? = null
-    private var heightSliderController: SliderController? = null
-    private var baseWidthSliderController: SliderController? = null
-    private var baseHeightSliderController: SliderController? = null
+    private var activeDialog: AlertDialog? = null
     private var darkUi = false
     private var baseThemeDark = false
     private var currentReveal: RevealLayout? = null
@@ -102,12 +138,72 @@ class MainActivity : Activity() {
     private var lastInsetsBottom = 0
     private var activeAnimator: ValueAnimator? = null
     private var isSyncingScroll = false
+    private var isActivityStarted = false
     private var settingsBgImageView: ImageView? = null
     private var settingsBgScrimView: View? = null
     private var settingsBgBitmap: android.graphics.Bitmap? = null
     private var contentHost: FrameLayout? = null
     private var backInvokedCallback: OnBackInvokedCallback? = null
-    private val bgIoExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var bgIoExecutor: ThreadPoolExecutor? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val pendingRecreateRunnable = Runnable {
+        if (!isFinishing && !isDestroyed) {
+            recreateKeepingScroll()
+        }
+    }
+
+    private fun getBgIoExecutor(): ThreadPoolExecutor {
+        return bgIoExecutor ?: ThreadPoolExecutor(
+            1,
+            1,
+            30L,
+            TimeUnit.SECONDS,
+            LinkedBlockingQueue(),
+        ).apply {
+            allowCoreThreadTimeOut(true)
+        }.also { bgIoExecutor = it }
+    }
+
+    private fun allActiveBindings(): List<UiBindings> {
+        val list = ArrayList<UiBindings>(2)
+        if (::baseBindings.isInitialized) list.add(baseBindings)
+        revealBindings?.let { if (it !== baseBindings) list.add(it) }
+        return list
+    }
+
+    private inline fun <T> withUiContext(bindings: UiBindings, block: () -> T): T {
+        val prevDark = darkUi
+        val prevBindings = activeBindings
+        darkUi = bindings.isDark
+        activeBindings = bindings
+        return try {
+            block()
+        } finally {
+            darkUi = prevDark
+            activeBindings = prevBindings
+        }
+    }
+
+    private fun currentColorStateLists(): UiColorStateLists =
+        activeBindings?.colors ?: UiColorStateLists(currentTheme, darkUi)
+
+    private fun showTrackedDialog(dialog: AlertDialog) {
+        dismissActiveDialog()
+        activeDialog = dialog
+        dialog.setOnDismissListener {
+            if (activeDialog === dialog) activeDialog = null
+        }
+        if (!isFinishing && !isDestroyed) {
+            dialog.show()
+        } else {
+            activeDialog = null
+        }
+    }
+
+    private fun dismissActiveDialog() {
+        activeDialog?.let { runCatching { if (it.isShowing) it.dismiss() } }
+        activeDialog = null
+    }
 
     private var cachedLightTheme: SettingsTheme? = null
     private var cachedDarkTheme: SettingsTheme? = null
@@ -176,11 +272,11 @@ class MainActivity : Activity() {
             surfaceColor
         }
 
-    /** 标题用衬线体（内置 Noto Serif SC Medium 子集），正文/控件用系统无衬线体。 */
-    private val serif: Typeface by lazy {
-        runCatching { resources.getFont(R.font.serif_medium) }.getOrDefault(Typeface.SERIF)
-    }
-    private val sansMedium: Typeface by lazy { Typeface.create("sans-serif-medium", Typeface.NORMAL) }
+    /** 标题用衬线体（内置 Noto Serif SC Medium 子集，全局缓存），正文/控件用系统无衬线体。 */
+    private val serif: Typeface
+        get() = cachedSerif ?: runCatching { resources.getFont(R.font.serif_medium) }
+            .getOrDefault(Typeface.SERIF)
+            .also { cachedSerif = it }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         prefs = Prefs(this)
@@ -190,15 +286,10 @@ class MainActivity : Activity() {
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
         super.onCreate(savedInstanceState)
 
-        baseScroller = buildUi()
+        val (initialScroller, initialBindings) = buildUi(baseThemeDark)
+        baseScroller = initialScroller
+        baseBindings = initialBindings
         scroller = baseScroller
-        baseContent = content
-        baseStatusView = statusView
-        baseShowPanelSwitch = showPanelSwitch
-        baseKeepAliveSwitch = keepAliveSwitch
-        baseBatteryStatusTextView = batteryStatusTextView
-        baseWidthSliderController = widthSliderController
-        baseHeightSliderController = heightSliderController
         attachScrollSync(baseScroller)
         val host = FrameLayout(this).apply {
             addView(baseScroller, FrameLayout.LayoutParams(
@@ -319,7 +410,17 @@ class MainActivity : Activity() {
             }
             backInvokedCallback = null
         }
-        bgIoExecutor.shutdownNow()
+        mainHandler.removeCallbacks(pendingRecreateRunnable)
+        dismissActiveDialog()
+        pendingKeepAliveToggle = null
+        allActiveBindings().forEach { it.cancelAllCardAnimations() }
+        revealBindings = null
+        if (::rootContainer.isInitialized) {
+            rootContainer.setOnApplyWindowInsetsListener(null)
+        }
+        // 使用优雅 shutdown() 让正在落盘的后台写图任务安全完成并自动回收线程，不中断 IO
+        bgIoExecutor?.shutdown()
+        bgIoExecutor = null
         val oldAnim = activeAnimator
         activeAnimator = null
         oldAnim?.cancel()
@@ -346,7 +447,7 @@ class MainActivity : Activity() {
             val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
             prefs.keepAliveNotification = granted
             TouchpadService.instance?.updateKeepAliveNotification()
-            listOfNotNull(baseKeepAliveSwitch, keepAliveSwitch).distinct().forEach { sw ->
+            allActiveBindings().mapNotNull { it.keepAliveSwitch }.forEach { sw ->
                 sw.tag = SYNCING
                 sw.isChecked = granted
                 sw.tag = null
@@ -362,7 +463,7 @@ class MainActivity : Activity() {
     private fun applySettingsBackground() {
         val bgFile = CustomBackgroundManager.getSettingsBgFile(this)
         if (bgFile.exists() && bgFile.length() > 0) {
-            if (settingsBgBitmap == null) {
+            if (settingsBgBitmap == null || settingsBgBitmap?.isRecycled == true) {
                 val dm = resources.displayMetrics
                 val maxDim = maxOf(dm.widthPixels, dm.heightPixels).coerceAtLeast(1080)
                 settingsBgBitmap = CustomBackgroundManager.loadBackgroundBitmap(bgFile, maxDim)
@@ -412,15 +513,17 @@ class MainActivity : Activity() {
             val appContext = applicationContext
             when (requestCode) {
                 REQUEST_CODE_PICK_TOUCHPAD_BG -> {
-                    bgIoExecutor.execute {
+                    getBgIoExecutor().execute {
                         val success = CustomBackgroundManager.saveBackgroundFromUri(
                             appContext, uri, CustomBackgroundManager.getTouchpadBgSaveFile(appContext), maxDim = 1200
                         )
-                        runOnUiThread {
+                        mainHandler.post {
+                            if (success) {
+                                TouchpadService.instance?.reloadTouchpadBackground()
+                            }
                             if (!isFinishing && !isDestroyed) {
                                 if (success) {
                                     toast(getString(R.string.bg_image_applied))
-                                    TouchpadService.instance?.reloadTouchpadBackground()
                                     recreateKeepingScroll()
                                 } else {
                                     toast(getString(R.string.bg_image_failed))
@@ -432,20 +535,17 @@ class MainActivity : Activity() {
                 REQUEST_CODE_PICK_SETTINGS_BG -> {
                     val dm = resources.displayMetrics
                     val maxDim = maxOf(dm.widthPixels, dm.heightPixels).coerceAtLeast(1080)
-                    bgIoExecutor.execute {
+                    getBgIoExecutor().execute {
                         val success = CustomBackgroundManager.saveBackgroundFromUri(
                             appContext, uri, CustomBackgroundManager.getSettingsBgSaveFile(appContext), maxDim = maxDim
                         )
-                        runOnUiThread {
+                        mainHandler.post {
                             if (!isFinishing && !isDestroyed) {
                                 if (success) {
                                     toast(getString(R.string.bg_image_applied))
-                                    currentReveal?.release()
-                                    settingsBgImageView?.setImageDrawable(null)
-                                    settingsBgBitmap?.recycle()
-                                    settingsBgBitmap = null
+                                    // 不在此处提前 recycle 或解码新图：recreate() 会同步先走旧实例 onDestroy() 释放旧图，
+                                    // 再走新实例 onCreate() 仅解码一次新图，消除双全屏 Bitmap 峰值与 1 帧纯色闪屏。
                                     cachedHasCustomSettingsBg = true
-                                    applySettingsBackground()
                                     recreateKeepingScroll()
                                 } else {
                                     toast(getString(R.string.bg_image_failed))
@@ -460,6 +560,10 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        isActivityStarted = true
+        if (hasCustomSettingsBg && (settingsBgBitmap == null || settingsBgBitmap?.isRecycled == true)) {
+            applySettingsBackground()
+        }
         TouchpadService.onPanelResized = { w, h ->
             runOnUiThread {
                 updateResizedSliders(w, h)
@@ -468,21 +572,48 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        isActivityStarted = false
         super.onStop()
         TouchpadService.onPanelResized = null
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // 设置页退到后台保活（moveTaskToBack）且完全不可见时，释放全屏壁纸 Bitmap（10–36 MB）与主题缓存，
+        // 切回前台时 onStart() 自动无感恢复，保留多任务卡片预览与后台加锁能力。
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && !isActivityStarted) {
+            if (activeAnimator != null) {
+                // 先同步完结进行中的主题扩散动画，避免仅 cancel() 导致半屏 RevealLayout 卡死
+                activeAnimator?.end()
+            }
+            currentReveal?.release()
+            settingsBgImageView?.setImageDrawable(null)
+            settingsBgImageView?.visibility = View.GONE
+            settingsBgScrimView?.visibility = View.GONE
+            settingsBgBitmap?.recycle()
+            settingsBgBitmap = null
+            invalidateThemeCache()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun onLowMemory() {
+        super.onLowMemory()
+        onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
     }
 
     override fun onResume() {
         super.onResume()
         invalidateThemeCache()
         applyExcludeFromRecents(prefs.excludeFromRecents)
-        baseStatusView?.let { updateStatus(it, baseThemeDark) } ?: updateStatus(statusView, darkUi)
-        if (currentReveal != null && statusView !== baseStatusView) {
-            updateStatus(statusView, currentRevealDark)
+        val bindingsList = allActiveBindings()
+        bindingsList.forEach { b ->
+            updateStatus(b.statusView, b.isDark)
         }
         // 用户可能在面板上点了收起/展开，回到设置页时同步开关（不触发回调）
         val shown = !prefs.minimized
-        listOfNotNull(baseShowPanelSwitch, showPanelSwitch).distinct().forEach { sw ->
+        bindingsList.mapNotNull { it.showPanelSwitch }.forEach { sw ->
             if (sw.isChecked != shown) {
                 sw.tag = SYNCING
                 sw.isChecked = shown
@@ -494,7 +625,7 @@ class MainActivity : Activity() {
             prefs.keepAliveNotification = false
             TouchpadService.instance?.updateKeepAliveNotification()
         }
-        listOfNotNull(baseKeepAliveSwitch, keepAliveSwitch).distinct().forEach { sw ->
+        bindingsList.mapNotNull { it.keepAliveSwitch }.forEach { sw ->
             if (sw.isChecked != prefs.keepAliveNotification) {
                 sw.tag = SYNCING
                 sw.isChecked = prefs.keepAliveNotification
@@ -506,7 +637,7 @@ class MainActivity : Activity() {
         } else {
             getString(R.string.btn_request_battery_whitelist)
         }
-        listOfNotNull(baseBatteryStatusTextView, batteryStatusTextView).distinct().forEach { tv ->
+        bindingsList.mapNotNull { it.batteryStatusTextView }.forEach { tv ->
             tv.text = batteryLabel
         }
         val maxPanelWidth = pixelsToDp(fullScreenWidthPx(), resources.displayMetrics.density)
@@ -520,615 +651,674 @@ class MainActivity : Activity() {
     }
 
     private fun updateResizedSliders(widthDp: Int, extraHeightDp: Int) {
-        widthSliderController?.setValue(widthDp)
-        heightSliderController?.setValue(extraHeightDp)
-        if (baseWidthSliderController !== widthSliderController) {
-            baseWidthSliderController?.setValue(widthDp)
-        }
-        if (baseHeightSliderController !== heightSliderController) {
-            baseHeightSliderController?.setValue(extraHeightDp)
+        allActiveBindings().forEach { b ->
+            b.widthSliderController?.setValue(widthDp)
+            b.heightSliderController?.setValue(extraHeightDp)
         }
     }
 
     // ───────────────────────── 界面骨架 ─────────────────────────
 
-    private fun buildUi(): ScrollView {
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(40))
-        }
-        content = col
+    private fun buttonModeLabel(count: Int): String = when (count) {
+        4 -> getString(R.string.btn_mode_4)
+        8 -> getString(R.string.btn_mode_8)
+        12 -> getString(R.string.btn_mode_12)
+        18 -> getString(R.string.btn_mode_18)
+        else -> getString(R.string.btn_mode_16)
+    }
 
-        col.addView(hero())
-
-        val uiCardControllers = mutableListOf<CollapsibleCardController>()
-        var uiExpandAllBtn: TextView? = null
-
-        fun updateExpandAllText() {
-            val allExpanded = uiCardControllers.isNotEmpty() && uiCardControllers.all { it.isExpanded() }
-            uiExpandAllBtn?.text = getString(if (allExpanded) R.string.collapse_all else R.string.expand_all)
-        }
-
-        col.addView(categoriesBar(uiCardControllers) { uiExpandAllBtn = it })
-
-        fun addCollapsible(
-            cardId: String,
-            title: String,
-            iconResId: Int? = null,
-            summary: String? = null,
-            defaultExpanded: Boolean = false,
-            vararg rows: View,
-        ) {
-            col.addView(collapsibleCard(
-                cardId = cardId,
-                title = title,
-                iconResId = iconResId,
-                summary = summary,
-                defaultExpanded = defaultExpanded,
-                onToggle = { updateExpandAllText() },
-                controllers = uiCardControllers,
-                rows = rows,
-            ))
-        }
-
-        // ── 外观 ──
-        val appearanceSummary = buildAppearanceSummary()
-        val hasSettingsBg = hasCustomSettingsBg
-        val appearanceRows = mutableListOf<View>(
-            themeModeRow(),
-            switchRow(
-                getString(R.string.switch_dynamic_color),
-                prefs.dynamicColor,
-                hint = getString(R.string.switch_dynamic_color_hint),
-                onChange = {
-                    prefs.dynamicColor = it
-                    invalidateThemeCache()
-                    TouchpadService.instance?.let { svc ->
-                        svc.reload()
-                        svc.updateTouchRingAppearance()
-                    }
-                    col.postDelayed({
-                        recreateKeepingScroll()
-                    }, 280)
-                },
-            ),
-            colorRow(
-                getString(R.string.set_ui_accent_color),
-                UI_ACCENT_COLORS,
-                { prefs.uiAccentColor },
-                { prefs.uiAccentColor = it; invalidateThemeCache() },
-                onServiceUpdate = {
-                    TouchpadService.instance?.let { svc ->
-                        svc.reload()
-                        svc.updateTouchRingAppearance()
-                    }
-                },
-                allowCustomHex = true,
-            ),
-            customBackgroundRow(
-                title = getString(R.string.set_settings_bg),
-                hint = getString(R.string.set_settings_bg_hint),
-                hasCustomBg = hasSettingsBg,
-                onPick = {
-                    launchImagePicker(REQUEST_CODE_PICK_SETTINGS_BG)
-                },
-                onClear = {
-                    CustomBackgroundManager.clearSettingsBg(this)
-                    cachedHasCustomSettingsBg = false
-                    currentReveal?.release()
-                    settingsBgImageView?.setImageDrawable(null)
-                    settingsBgBitmap?.recycle()
-                    settingsBgBitmap = null
-                    toast(getString(R.string.bg_image_cleared))
-                    recreateKeepingScroll()
-                },
-            ),
-        )
-        if (hasSettingsBg) {
-            appearanceRows.add(
-                slider(
-                    getString(R.string.set_settings_bg_scrim),
-                    10,
-                    95,
-                    prefs.settingsBgScrimPercent,
-                    unit = "%",
-                    hint = getString(R.string.set_settings_bg_scrim_hint),
-                    onChange = {
-                        prefs.settingsBgScrimPercent = it
-                        settingsBgScrimView?.setBackgroundColor(computeSettingsBgScrimColor(pageColor, it))
-                    },
-                )
-            )
-        }
-        addCollapsible(
-            "appearance",
-            getString(R.string.sec_appearance),
-            R.drawable.ic_lu_layers_2,
-            appearanceSummary,
-            defaultExpanded = true,
-            *appearanceRows.toTypedArray(),
-        )
-
-        // ── 触控板 ──
-        val maxPanelWidth = pixelsToDp(fullScreenWidthPx(), resources.displayMetrics.density)
-            .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
-        val currentPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
-            ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
-        val padSummary = "${currentPanelWidth}dp · ${prefs.opacityPercent}%"
-        val hasTouchpadBg = CustomBackgroundManager.hasTouchpadBg(this)
-        val padRows = mutableListOf(
-            slider(
-                getString(R.string.set_pad_width),
-                PANEL_MIN_WIDTH_DP,
-                maxPanelWidth,
-                currentPanelWidth,
-                unit = "dp",
-                bind = { widthSliderController = it },
-                onChange = {
-                    prefs.panelWidthDp = it
-                    TouchpadService.instance?.updatePanelGeometry()
-                },
-            ),
-            slider(
-                getString(R.string.set_pad_height),
-                0,
-                CONTROL_EXTRA_HEIGHT_MAX_DP,
-                prefs.extraHeightDp.coerceIn(0, CONTROL_EXTRA_HEIGHT_MAX_DP),
-                unit = "dp",
-                hint = getString(R.string.pad_height_hint),
-                bind = { heightSliderController = it },
-                onChange = {
-                    prefs.extraHeightDp = it
-                    TouchpadService.instance?.updatePanelGeometry()
-                },
-            ),
-            colorRow(
-                getString(R.string.set_touchpad_color),
-                TOUCHPAD_COLORS,
-                { prefs.touchpadColor },
-                { prefs.touchpadColor = it },
-                onServiceUpdate = { TouchpadService.instance?.updatePanelAppearance() },
-                allowCustomHex = true,
-            ),
-            customBackgroundRow(
-                title = getString(R.string.set_touchpad_bg),
-                hint = getString(R.string.set_touchpad_bg_hint),
-                hasCustomBg = hasTouchpadBg,
-                onPick = {
-                    launchImagePicker(REQUEST_CODE_PICK_TOUCHPAD_BG)
-                },
-                onClear = {
-                    CustomBackgroundManager.clearTouchpadBg(this)
-                    TouchpadService.instance?.reloadTouchpadBackground()
-                    toast(getString(R.string.bg_image_cleared))
-                    recreateKeepingScroll()
-                },
-            ),
-        )
-        if (hasTouchpadBg) {
-            padRows.add(
-                slider(
-                    getString(R.string.set_touchpad_bg_focus_y),
-                    0,
-                    100,
-                    prefs.touchpadBgFocusYPercent,
-                    unit = "%",
-                    hint = getString(R.string.set_touchpad_bg_focus_y_hint),
-                    onChange = {
-                        prefs.touchpadBgFocusYPercent = it
-                        TouchpadService.instance?.updatePanelAppearance()
-                    },
-                )
-            )
-            padRows.add(
-                slider(
-                    getString(R.string.set_touchpad_bg_focus_x),
-                    0,
-                    100,
-                    prefs.touchpadBgFocusXPercent,
-                    unit = "%",
-                    hint = getString(R.string.set_touchpad_bg_focus_x_hint),
-                    onChange = {
-                        prefs.touchpadBgFocusXPercent = it
-                        TouchpadService.instance?.updatePanelAppearance()
-                    },
-                )
-            )
-        }
-        padRows.add(
-            slider(
-                getString(R.string.set_opacity),
-                20,
-                100,
-                prefs.opacityPercent,
-                unit = "%",
-                onChange = {
-                    prefs.opacityPercent = it
-                    TouchpadService.instance?.updatePanelAppearance()
-                },
-            )
-        )
-        padRows.add(
-            switchRow(getString(R.string.switch_show_panel), !prefs.minimized, hint = getString(R.string.switch_show_panel_hint),
-                bind = { showPanelSwitch = it }) { show ->
-                val svc = TouchpadService.instance
-                if (svc == null) {
-                    toast(getString(R.string.status_off))
-                } else if (show == prefs.minimized) {
-                    svc.toggleMinimize()
-                }
+    private fun buildUi(isDark: Boolean): Pair<ScrollView, UiBindings> {
+        val bindings = UiBindings(isDark, UiColorStateLists(getThemeFor(isDark), isDark))
+        val scrollView = withUiContext(bindings) {
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(16), dp(16), dp(40))
             }
-        )
-        padRows.add(
-            actionRow(getString(R.string.btn_reset_position)) {
-                prefs.resetPositions()
-                reload()
+            bindings.content = col
+
+            col.addView(hero(bindings))
+
+            val uiCardControllers = bindings.cardControllers
+            var uiExpandAllBtn: TextView? = null
+
+            fun updateExpandAllText() {
+                val allExpanded = uiCardControllers.isNotEmpty() && uiCardControllers.all { it.isExpanded() }
+                uiExpandAllBtn?.text = getString(if (allExpanded) R.string.collapse_all else R.string.expand_all)
             }
-        )
-        addCollapsible(
-            "pad",
-            getString(R.string.sec_pad),
-            R.drawable.ic_lu_touchpad,
-            padSummary,
-            defaultExpanded = true,
-            *padRows.toTypedArray(),
-        )
 
-        // ── 按钮 ──
-        var holdSlider: View? = null
-        val buttonRows = mutableListOf<View>(
-            buttonLayoutModeRow(),
-            buttonSlotMap(),
-            FrameLayout(this).apply {
-                setPadding(dp(16), 0, dp(16), dp(10))
-                addView(hintText(getString(R.string.drag_lock_hint)))
-            },
-            slider(
-                getString(R.string.set_button_spacing),
-                0,
-                BUTTON_SPACING_MAX_DP,
-                prefs.buttonSpacingDp,
-                unit = "dp",
-                onChange = {
-                    prefs.buttonSpacingDp = it
-                    TouchpadService.instance?.updatePanelGeometry()
-                },
-            ),
-            switchRow(
-                getString(R.string.switch_long_press_customize),
-                prefs.longPressButtonToCustomize,
-                hint = getString(R.string.switch_long_press_customize_hint),
-                onChange = {
-                    prefs.longPressButtonToCustomize = it
-                    holdSlider?.visibility = if (it) View.VISIBLE else View.GONE
-                },
-            ),
-            slider(
-                getString(R.string.set_button_customize_hold),
-                BUTTON_CUSTOMIZE_HOLD_MIN_MS,
-                BUTTON_CUSTOMIZE_HOLD_MAX_MS,
-                prefs.buttonCustomizeHoldMs,
-                unit = "ms",
-                hint = getString(R.string.button_customize_hold_hint),
-                onChange = { prefs.buttonCustomizeHoldMs = it },
-            ).also { holdSlider = it }.apply {
-                visibility = if (prefs.longPressButtonToCustomize) View.VISIBLE else View.GONE
-            },
-        )
-        val buttonsSummary = when (prefs.buttonCount) {
-            4 -> getString(R.string.btn_mode_4)
-            8 -> getString(R.string.btn_mode_8)
-            12 -> getString(R.string.btn_mode_12)
-            18 -> getString(R.string.btn_mode_18)
-            else -> getString(R.string.btn_mode_16)
-        }
-        addCollapsible(
-            "buttons",
-            getString(R.string.sec_buttons),
-            R.drawable.ic_lu_mouse_pointer_click,
-            buttonsSummary,
-            defaultExpanded = true,
-            *buttonRows.toTypedArray(),
-        )
+            col.addView(categoriesBar(uiCardControllers) { uiExpandAllBtn = it })
 
-        // ── 悬浮球 ──
-        val ballSummary = if (prefs.hideFloatingBall) {
-            getString(R.string.label_off)
-        } else {
-            "${prefs.floatingBallSizeDp}dp · ${prefs.floatingBallOpacityPercent}%"
-        }
-        addCollapsible(
-            "ball",
-            getString(R.string.sec_ball),
-            R.drawable.ic_lu_circle_dot,
-            ballSummary,
-            defaultExpanded = false,
-            slider(
-                getString(R.string.set_ball_size),
-                FLOATING_BALL_MIN_DP,
-                FLOATING_BALL_MAX_DP,
-                prefs.floatingBallSizeDp,
-                unit = "dp",
-                onChange = {
-                    prefs.floatingBallSizeDp = it
-                    TouchpadService.instance?.updateBallAppearance()
-                },
-            ),
-            colorRow(
-                getString(R.string.set_ball_color),
-                BALL_COLORS,
-                { prefs.floatingBallColor },
-                { prefs.floatingBallColor = it },
-                onServiceUpdate = { TouchpadService.instance?.updateBallAppearance() },
-                allowCustomHex = true,
-            ),
-            slider(
-                getString(R.string.set_ball_opacity),
-                20,
-                100,
-                prefs.floatingBallOpacityPercent,
-                unit = "%",
-                onChange = {
-                    prefs.floatingBallOpacityPercent = it
-                    TouchpadService.instance?.updateBallAppearance()
-                },
-            ),
-            switchRow(getString(R.string.switch_hide_ball), prefs.hideFloatingBall, hint = getString(R.string.hide_ball_hint), onChange = { prefs.hideFloatingBall = it; reload() }),
-        )
-
-        // ── 悬浮球手势 ──
-        val ballGestureRows = mutableListOf<View>()
-        ballGestureRows.add(
-            switchRow(
-                getString(R.string.switch_ball_gestures),
-                prefs.ballGesturesEnabled,
-                hint = getString(R.string.switch_ball_gestures_hint),
-                onChange = {
-                    prefs.ballGesturesEnabled = it
-                    reload()
-                    recreateKeepingScroll()
-                }
-            )
-        )
-        if (prefs.ballGesturesEnabled) {
-            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_single_tap), prefs.ballActionSingleTap, PadAction.BALL_ACTIONS) { prefs.ballActionSingleTap = it })
-            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_double_tap), prefs.ballActionDoubleTap, PadAction.BALL_ACTIONS) { prefs.ballActionDoubleTap = it })
-            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_long_press), prefs.ballActionLongPress, PadAction.BALL_LONG_PRESS_ACTIONS) { prefs.ballActionLongPress = it })
-            ballGestureRows.add(
-                slider(
-                    getString(R.string.set_ball_hold),
-                    200,
-                    1200,
-                    prefs.ballLongPressMs,
-                    unit = "ms",
-                    hint = getString(R.string.ball_hold_hint),
-                    onChange = { prefs.ballLongPressMs = it },
-                )
-            )
-            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_up), prefs.ballActionSwipeUp, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeUp = it })
-            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_down), prefs.ballActionSwipeDown, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeDown = it })
-            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_left), prefs.ballActionSwipeLeft, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeLeft = it })
-            ballGestureRows.add(actionPickerRow(getString(R.string.gesture_swipe_right), prefs.ballActionSwipeRight, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeRight = it })
-            ballGestureRows.add(actionRow(getString(R.string.btn_reset_ball_gestures)) {
-                prefs.resetBallActions()
-                reload()
-                recreateKeepingScroll()
-            })
-        }
-        val ballGesturesSummary = if (prefs.ballGesturesEnabled) getString(R.string.label_on) else getString(R.string.label_off)
-        addCollapsible(
-            "ball_gestures",
-            getString(R.string.sec_ball_gestures),
-            R.drawable.ic_lu_hand,
-            ballGesturesSummary,
-            defaultExpanded = false,
-            *ballGestureRows.toTypedArray(),
-        )
-
-        // ── 光标 ──
-        val cursorRows = mutableListOf<View>(
-            slider(
-                getString(R.string.set_cursor_size),
-                CURSOR_MIN_DP,
-                CURSOR_MAX_DP,
-                prefs.cursorSizeDp,
-                unit = "dp",
-                onChange = {
-                    prefs.cursorSizeDp = it
-                    TouchpadService.instance?.updateCursorAppearance()
-                },
-            ),
-            slider(
-                getString(R.string.set_cursor_opacity),
-                10,
-                100,
-                prefs.cursorOpacityPercent,
-                unit = "%",
-                onChange = {
-                    prefs.cursorOpacityPercent = it
-                    TouchpadService.instance?.updateCursorAppearance()
-                },
-            ),
-            colorRow(
-                getString(R.string.set_cursor_color),
-                CURSOR_COLORS,
-                { prefs.cursorColor },
-                { prefs.cursorColor = it },
-                onServiceUpdate = { TouchpadService.instance?.updateCursorAppearance() },
-                allowCustomHex = true,
-            ),
-            switchRow(
-                getString(R.string.switch_touch_ring),
-                prefs.touchRingEnabled,
-                hint = getString(R.string.switch_touch_ring_hint),
-                onChange = {
-                    prefs.touchRingEnabled = it
-                    TouchpadService.instance?.updateTouchRingAppearance(preview = it)
-                    recreateKeepingScroll()
-                },
-            ),
-        )
-        if (prefs.touchRingEnabled) {
-            cursorRows.add(
-                colorRow(
-                    getString(R.string.set_touch_ring_color),
-                    RING_COLORS,
-                    { prefs.touchRingColor },
-                    { prefs.touchRingColor = it },
-                    onServiceUpdate = { TouchpadService.instance?.updateTouchRingAppearance(preview = true) },
-                    allowCustomHex = true,
-                )
-            )
-        }
-        val cursorSummary = "${prefs.cursorSizeDp}dp · ${prefs.cursorOpacityPercent}%"
-        addCollapsible(
-            "cursor",
-            getString(R.string.sec_cursor),
-            R.drawable.ic_lu_pointer,
-            cursorSummary,
-            defaultExpanded = false,
-            *cursorRows.toTypedArray(),
-        )
-
-        // ── 手感 ──
-        val feelSummary = String.format(java.util.Locale.US, "%.1f×", prefs.sensitivity)
-        addCollapsible(
-            "feel",
-            getString(R.string.sec_feel),
-            R.drawable.ic_lu_move,
-            feelSummary,
-            defaultExpanded = false,
-            slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt(), format = { String.format(java.util.Locale.US, "%.1f×", it / 10f) }) { prefs.sensitivity = it / 10f },
-            slider(getString(R.string.set_pad_dead_zone), 0, PAD_EDGE_DEAD_ZONE_MAX_DP, prefs.padEdgeDeadZoneDp, unit = "dp",
-                offLabel = getString(R.string.label_off), hint = getString(R.string.pad_dead_zone_hint),
-                onChange = { prefs.padEdgeDeadZoneDp = it }),
-            slider(getString(R.string.set_long_press), 200, 1500, prefs.longPressMs, unit = "ms", hint = getString(R.string.custom_swipe_hint), onChange = { prefs.longPressMs = it }),
-            slider(getString(R.string.set_cursor_hold), CURSOR_HOLD_MIN_MS, CURSOR_HOLD_MAX_MS, prefs.cursorHoldMs, unit = "ms",
-                hint = getString(R.string.cursor_hold_hint), onChange = { prefs.cursorHoldMs = it }),
-            slider(getString(R.string.set_scroll_distance), 60, 500, prefs.scrollDistanceDp, unit = "dp", hint = getString(R.string.scroll_distance_hint), onChange = { prefs.scrollDistanceDp = it }),
-            switchRow(getString(R.string.switch_press_feedback), prefs.pressFeedback, onChange = { prefs.pressFeedback = it; reload() }),
-            switchRow(getString(R.string.switch_haptics), prefs.haptics, onChange = { prefs.haptics = it }),
-            switchRow(getString(R.string.switch_autohide_landscape), prefs.autoHideLandscape, onChange = { prefs.autoHideLandscape = it; reload() }),
-            switchRow(getString(R.string.switch_minimize_keyboard), prefs.minimizeOnKeyboard, onChange = {
-                prefs.minimizeOnKeyboard = it
-                TouchpadService.instance?.syncKeyboardMinimize()
-            }),
-            switchRow(getString(R.string.switch_exclude_from_recents), prefs.excludeFromRecents, hint = getString(R.string.switch_exclude_from_recents_hint), onChange = {
-                prefs.excludeFromRecents = it
-                applyExcludeFromRecents(it)
-            }),
-        )
-
-        // ── 后台保活与防杀加锁 ──
-        val isBattIgnored = isIgnoringBatteryOptimizations()
-        val keepAliveSummary = buildString {
-            if (prefs.keepAliveNotification) append(getString(R.string.summary_notif_enabled))
-            if (isBattIgnored) {
-                if (isNotEmpty()) append(" · ")
-                append(getString(R.string.summary_battery_whitelisted))
-            }
-            if (isEmpty()) append(getString(R.string.summary_keep_alive_suggested))
-        }
-        val keepAliveRows = mutableListOf<View>(
-            FrameLayout(this).apply {
-                setPadding(dp(16), dp(4), dp(16), dp(10))
-                addView(hintText(getString(R.string.keep_alive_explain_hint)))
-            },
-            switchRow(
-                getString(R.string.switch_keep_alive_notification),
-                prefs.keepAliveNotification,
-                hint = getString(R.string.switch_keep_alive_notification_hint),
-                bind = { keepAliveSwitch = it },
-                onChange = { enable ->
-                    checkAndEnableKeepAliveNotification(enable) {
-                        TouchpadService.instance?.updateKeepAliveNotification()
-                    }
-                }
-            ),
-            actionRow(
-                if (isIgnoringBatteryOptimizations()) getString(R.string.btn_battery_whitelisted) else getString(R.string.btn_request_battery_whitelist),
-                bindTitle = { batteryStatusTextView = it }
+            fun addCollapsible(
+                cardId: String,
+                title: String,
+                iconResId: Int? = null,
+                summary: String? = null,
+                defaultExpanded: Boolean = false,
+                bindSummaryChip: ((TextView) -> Unit)? = null,
+                rowsBuilder: () -> List<View>,
             ) {
-                requestIgnoreBatteryOptimization()
-            },
-            actionRow(getString(R.string.btn_open_app_details)) {
-                openAppDetailsSettings()
-            },
-            actionRow(getString(R.string.btn_vendor_keep_alive_guide)) {
-                showDialog(
-                    getString(R.string.vendor_guide_title),
-                    getString(R.string.vendor_guide_body)
+                col.addView(collapsibleCard(
+                    cardId = cardId,
+                    title = title,
+                    iconResId = iconResId,
+                    summary = summary,
+                    defaultExpanded = defaultExpanded,
+                    onToggle = { updateExpandAllText() },
+                    controllers = uiCardControllers,
+                    bindSummaryChip = bindSummaryChip,
+                    rowsBuilder = rowsBuilder,
+                ))
+            }
+
+            // ── 外观 ──
+            val appearanceSummary = buildAppearanceSummary()
+            addCollapsible(
+                cardId = "appearance",
+                title = getString(R.string.sec_appearance),
+                iconResId = R.drawable.ic_lu_layers_2,
+                summary = appearanceSummary,
+                defaultExpanded = true,
+            ) {
+                val hasSettingsBg = hasCustomSettingsBg
+                val appearanceRows = mutableListOf<View>(
+                    themeModeRow(),
+                    switchRow(
+                        getString(R.string.switch_dynamic_color),
+                        prefs.dynamicColor,
+                        hint = getString(R.string.switch_dynamic_color_hint),
+                        onChange = {
+                            prefs.dynamicColor = it
+                            invalidateThemeCache()
+                            TouchpadService.instance?.let { svc ->
+                                svc.reload()
+                                svc.updateTouchRingAppearance()
+                            }
+                            mainHandler.removeCallbacks(pendingRecreateRunnable)
+                            mainHandler.postDelayed(pendingRecreateRunnable, 280L)
+                        },
+                    ),
+                    colorRow(
+                        getString(R.string.set_ui_accent_color),
+                        UI_ACCENT_COLORS,
+                        { prefs.uiAccentColor },
+                        { prefs.uiAccentColor = it; invalidateThemeCache() },
+                        onServiceUpdate = {
+                            TouchpadService.instance?.let { svc ->
+                                svc.reload()
+                                svc.updateTouchRingAppearance()
+                            }
+                        },
+                        allowCustomHex = true,
+                        recreateOnChange = true,
+                    ),
+                    customBackgroundRow(
+                        title = getString(R.string.set_settings_bg),
+                        hint = getString(R.string.set_settings_bg_hint),
+                        hasCustomBg = hasSettingsBg,
+                        onPick = {
+                            launchImagePicker(REQUEST_CODE_PICK_SETTINGS_BG)
+                        },
+                        onClear = {
+                            CustomBackgroundManager.clearSettingsBg(this)
+                            cachedHasCustomSettingsBg = false
+                            currentReveal?.release()
+                            settingsBgImageView?.setImageDrawable(null)
+                            settingsBgBitmap = null
+                            toast(getString(R.string.bg_image_cleared))
+                            recreateKeepingScroll()
+                        },
+                    ),
+                )
+                if (hasSettingsBg) {
+                    appearanceRows.add(
+                        slider(
+                            getString(R.string.set_settings_bg_scrim),
+                            10,
+                            95,
+                            prefs.settingsBgScrimPercent,
+                            unit = "%",
+                            hint = getString(R.string.set_settings_bg_scrim_hint),
+                            onChange = {
+                                prefs.settingsBgScrimPercent = it
+                                settingsBgScrimView?.setBackgroundColor(computeSettingsBgScrimColor(pageColor, it))
+                            },
+                        )
+                    )
+                }
+                appearanceRows
+            }
+
+            // ── 触控板 ──
+            val initMaxPanelWidth = pixelsToDp(fullScreenWidthPx(), resources.displayMetrics.density)
+                .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
+            val initPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
+                ?: (initMaxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, initMaxPanelWidth)
+            val padSummary = "${initPanelWidth}dp · ${prefs.opacityPercent}%"
+            addCollapsible(
+                cardId = "pad",
+                title = getString(R.string.sec_pad),
+                iconResId = R.drawable.ic_lu_touchpad,
+                summary = padSummary,
+                defaultExpanded = true,
+            ) {
+                val maxPanelWidth = pixelsToDp(fullScreenWidthPx(), resources.displayMetrics.density)
+                    .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
+                val currentPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
+                    ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
+                val hasTouchpadBg = CustomBackgroundManager.hasTouchpadBg(this)
+                val padRows = mutableListOf(
+                    slider(
+                        getString(R.string.set_pad_width),
+                        PANEL_MIN_WIDTH_DP,
+                        maxPanelWidth,
+                        currentPanelWidth,
+                        unit = "dp",
+                        bind = { bindings.widthSliderController = it },
+                        onChange = {
+                            prefs.panelWidthDp = it
+                            TouchpadService.instance?.updatePanelGeometry()
+                        },
+                    ),
+                    slider(
+                        getString(R.string.set_pad_height),
+                        0,
+                        CONTROL_EXTRA_HEIGHT_MAX_DP,
+                        prefs.extraHeightDp.coerceIn(0, CONTROL_EXTRA_HEIGHT_MAX_DP),
+                        unit = "dp",
+                        hint = getString(R.string.pad_height_hint),
+                        bind = { bindings.heightSliderController = it },
+                        onChange = {
+                            prefs.extraHeightDp = it
+                            TouchpadService.instance?.updatePanelGeometry()
+                        },
+                    ),
+                    colorRow(
+                        getString(R.string.set_touchpad_color),
+                        TOUCHPAD_COLORS,
+                        { prefs.touchpadColor },
+                        { prefs.touchpadColor = it },
+                        onServiceUpdate = { TouchpadService.instance?.updatePanelAppearance() },
+                        allowCustomHex = true,
+                        recreateOnChange = false,
+                    ),
+                    customBackgroundRow(
+                        title = getString(R.string.set_touchpad_bg),
+                        hint = getString(R.string.set_touchpad_bg_hint),
+                        hasCustomBg = hasTouchpadBg,
+                        onPick = {
+                            launchImagePicker(REQUEST_CODE_PICK_TOUCHPAD_BG)
+                        },
+                        onClear = {
+                            CustomBackgroundManager.clearTouchpadBg(this)
+                            TouchpadService.instance?.reloadTouchpadBackground()
+                            toast(getString(R.string.bg_image_cleared))
+                            recreateKeepingScroll()
+                        },
+                    ),
+                )
+                if (hasTouchpadBg) {
+                    padRows.add(
+                        slider(
+                            getString(R.string.set_touchpad_bg_focus_y),
+                            0,
+                            100,
+                            prefs.touchpadBgFocusYPercent,
+                            unit = "%",
+                            hint = getString(R.string.set_touchpad_bg_focus_y_hint),
+                            onChange = {
+                                prefs.touchpadBgFocusYPercent = it
+                                TouchpadService.instance?.updatePanelAppearance()
+                            },
+                        )
+                    )
+                    padRows.add(
+                        slider(
+                            getString(R.string.set_touchpad_bg_focus_x),
+                            0,
+                            100,
+                            prefs.touchpadBgFocusXPercent,
+                            unit = "%",
+                            hint = getString(R.string.set_touchpad_bg_focus_x_hint),
+                            onChange = {
+                                prefs.touchpadBgFocusXPercent = it
+                                TouchpadService.instance?.updatePanelAppearance()
+                            },
+                        )
+                    )
+                }
+                padRows.add(
+                    slider(
+                        getString(R.string.set_opacity),
+                        20,
+                        100,
+                        prefs.opacityPercent,
+                        unit = "%",
+                        onChange = {
+                            prefs.opacityPercent = it
+                            TouchpadService.instance?.updatePanelAppearance()
+                        },
+                    )
+                )
+                padRows.add(
+                    switchRow(
+                        getString(R.string.switch_show_panel),
+                        !prefs.minimized,
+                        hint = getString(R.string.switch_show_panel_hint),
+                        bind = { bindings.showPanelSwitch = it },
+                    ) { show ->
+                        val svc = TouchpadService.instance
+                        if (svc == null) {
+                            toast(getString(R.string.status_off))
+                        } else if (show == prefs.minimized) {
+                            svc.toggleMinimize()
+                        }
+                    }
+                )
+                padRows.add(
+                    actionRow(getString(R.string.btn_reset_position)) {
+                        prefs.resetPositions()
+                        reload()
+                    }
+                )
+                padRows
+            }
+
+            // ── 按钮 ──
+            var buttonsSummaryChip: TextView? = null
+            addCollapsible(
+                cardId = "buttons",
+                title = getString(R.string.sec_buttons),
+                iconResId = R.drawable.ic_lu_mouse_pointer_click,
+                summary = buttonModeLabel(prefs.buttonCount),
+                defaultExpanded = true,
+                bindSummaryChip = { buttonsSummaryChip = it },
+            ) {
+                val slotMapHost = FrameLayout(this)
+                fun refreshSlotMap() {
+                    withUiContext(bindings) {
+                        slotMapHost.removeAllViews()
+                        slotMapHost.addView(buttonSlotMap(bindings))
+                    }
+                }
+                refreshSlotMap()
+
+                var holdSlider: View? = null
+                listOf(
+                    buttonLayoutModeRow(bindings) { newCount ->
+                        buttonsSummaryChip?.text = buttonModeLabel(newCount)
+                        refreshSlotMap()
+                    },
+                    slotMapHost,
+                    FrameLayout(this).apply {
+                        setPadding(dp(16), 0, dp(16), dp(10))
+                        addView(hintText(getString(R.string.drag_lock_hint)))
+                    },
+                    slider(
+                        getString(R.string.set_button_spacing),
+                        0,
+                        BUTTON_SPACING_MAX_DP,
+                        prefs.buttonSpacingDp,
+                        unit = "dp",
+                        onChange = {
+                            prefs.buttonSpacingDp = it
+                            TouchpadService.instance?.updatePanelGeometry()
+                        },
+                    ),
+                    switchRow(
+                        getString(R.string.switch_long_press_customize),
+                        prefs.longPressButtonToCustomize,
+                        hint = getString(R.string.switch_long_press_customize_hint),
+                        onChange = { enabled ->
+                            prefs.longPressButtonToCustomize = enabled
+                            holdSlider?.let { setCardRowVisibility(it, enabled) }
+                        },
+                    ),
+                    slider(
+                        getString(R.string.set_button_customize_hold),
+                        BUTTON_CUSTOMIZE_HOLD_MIN_MS,
+                        BUTTON_CUSTOMIZE_HOLD_MAX_MS,
+                        prefs.buttonCustomizeHoldMs,
+                        unit = "ms",
+                        hint = getString(R.string.button_customize_hold_hint),
+                        onChange = { prefs.buttonCustomizeHoldMs = it },
+                    ).also { holdSlider = it }.apply {
+                        visibility = if (prefs.longPressButtonToCustomize) View.VISIBLE else View.GONE
+                    },
                 )
             }
-        )
-        addCollapsible(
-            "keep_alive",
-            getString(R.string.sec_keep_alive),
-            R.drawable.ic_lu_lock,
-            keepAliveSummary,
-            defaultExpanded = false,
-            *keepAliveRows.toTypedArray(),
-        )
 
-        // ── 关于 ──
-        val aboutSummary = "v${appVersion()}".takeIf { it != "v" } ?: ""
-        addCollapsible(
-            "about",
-            getString(R.string.sec_about),
-            R.drawable.ic_lu_settings,
-            aboutSummary,
-            defaultExpanded = false,
-            actionRow(getString(R.string.btn_setup)) { showDialog(getString(R.string.steps_title), getString(R.string.steps_body)) },
-            actionRow(getString(R.string.btn_github)) {
-                runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.project_url)))) }
-            },
-            actionRow(getString(R.string.btn_reset_all), destructive = true) {
-                prefs.resetAll()
-                invalidateThemeCache()
-                CustomBackgroundManager.clearTouchpadBg(this)
-                CustomBackgroundManager.clearSettingsBg(this)
-                cachedHasCustomSettingsBg = false
-                TouchpadService.instance?.reloadTouchpadBackground()
-                currentReveal?.release()
-                settingsBgImageView?.setImageDrawable(null)
-                settingsBgBitmap?.recycle()
-                settingsBgBitmap = null
-                expandedCardIds.clear()
-                hasInitializedCardDefaults = false
-                applyExcludeFromRecents(false)
-                toast(getString(R.string.reset_done))
-                reload()
-                recreateKeepingScroll()
-            },
-        )
-
-        if (!hasInitializedCardDefaults) {
-            hasInitializedCardDefaults = true
-        }
-        updateExpandAllText()
-
-        col.addView(TextView(this).apply {
-            text = footerVersionText()
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(if (hasCustomSettingsBg || darkUi) 0x99FFFFFF.toInt() else tertiaryTextColor)
-            if (hasCustomSettingsBg) {
-                setShadowLayer(
-                    dp(3).toFloat(),
-                    0f,
-                    dp(1).toFloat(),
-                    0x80000000.toInt()
+            // ── 悬浮球 ──
+            val ballSummary = if (prefs.hideFloatingBall) {
+                getString(R.string.label_off)
+            } else {
+                "${prefs.floatingBallSizeDp}dp · ${prefs.floatingBallOpacityPercent}%"
+            }
+            addCollapsible(
+                cardId = "ball",
+                title = getString(R.string.sec_ball),
+                iconResId = R.drawable.ic_lu_circle_dot,
+                summary = ballSummary,
+                defaultExpanded = false,
+            ) {
+                listOf(
+                    slider(
+                        getString(R.string.set_ball_size),
+                        FLOATING_BALL_MIN_DP,
+                        FLOATING_BALL_MAX_DP,
+                        prefs.floatingBallSizeDp,
+                        unit = "dp",
+                        onChange = {
+                            prefs.floatingBallSizeDp = it
+                            TouchpadService.instance?.updateBallAppearance()
+                        },
+                    ),
+                    colorRow(
+                        getString(R.string.set_ball_color),
+                        BALL_COLORS,
+                        { prefs.floatingBallColor },
+                        { prefs.floatingBallColor = it },
+                        onServiceUpdate = { TouchpadService.instance?.updateBallAppearance() },
+                        allowCustomHex = true,
+                        recreateOnChange = false,
+                    ),
+                    slider(
+                        getString(R.string.set_ball_opacity),
+                        20,
+                        100,
+                        prefs.floatingBallOpacityPercent,
+                        unit = "%",
+                        onChange = {
+                            prefs.floatingBallOpacityPercent = it
+                            TouchpadService.instance?.updateBallAppearance()
+                        },
+                    ),
+                    switchRow(
+                        getString(R.string.switch_hide_ball),
+                        prefs.hideFloatingBall,
+                        hint = getString(R.string.hide_ball_hint),
+                        onChange = { prefs.hideFloatingBall = it; reload() },
+                    ),
                 )
             }
-            setPadding(0, dp(20), 0, 0)
-        })
 
-        return SettingsScrollView(this).apply {
-            scroller = this
-            // 固定 id：系统重建（换主题/换颜色后的 recreate）时会自动保存并恢复滚动位置
-            id = R.id.settings_scroll
-            addView(col)
+            // ── 悬浮球手势 ──
+            var ballGesturesSummaryChip: TextView? = null
+            val ballGesturesSummary = if (prefs.ballGesturesEnabled) getString(R.string.label_on) else getString(R.string.label_off)
+            addCollapsible(
+                cardId = "ball_gestures",
+                title = getString(R.string.sec_ball_gestures),
+                iconResId = R.drawable.ic_lu_hand,
+                summary = ballGesturesSummary,
+                defaultExpanded = false,
+                bindSummaryChip = { ballGesturesSummaryChip = it },
+            ) {
+                val detailBox = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                }
+                fun rebuildBallGestureDetails() {
+                    withUiContext(bindings) {
+                        detailBox.removeAllViews()
+                        if (!prefs.ballGesturesEnabled) {
+                            detailBox.visibility = View.GONE
+                            return@withUiContext
+                        }
+                        val rows = listOf(
+                            actionPickerRow(getString(R.string.gesture_single_tap), prefs.ballActionSingleTap, PadAction.BALL_ACTIONS) { prefs.ballActionSingleTap = it },
+                            actionPickerRow(getString(R.string.gesture_double_tap), prefs.ballActionDoubleTap, PadAction.BALL_ACTIONS) { prefs.ballActionDoubleTap = it },
+                            actionPickerRow(getString(R.string.gesture_long_press), prefs.ballActionLongPress, PadAction.BALL_LONG_PRESS_ACTIONS) { prefs.ballActionLongPress = it },
+                            slider(
+                                getString(R.string.set_ball_hold),
+                                200,
+                                1200,
+                                prefs.ballLongPressMs,
+                                unit = "ms",
+                                hint = getString(R.string.ball_hold_hint),
+                                onChange = { prefs.ballLongPressMs = it },
+                            ),
+                            actionPickerRow(getString(R.string.gesture_swipe_up), prefs.ballActionSwipeUp, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeUp = it },
+                            actionPickerRow(getString(R.string.gesture_swipe_down), prefs.ballActionSwipeDown, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeDown = it },
+                            actionPickerRow(getString(R.string.gesture_swipe_left), prefs.ballActionSwipeLeft, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeLeft = it },
+                            actionPickerRow(getString(R.string.gesture_swipe_right), prefs.ballActionSwipeRight, PadAction.BALL_ACTIONS) { prefs.ballActionSwipeRight = it },
+                            actionRow(getString(R.string.btn_reset_ball_gestures)) {
+                                prefs.resetBallActions()
+                                reload()
+                                rebuildBallGestureDetails()
+                            },
+                        )
+                        populateCardContent(detailBox, rows, borderColor)
+                        detailBox.visibility = View.VISIBLE
+                    }
+                }
+                rebuildBallGestureDetails()
+
+                listOf(
+                    switchRow(
+                        getString(R.string.switch_ball_gestures),
+                        prefs.ballGesturesEnabled,
+                        hint = getString(R.string.switch_ball_gestures_hint),
+                        onChange = { enabled ->
+                            prefs.ballGesturesEnabled = enabled
+                            reload()
+                            ballGesturesSummaryChip?.text = getString(if (enabled) R.string.label_on else R.string.label_off)
+                            rebuildBallGestureDetails()
+                            setCardRowVisibility(detailBox, enabled)
+                        },
+                    ),
+                    detailBox,
+                )
+            }
+
+            // ── 光标 ──
+            val cursorSummary = "${prefs.cursorSizeDp}dp · ${prefs.cursorOpacityPercent}%"
+            addCollapsible(
+                cardId = "cursor",
+                title = getString(R.string.sec_cursor),
+                iconResId = R.drawable.ic_lu_pointer,
+                summary = cursorSummary,
+                defaultExpanded = false,
+            ) {
+                var ringColorRow: View? = null
+                listOf(
+                    slider(
+                        getString(R.string.set_cursor_size),
+                        CURSOR_MIN_DP,
+                        CURSOR_MAX_DP,
+                        prefs.cursorSizeDp,
+                        unit = "dp",
+                        onChange = {
+                            prefs.cursorSizeDp = it
+                            TouchpadService.instance?.updateCursorAppearance()
+                        },
+                    ),
+                    slider(
+                        getString(R.string.set_cursor_opacity),
+                        10,
+                        100,
+                        prefs.cursorOpacityPercent,
+                        unit = "%",
+                        onChange = {
+                            prefs.cursorOpacityPercent = it
+                            TouchpadService.instance?.updateCursorAppearance()
+                        },
+                    ),
+                    colorRow(
+                        getString(R.string.set_cursor_color),
+                        CURSOR_COLORS,
+                        { prefs.cursorColor },
+                        { prefs.cursorColor = it },
+                        onServiceUpdate = { TouchpadService.instance?.updateCursorAppearance() },
+                        allowCustomHex = true,
+                        recreateOnChange = false,
+                    ),
+                    switchRow(
+                        getString(R.string.switch_touch_ring),
+                        prefs.touchRingEnabled,
+                        hint = getString(R.string.switch_touch_ring_hint),
+                        onChange = { enabled ->
+                            prefs.touchRingEnabled = enabled
+                            TouchpadService.instance?.updateTouchRingAppearance(preview = enabled)
+                            ringColorRow?.let { setCardRowVisibility(it, enabled) }
+                        },
+                    ),
+                    colorRow(
+                        getString(R.string.set_touch_ring_color),
+                        RING_COLORS,
+                        { prefs.touchRingColor },
+                        { prefs.touchRingColor = it },
+                        onServiceUpdate = { TouchpadService.instance?.updateTouchRingAppearance(preview = true) },
+                        allowCustomHex = true,
+                        recreateOnChange = false,
+                    ).also { ringColorRow = it }.apply {
+                        visibility = if (prefs.touchRingEnabled) View.VISIBLE else View.GONE
+                    },
+                )
+            }
+
+            // ── 手感 ──
+            val feelSummary = String.format(java.util.Locale.US, "%.1f×", prefs.sensitivity)
+            addCollapsible(
+                cardId = "feel",
+                title = getString(R.string.sec_feel),
+                iconResId = R.drawable.ic_lu_move,
+                summary = feelSummary,
+                defaultExpanded = false,
+            ) {
+                listOf(
+                    slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt(), format = { String.format(java.util.Locale.US, "%.1f×", it / 10f) }) { prefs.sensitivity = it / 10f },
+                    slider(getString(R.string.set_pad_dead_zone), 0, PAD_EDGE_DEAD_ZONE_MAX_DP, prefs.padEdgeDeadZoneDp, unit = "dp",
+                        offLabel = getString(R.string.label_off), hint = getString(R.string.pad_dead_zone_hint),
+                        onChange = { prefs.padEdgeDeadZoneDp = it }),
+                    slider(getString(R.string.set_long_press), 200, 1500, prefs.longPressMs, unit = "ms", hint = getString(R.string.custom_swipe_hint), onChange = { prefs.longPressMs = it }),
+                    slider(getString(R.string.set_cursor_hold), CURSOR_HOLD_MIN_MS, CURSOR_HOLD_MAX_MS, prefs.cursorHoldMs, unit = "ms",
+                        hint = getString(R.string.cursor_hold_hint), onChange = { prefs.cursorHoldMs = it }),
+                    slider(getString(R.string.set_scroll_distance), 60, 500, prefs.scrollDistanceDp, unit = "dp", hint = getString(R.string.scroll_distance_hint), onChange = { prefs.scrollDistanceDp = it }),
+                    switchRow(getString(R.string.switch_press_feedback), prefs.pressFeedback, onChange = { prefs.pressFeedback = it; reload() }),
+                    switchRow(getString(R.string.switch_haptics), prefs.haptics, onChange = { prefs.haptics = it }),
+                    switchRow(getString(R.string.switch_autohide_landscape), prefs.autoHideLandscape, onChange = { prefs.autoHideLandscape = it; reload() }),
+                    switchRow(getString(R.string.switch_minimize_keyboard), prefs.minimizeOnKeyboard, onChange = {
+                        prefs.minimizeOnKeyboard = it
+                        TouchpadService.instance?.syncKeyboardMinimize()
+                    }),
+                    switchRow(getString(R.string.switch_exclude_from_recents), prefs.excludeFromRecents, hint = getString(R.string.switch_exclude_from_recents_hint), onChange = {
+                        prefs.excludeFromRecents = it
+                        applyExcludeFromRecents(it)
+                    }),
+                )
+            }
+
+            // ── 后台保活与防杀加锁 ──
+            val isBattIgnored = isIgnoringBatteryOptimizations()
+            val keepAliveSummary = buildString {
+                if (prefs.keepAliveNotification) append(getString(R.string.summary_notif_enabled))
+                if (isBattIgnored) {
+                    if (isNotEmpty()) append(" · ")
+                    append(getString(R.string.summary_battery_whitelisted))
+                }
+                if (isEmpty()) append(getString(R.string.summary_keep_alive_suggested))
+            }
+            addCollapsible(
+                cardId = "keep_alive",
+                title = getString(R.string.sec_keep_alive),
+                iconResId = R.drawable.ic_lu_lock,
+                summary = keepAliveSummary,
+                defaultExpanded = false,
+            ) {
+                listOf(
+                    FrameLayout(this).apply {
+                        setPadding(dp(16), dp(4), dp(16), dp(10))
+                        addView(hintText(getString(R.string.keep_alive_explain_hint)))
+                    },
+                    switchRow(
+                        getString(R.string.switch_keep_alive_notification),
+                        prefs.keepAliveNotification,
+                        hint = getString(R.string.switch_keep_alive_notification_hint),
+                        bind = { bindings.keepAliveSwitch = it },
+                        onChange = { enable ->
+                            checkAndEnableKeepAliveNotification(enable) {
+                                TouchpadService.instance?.updateKeepAliveNotification()
+                            }
+                        }
+                    ),
+                    actionRow(
+                        if (isIgnoringBatteryOptimizations()) getString(R.string.btn_battery_whitelisted) else getString(R.string.btn_request_battery_whitelist),
+                        bindTitle = { bindings.batteryStatusTextView = it }
+                    ) {
+                        requestIgnoreBatteryOptimization()
+                    },
+                    actionRow(getString(R.string.btn_open_app_details)) {
+                        openAppDetailsSettings()
+                    },
+                    actionRow(getString(R.string.btn_vendor_keep_alive_guide)) {
+                        showDialog(
+                            getString(R.string.vendor_guide_title),
+                            getString(R.string.vendor_guide_body)
+                        )
+                    },
+                )
+            }
+
+            // ── 关于 ──
+            val aboutSummary = "v${appVersion()}".takeIf { it != "v" } ?: ""
+            addCollapsible(
+                cardId = "about",
+                title = getString(R.string.sec_about),
+                iconResId = R.drawable.ic_lu_settings,
+                summary = aboutSummary,
+                defaultExpanded = false,
+            ) {
+                listOf(
+                    actionRow(getString(R.string.btn_setup)) { showDialog(getString(R.string.steps_title), getString(R.string.steps_body)) },
+                    actionRow(getString(R.string.btn_github)) {
+                        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.project_url)))) }
+                    },
+                    actionRow(getString(R.string.btn_reset_all), destructive = true) {
+                        prefs.resetAll()
+                        invalidateThemeCache()
+                        CustomBackgroundManager.clearTouchpadBg(this)
+                        CustomBackgroundManager.clearSettingsBg(this)
+                        cachedHasCustomSettingsBg = false
+                        TouchpadService.instance?.reloadTouchpadBackground()
+                        currentReveal?.release()
+                        settingsBgImageView?.setImageDrawable(null)
+                        settingsBgBitmap = null
+                        expandedCardIds.clear()
+                        hasInitializedCardDefaults = false
+                        applyExcludeFromRecents(false)
+                        toast(getString(R.string.reset_done))
+                        reload()
+                        recreateKeepingScroll()
+                    },
+                )
+            }
+
+            if (!hasInitializedCardDefaults) {
+                hasInitializedCardDefaults = true
+            }
+            updateExpandAllText()
+
+            col.addView(TextView(this).apply {
+                text = footerVersionText()
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(if (hasCustomSettingsBg || darkUi) 0x99FFFFFF.toInt() else tertiaryTextColor)
+                if (hasCustomSettingsBg) {
+                    setShadowLayer(
+                        dp(3).toFloat(),
+                        0f,
+                        dp(1).toFloat(),
+                        0x80000000.toInt()
+                    )
+                }
+                setPadding(0, dp(20), 0, 0)
+            })
+
+            SettingsScrollView(this).apply {
+                // 固定 id：系统重建（换主题/换颜色后的 recreate）时会自动保存并恢复滚动位置
+                id = R.id.settings_scroll
+                addView(col)
+            }
         }
+        return scrollView to bindings
     }
 
     /**
@@ -1155,7 +1345,7 @@ class MainActivity : Activity() {
 
     // ───────────────────────── 头部 ─────────────────────────
 
-    private fun hero(): View {
+    private fun hero(bindings: UiBindings): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(28), dp(8), dp(8))
@@ -1195,14 +1385,15 @@ class MainActivity : Activity() {
                 )
             }
         })
-        statusView = TextView(this).apply {
+        val status = TextView(this).apply {
             textSize = 13f
             typeface = sansMedium
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(6), dp(14), dp(6))
             compoundDrawablePadding = dp(8)
         }
-        box.addView(statusView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        bindings.statusView = status
+        box.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         val primary = TextView(this).apply {
             text = getString(R.string.open_a11y_settings)
             textSize = 15f
@@ -1301,8 +1492,10 @@ class MainActivity : Activity() {
         defaultExpanded: Boolean = false,
         onToggle: (() -> Unit)? = null,
         controllers: MutableList<CollapsibleCardController>? = null,
-        vararg rows: View,
+        bindSummaryChip: ((TextView) -> Unit)? = null,
+        rowsBuilder: () -> List<View>,
     ): View {
+        val cardBindings = activeBindings!!
         if (!hasInitializedCardDefaults && defaultExpanded) {
             expandedCardIds.add(cardId)
         }
@@ -1366,6 +1559,7 @@ class MainActivity : Activity() {
                 setPadding(dp(10), dp(4), dp(10), dp(4))
                 background = roundedSurface(trackColor, 999)
             }
+            bindSummaryChip?.invoke(chip)
             val chipLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(10)
             }
@@ -1393,7 +1587,7 @@ class MainActivity : Activity() {
             marginStart = dp(18); marginEnd = dp(18)
         })
 
-        // 内容容器
+        // 内容容器（默认折叠的卡片惰性构建子视图，仅在首次展开时实例化，降低初始 View 树内存）
         val contentBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = if (isExpanded) View.VISIBLE else View.GONE
@@ -1402,21 +1596,16 @@ class MainActivity : Activity() {
             clipToPadding = true
         }
 
-        rows.forEachIndexed { i, row ->
-            if (i > 0) {
-                val div = View(this).apply {
-                    setBackgroundColor(borderColor)
-                    visibility = row.visibility
-                }
-                row.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                    div.visibility = row.visibility
-                }
-                contentBox.addView(div,
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, dp(1) / 2)).apply {
-                        marginStart = dp(18); marginEnd = dp(18)
-                    })
+        var isInflated = false
+        fun ensureInflated() {
+            if (isInflated) return
+            isInflated = true
+            withUiContext(cardBindings) {
+                populateCardContent(contentBox, rowsBuilder(), borderColor)
             }
-            contentBox.addView(row)
+        }
+        if (isExpanded) {
+            ensureInflated()
         }
         box.addView(contentBox)
 
@@ -1435,6 +1624,7 @@ class MainActivity : Activity() {
 
                 if (expand) {
                     expandedCardIds.add(cardId)
+                    ensureInflated()
                 } else {
                     expandedCardIds.remove(cardId)
                 }
@@ -1454,14 +1644,14 @@ class MainActivity : Activity() {
                 chevron.animate()
                     .rotation(targetRotation)
                     .setDuration(if (expand) 260 else 220)
-                    .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
+                    .setInterpolator(CARD_INTERPOLATOR)
                     .setStartDelay(startDelay)
                     .start()
 
                 val availableWidth = if (box.width > 0) {
                     box.width
-                } else if ((content?.width ?: 0) > 0) {
-                    (content.width - dp(32)).coerceAtLeast(dp(200))
+                } else if (cardBindings.content.width > 0) {
+                    (cardBindings.content.width - dp(32)).coerceAtLeast(dp(200))
                 } else {
                     (resources.displayMetrics.widthPixels - dp(32)).coerceAtLeast(dp(200))
                 }
@@ -1487,7 +1677,7 @@ class MainActivity : Activity() {
 
                     val anim = ValueAnimator.ofFloat(0f, 1f).apply {
                         duration = 260
-                        interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+                        interpolator = CARD_INTERPOLATOR
                         this.startDelay = startDelay
                         addUpdateListener { va ->
                             val frac = va.animatedValue as Float
@@ -1530,7 +1720,7 @@ class MainActivity : Activity() {
 
                     val anim = ValueAnimator.ofFloat(0f, 1f).apply {
                         duration = 220
-                        interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+                        interpolator = CARD_INTERPOLATOR
                         this.startDelay = startDelay
                         addUpdateListener { va ->
                             val frac = va.animatedValue as Float
@@ -1562,7 +1752,12 @@ class MainActivity : Activity() {
                     anim.start()
                 }
             },
-            isExpanded = { expandedCardIds.contains(cardId) }
+            isExpanded = { expandedCardIds.contains(cardId) },
+            cancelHandler = {
+                currentAnimator?.cancel()
+                currentAnimator = null
+                chevron.animate().cancel()
+            },
         )
         controllers?.add(controller)
 
@@ -1576,30 +1771,38 @@ class MainActivity : Activity() {
         return box
     }
 
-    private fun sectionHeader(title: String): View = TextView(this).apply {
-        text = title
-        textSize = 20f
-        typeface = serif
-        setTextColor(textColor)
-        setPadding(dp(8), dp(32), 0, dp(12))
+    private fun populateCardContent(container: LinearLayout, rows: List<View>, dividerColor: Int) {
+        rows.forEachIndexed { i, row ->
+            if (i > 0) {
+                val div = View(this).apply {
+                    tag = ROW_DIVIDER_TAG
+                    setBackgroundColor(dividerColor)
+                    visibility = row.visibility
+                }
+                container.addView(
+                    div,
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, dp(1) / 2)).apply {
+                        marginStart = dp(18)
+                        marginEnd = dp(18)
+                    },
+                )
+            }
+            container.addView(row)
+        }
     }
 
-    /** 一组设置放在同一张圆角卡片里，组内用细分隔线隔开。 */
-    private fun card(vararg rows: View): View {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundedSurface(cardBgColor, 24)
-            clipToOutline = true
-            setPadding(0, dp(4), 0, dp(6))
+    /** 更新卡片内行的可见性并同步其前置分隔线，避免为每行注册 OnLayoutChangeListener。 */
+    private fun setCardRowVisibility(row: View, visible: Boolean) {
+        val targetVisibility = if (visible) View.VISIBLE else View.GONE
+        row.visibility = targetVisibility
+        val parent = row.parent as? LinearLayout ?: return
+        val idx = parent.indexOfChild(row)
+        if (idx > 0) {
+            val prev = parent.getChildAt(idx - 1)
+            if (prev.tag === ROW_DIVIDER_TAG) {
+                prev.visibility = targetVisibility
+            }
         }
-        rows.forEachIndexed { i, row ->
-            if (i > 0) box.addView(View(this).apply { setBackgroundColor(borderColor) },
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, dp(1) / 2)).apply {
-                    marginStart = dp(18); marginEnd = dp(18)
-                })
-            box.addView(row)
-        }
-        return box
     }
 
     private fun titleText(title: String): TextView = TextView(this).apply {
@@ -1719,8 +1922,38 @@ class MainActivity : Activity() {
         currentAction: PadAction,
         availableActions: List<PadAction> = PadAction.BALL_ACTIONS,
         onPicked: (PadAction) -> Unit
-    ): View =
-        LinearLayout(this).apply {
+    ): View {
+        val bindings = activeBindings!!
+        var selectedAction = currentAction
+
+        val iconView = ImageView(this).apply {
+            setImageResource(selectedAction.iconRes)
+            imageTintList = bindings.colors.accent
+            setPadding(0, 0, dp(6), 0)
+        }
+        val labelView = TextView(this).apply {
+            text = if (selectedAction == PadAction.NONE) {
+                getString(R.string.act_none_gesture)
+            } else {
+                getString(selectedAction.labelRes)
+            }
+            textSize = 13f
+            typeface = sansMedium
+            setTextColor(textColor)
+        }
+
+        val chip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(4), dp(12), dp(4))
+            background = roundedSurface(trackColor, 999).apply {
+                setStroke(maxOf(1, dp(1)), borderColor)
+            }
+            addView(iconView, LinearLayout.LayoutParams(dp(18), dp(18)))
+            addView(labelView)
+        }
+
+        return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(54)
@@ -1728,46 +1961,32 @@ class MainActivity : Activity() {
             background = ripple(null, rippleColor, 0)
             isClickable = true
             setOnClickListener {
-                ActionPicker.build(
-                    this@MainActivity,
-                    darkUi,
-                    currentAction,
-                    actions = availableActions,
-                    noneLabelRes = R.string.act_none_gesture,
-                    accentColor = accentColor,
-                ) { picked ->
-                    onPicked(picked)
-                    reload()
-                    recreateKeepingScroll()
-                }.show()
+                val theme = getThemeFor(bindings.isDark)
+                showTrackedDialog(
+                    ActionPicker.build(
+                        this@MainActivity,
+                        bindings.isDark,
+                        selectedAction,
+                        actions = availableActions,
+                        noneLabelRes = R.string.act_none_gesture,
+                        accentColor = theme.accentColor,
+                    ) { picked ->
+                        selectedAction = picked
+                        iconView.setImageResource(picked.iconRes)
+                        labelView.text = if (picked == PadAction.NONE) {
+                            getString(R.string.act_none_gesture)
+                        } else {
+                            getString(picked.labelRes)
+                        }
+                        onPicked(picked)
+                        reload()
+                    }
+                )
             }
             addView(titleText(gestureTitle), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-            val chip = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(10), dp(4), dp(12), dp(4))
-                background = roundedSurface(trackColor, 999).apply {
-                    setStroke(maxOf(1, dp(1)), borderColor)
-                }
-                addView(ImageView(this@MainActivity).apply {
-                    setImageResource(currentAction.iconRes)
-                    imageTintList = ColorStateList.valueOf(accentColor)
-                    setPadding(0, 0, dp(6), 0)
-                }, LinearLayout.LayoutParams(dp(18), dp(18)))
-                addView(TextView(this@MainActivity).apply {
-                    text = if (currentAction == PadAction.NONE) {
-                        getString(R.string.act_none_gesture)
-                    } else {
-                        getString(currentAction.labelRes)
-                    }
-                    textSize = 13f
-                    typeface = sansMedium
-                    setTextColor(textColor)
-                })
-            }
             addView(chip)
         }
+    }
 
     private fun roundedSurface(color: Int, radiusDp: Int): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
@@ -1778,8 +1997,14 @@ class MainActivity : Activity() {
     private fun borderedSurface(color: Int, strokeColor: Int, radiusDp: Int): GradientDrawable =
         roundedSurface(color, radiusDp).apply { setStroke(maxOf(1, dp(1)), strokeColor) }
 
-    private fun ripple(content: Drawable?, color: Int, radiusDp: Int): Drawable =
-        RippleDrawable(ColorStateList.valueOf(color), content, roundedSurface(Color.WHITE, radiusDp))
+    private fun ripple(content: Drawable?, color: Int, radiusDp: Int): Drawable {
+        val csl = if (color == rippleColor) {
+            currentColorStateLists().ripple
+        } else {
+            ColorStateList.valueOf(color)
+        }
+        return RippleDrawable(csl, content, roundedSurface(Color.WHITE, radiusDp))
+    }
 
     private fun pill(text: String): TextView = TextView(this).apply {
         this.text = text
@@ -1866,6 +2091,7 @@ class MainActivity : Activity() {
         bind: ((SliderController) -> Unit)? = null,
         onChange: (Int) -> Unit,
     ): View {
+        val colors = currentColorStateLists()
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(6))
@@ -1891,9 +2117,9 @@ class MainActivity : Activity() {
         val sb = SeekBar(this).apply {
             this.max = max - min
             progress = (value - min).coerceIn(0, max - min)
-            progressTintList = ColorStateList.valueOf(accentColor)
-            progressBackgroundTintList = ColorStateList.valueOf(trackColor)
-            thumbTintList = ColorStateList.valueOf(accentColor)
+            progressTintList = colors.accent
+            progressBackgroundTintList = colors.track
+            thumbTintList = colors.accent
             progressTintMode = PorterDuff.Mode.SRC_IN
             thumbTintMode = PorterDuff.Mode.SRC_IN
             splitTrack = false
@@ -1930,16 +2156,11 @@ class MainActivity : Activity() {
         bind: ((Switch) -> Unit)? = null,
         onChange: (Boolean) -> Unit,
     ): View {
+        val colors = currentColorStateLists()
         val sw = Switch(this).apply {
             isChecked = checked
-            thumbTintList = ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(accentColor, if (darkUi) 0xFFB6B7BC.toInt() else 0xFFFFFFFF.toInt()),
-            )
-            trackTintList = ColorStateList(
-                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(accentSoftStrongColor, trackStrongColor),
-            )
+            thumbTintList = colors.switchThumb
+            trackTintList = colors.switchTrack
             contentDescription = title
             setOnCheckedChangeListener { v, value -> if (v.tag !== SYNCING) onChange(value) }
         }
@@ -1973,116 +2194,135 @@ class MainActivity : Activity() {
         set: (Int) -> Unit,
         onServiceUpdate: (() -> Unit)? = null,
         allowCustomHex: Boolean = false,
+        recreateOnChange: Boolean = false,
     ): View {
+        val bindings = activeBindings!!
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(12), 0, dp(12), 0)
         }
-        val currentColor = get()
-        val allColors = if (allowCustomHex && currentColor != 0 && currentColor != COLOR_DYNAMIC && currentColor !in palette) {
-            palette + currentColor
-        } else {
-            palette
+        val hsv = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(row)
         }
-        allColors.forEach { color ->
-            val selected = currentColor == color
-            val isDyn = color == COLOR_DYNAMIC
-            val fill = when (color) {
-                COLOR_DYNAMIC -> getDynamicAccent(darkUi)
-                0 -> if (prefs.dynamicColor) getDynamicAccent(darkUi) else (if (darkUi) 0xFFD97757.toInt() else 0xFFC96442.toInt())
-                else -> color
+
+        fun applyColorChange(picked: Int, rebuildInPlace: () -> Unit) {
+            set(picked)
+            if (onServiceUpdate != null) {
+                onServiceUpdate()
+            } else {
+                reload()
             }
-            val swatch = TextView(this).apply {
-                gravity = Gravity.CENTER
-                textSize = 15f
-                text = when {
-                    selected -> "✓"
-                    isDyn -> "✦"
-                    else -> ""
-                }
-                setTextColor(if (Color.luminance(fill) > 0.55f) 0xFF111827.toInt() else Color.WHITE)
-                val inner = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    if (isDyn) {
-                        orientation = GradientDrawable.Orientation.TL_BR
-                        colors = intArrayOf(lightenColor(fill, 0.14f), fill, darkenColor(fill, 0.10f))
-                    } else if (color == 0) {
-                        orientation = GradientDrawable.Orientation.TL_BR
-                        colors = intArrayOf(fill, fill)
-                    } else {
-                        setColor(color)
-                    }
-                    setStroke(maxOf(1, dp(1) / 2), 0x33000000)
-                }
-                val ring = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(Color.TRANSPARENT)
-                    setStroke(dp(2), if (selected) accentColor else Color.TRANSPARENT)
-                }
-                background = LayerDrawable(arrayOf(ring, inner)).apply { setLayerInset(1, dp(4), dp(4), dp(4), dp(4)) }
-                contentDescription = when (color) {
-                    0 -> getString(R.string.color_default)
-                    COLOR_DYNAMIC -> getString(R.string.color_dynamic)
-                    else -> String.format(java.util.Locale.US, "#%06X", color and 0xFFFFFF)
-                }
-                isClickable = true
-                setOnClickListener {
-                    set(color)
-                    if (onServiceUpdate != null) {
-                        onServiceUpdate()
-                    } else {
-                        reload()
-                    }
-                    recreateKeepingScroll()
-                }
+            if (recreateOnChange) {
+                recreateKeepingScroll()
+            } else {
+                rebuildInPlace()
             }
-            row.addView(swatch, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-                setMargins(dp(2), 0, dp(2), 0)
-            })
         }
-        if (allowCustomHex) {
-            val customSwatch = TextView(this).apply {
-                gravity = Gravity.CENTER
-                textSize = 18f
-                text = "+"
-                setTextColor(textColor)
-                val inner = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(trackStrongColor)
-                    setStroke(maxOf(1, dp(1) / 2), 0x33000000)
+
+        fun rebuildSwatches() {
+            val prevScrollX = hsv.scrollX
+            withUiContext(bindings) {
+                row.removeAllViews()
+                val currentColor = get()
+                val allColors = if (allowCustomHex && currentColor != 0 && currentColor != COLOR_DYNAMIC && currentColor !in palette) {
+                    palette + currentColor
+                } else {
+                    palette
                 }
-                val ring = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(Color.TRANSPARENT)
-                    setStroke(dp(2), Color.TRANSPARENT)
-                }
-                background = LayerDrawable(arrayOf(ring, inner)).apply { setLayerInset(1, dp(4), dp(4), dp(4), dp(4)) }
-                contentDescription = getString(R.string.custom_color_title)
-                isClickable = true
-                setOnClickListener {
-                    showCustomColorDialog(currentColor) { picked ->
-                        set(picked)
-                        if (onServiceUpdate != null) {
-                            onServiceUpdate()
-                        } else {
-                            reload()
+                allColors.forEach { color ->
+                    val selected = currentColor == color
+                    val isDyn = color == COLOR_DYNAMIC
+                    val fill = when (color) {
+                        COLOR_DYNAMIC -> getDynamicAccent(darkUi)
+                        0 -> if (prefs.dynamicColor) getDynamicAccent(darkUi) else (if (darkUi) 0xFFD97757.toInt() else 0xFFC96442.toInt())
+                        else -> color
+                    }
+                    val swatch = TextView(this).apply {
+                        gravity = Gravity.CENTER
+                        textSize = 15f
+                        text = when {
+                            selected -> "✓"
+                            isDyn -> "✦"
+                            else -> ""
                         }
-                        recreateKeepingScroll()
+                        setTextColor(if (Color.luminance(fill) > 0.55f) 0xFF111827.toInt() else Color.WHITE)
+                        val inner = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            if (isDyn) {
+                                orientation = GradientDrawable.Orientation.TL_BR
+                                colors = intArrayOf(lightenColor(fill, 0.14f), fill, darkenColor(fill, 0.10f))
+                            } else if (color == 0) {
+                                orientation = GradientDrawable.Orientation.TL_BR
+                                colors = intArrayOf(fill, fill)
+                            } else {
+                                setColor(color)
+                            }
+                            setStroke(maxOf(1, dp(1) / 2), 0x33000000)
+                        }
+                        val ring = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(Color.TRANSPARENT)
+                            setStroke(dp(2), if (selected) accentColor else Color.TRANSPARENT)
+                        }
+                        background = LayerDrawable(arrayOf(ring, inner)).apply { setLayerInset(1, dp(4), dp(4), dp(4), dp(4)) }
+                        contentDescription = when (color) {
+                            0 -> getString(R.string.color_default)
+                            COLOR_DYNAMIC -> getString(R.string.color_dynamic)
+                            else -> String.format(java.util.Locale.US, "#%06X", color and 0xFFFFFF)
+                        }
+                        isClickable = true
+                        setOnClickListener {
+                            applyColorChange(color) { rebuildSwatches() }
+                        }
                     }
+                    row.addView(swatch, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+                        setMargins(dp(2), 0, dp(2), 0)
+                    })
+                }
+                if (allowCustomHex) {
+                    val customSwatch = TextView(this).apply {
+                        gravity = Gravity.CENTER
+                        textSize = 18f
+                        text = "+"
+                        setTextColor(textColor)
+                        val inner = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(trackStrongColor)
+                            setStroke(maxOf(1, dp(1) / 2), 0x33000000)
+                        }
+                        val ring = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(Color.TRANSPARENT)
+                            setStroke(dp(2), Color.TRANSPARENT)
+                        }
+                        background = LayerDrawable(arrayOf(ring, inner)).apply { setLayerInset(1, dp(4), dp(4), dp(4), dp(4)) }
+                        contentDescription = getString(R.string.custom_color_title)
+                        isClickable = true
+                        setOnClickListener {
+                            withUiContext(bindings) {
+                                showCustomColorDialog(get()) { picked ->
+                                    applyColorChange(picked) { rebuildSwatches() }
+                                }
+                            }
+                        }
+                    }
+                    row.addView(customSwatch, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+                        setMargins(dp(2), 0, dp(2), 0)
+                    })
                 }
             }
-            row.addView(customSwatch, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-                setMargins(dp(2), 0, dp(2), 0)
-            })
+            if (prevScrollX > 0) {
+                hsv.post { hsv.scrollTo(prevScrollX, 0) }
+            }
         }
+        rebuildSwatches()
+
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(12), 0, dp(10))
             addView(titleText(title).apply { setPadding(dp(16), 0, dp(16), dp(8)) })
-            addView(android.widget.HorizontalScrollView(this@MainActivity).apply {
-                isHorizontalScrollBarEnabled = false
-                addView(row)
-            })
+            addView(hsv)
         }
     }
 
@@ -2090,10 +2330,11 @@ class MainActivity : Activity() {
         currentColor: Int,
         onColorSelected: (Int) -> Unit,
     ) {
+        val dialogAccent = accentColor
         val initialHex = if (currentColor != 0 && currentColor != COLOR_DYNAMIC) {
             String.format(java.util.Locale.US, "#%06X", currentColor and 0x00FFFFFF)
         } else {
-            String.format(java.util.Locale.US, "#%06X", accentColor and 0x00FFFFFF)
+            String.format(java.util.Locale.US, "#%06X", dialogAccent and 0x00FFFFFF)
         }
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2150,24 +2391,27 @@ class MainActivity : Activity() {
         })
 
         dialog.setOnShowListener {
-            dialog.getButton(DialogInterface.BUTTON_POSITIVE)?.setTextColor(accentColor)
-            dialog.getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(accentColor)
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE)?.setTextColor(dialogAccent)
+            dialog.getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(dialogAccent)
         }
-        dialog.show()
+        showTrackedDialog(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
             val text = edit.text.toString().trim()
             val hex = if (!text.startsWith("#")) "#$text" else text
             val parsed = runCatching { Color.parseColor(hex) }.getOrNull()
             if (parsed != null) {
-                onColorSelected(parsed)
                 dialog.dismiss()
+                onColorSelected(parsed)
             } else {
                 toast(getString(R.string.custom_color_invalid))
             }
         }
     }
 
-    private fun buttonLayoutModeRow(): View {
+    private fun buttonLayoutModeRow(
+        bindings: UiBindings,
+        onModeChanged: (Int) -> Unit,
+    ): View {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(12), 0, dp(8))
@@ -2188,47 +2432,64 @@ class MainActivity : Activity() {
             ButtonLayoutMode.SIXTEEN to R.string.btn_mode_16,
             ButtonLayoutMode.EIGHTEEN to R.string.btn_mode_18,
         )
-        modes.forEach { (mode, labelRes) ->
-            val selected = prefs.buttonCount == mode.count
-            track.addView(TextView(this).apply {
-                text = getString(labelRes)
-                textSize = 14f
-                gravity = Gravity.CENTER
-                typeface = if (selected) sansMedium else Typeface.DEFAULT
-                setTextColor(if (selected) textColor else secondaryTextColor)
-                background = if (selected) {
-                    roundedSurface(elevatedColor, 9).apply { setStroke(maxOf(1, dp(1)), borderColor) }
-                } else {
-                    ripple(null, rippleColor, 9)
-                }
-                if (selected) elevation = dp(1).toFloat()
-                isClickable = true
-                contentDescription = getString(labelRes)
-                setOnClickListener {
-                    if (prefs.buttonCount != mode.count) {
-                        prefs.buttonCount = mode.count
-                        reload()
-                        recreateKeepingScroll()
-                    }
-                }
-            }, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
-                setMargins(dp(2), 0, dp(2), 0)
-            })
-        }
-        col.addView(track, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            setMargins(dp(16), 0, dp(16), 0)
-        })
 
-        val descRes = when (prefs.buttonCount) {
+        fun descResFor(count: Int): Int = when (count) {
             4 -> R.string.btn_mode_4_desc
             8 -> R.string.btn_mode_8_desc
             12 -> R.string.btn_mode_12_desc
             18 -> R.string.btn_mode_18_desc
             else -> R.string.btn_mode_16_desc
         }
-        col.addView(hintText(getString(descRes)).apply {
+
+        val modeViews = ArrayList<Pair<ButtonLayoutMode, TextView>>(modes.size)
+        val descView = hintText(getString(descResFor(prefs.buttonCount))).apply {
             setPadding(dp(16), dp(6), dp(16), 0)
+        }
+
+        fun renderSelection(selectedCount: Int) {
+            withUiContext(bindings) {
+                modeViews.forEach { (mode, tv) ->
+                    val selected = selectedCount == mode.count
+                    tv.typeface = if (selected) sansMedium else Typeface.DEFAULT
+                    tv.setTextColor(if (selected) textColor else secondaryTextColor)
+                    tv.background = if (selected) {
+                        roundedSurface(elevatedColor, 9).apply { setStroke(maxOf(1, dp(1)), borderColor) }
+                    } else {
+                        ripple(null, rippleColor, 9)
+                    }
+                    tv.elevation = if (selected) dp(1).toFloat() else 0f
+                }
+                descView.text = getString(descResFor(selectedCount))
+            }
+        }
+
+        modes.forEach { (mode, labelRes) ->
+            val tv = TextView(this).apply {
+                text = getString(labelRes)
+                textSize = 14f
+                gravity = Gravity.CENTER
+                isClickable = true
+                contentDescription = getString(labelRes)
+                setOnClickListener {
+                    if (prefs.buttonCount != mode.count) {
+                        prefs.buttonCount = mode.count
+                        renderSelection(mode.count)
+                        reload()
+                        onModeChanged(mode.count)
+                    }
+                }
+            }
+            modeViews.add(mode to tv)
+            track.addView(tv, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+                setMargins(dp(2), 0, dp(2), 0)
+            })
+        }
+        renderSelection(prefs.buttonCount)
+
+        col.addView(track, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(16), 0, dp(16), 0)
         })
+        col.addView(descView)
 
         return col
     }
@@ -2237,10 +2498,11 @@ class MainActivity : Activity() {
      * 按钮槽位编辑：画一张和真实面板同布局的自适应缩略图，
      * 中间是触控板；根据所选模式（4/8/12/16/18 键）呈现对应布局与形状。
      */
-    private fun buttonSlotMap(): View {
+    private fun buttonSlotMap(bindings: UiBindings): View {
         val count = prefs.buttonCount
         val slots = prefs.buttons.take(count).toMutableList()
         while (slots.size < count) slots.add(PadAction.NONE)
+        val pressFeedbackEnabled = { prefs.pressFeedback }
 
         val gap = dp(6)
         val available = resources.displayMetrics.widthPixels - dp(16) * 4
@@ -2307,55 +2569,67 @@ class MainActivity : Activity() {
             rects
         }
 
+        fun styleSlotView(iv: ImageView, face: GradientDrawable, index: Int, action: PadAction) {
+            withUiContext(bindings) {
+                val empty = action == PadAction.NONE
+                val grip = PadAction.isGrip(action)
+                iv.setImageResource(action.iconRes)
+                iv.imageTintList = when {
+                    empty -> bindings.colors.tertiaryText
+                    grip -> bindings.colors.accent
+                    else -> bindings.colors.text
+                }
+                when {
+                    empty -> {
+                        face.setColor(Color.TRANSPARENT)
+                        face.setStroke(maxOf(1, dp(1) / 2), tertiaryTextColor, dp(3).toFloat(), dp(3).toFloat())
+                    }
+                    grip -> {
+                        face.setColor(accentSoftColor)
+                        face.setStroke(maxOf(1, dp(1)), accentSoftStrongColor)
+                    }
+                    else -> {
+                        face.setColor(elevatedColor)
+                        face.setStroke(maxOf(1, dp(1) / 2), borderColor)
+                    }
+                }
+                iv.elevation = if (!empty && !grip) dp(1).toFloat() else 0f
+                iv.contentDescription = "${slotPositionDescription(index, count, this@MainActivity)}: ${getString(action.labelRes)}"
+                iv.invalidate()
+            }
+        }
+
         slotRects.forEachIndexed { index, rect ->
-            val action = slots.getOrElse(index) { PadAction.NONE }
-            val empty = action == PadAction.NONE
-            val grip = PadAction.isGrip(action)
             val radius = minOf(rect.w, rect.h) / 2f
             val standardIconPx = (cell * 0.54f).roundToInt()
             val maxIconPx = (minOf(rect.w, rect.h) - dp(4)).coerceAtLeast(dp(8))
             val iconPx = minOf(standardIconPx, maxIconPx).coerceAtLeast(dp(8))
-            val padH = ((rect.w - iconPx) / 2).coerceAtLeast(0)
-            val padV = ((rect.h - iconPx) / 2).coerceAtLeast(0)
+            val padHoriz = ((rect.w - iconPx) / 2).coerceAtLeast(0)
+            val padVert = ((rect.h - iconPx) / 2).coerceAtLeast(0)
 
-            place(ImageView(this).apply {
-                setImageResource(action.iconRes)
-                imageTintList = ColorStateList.valueOf(when {
-                    empty -> tertiaryTextColor
-                    grip -> accentColor
-                    else -> textColor
-                })
-                setPadding(padH, padV, padH, padV)
-                val face = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = radius
-                    when {
-                        empty -> {
-                            setColor(Color.TRANSPARENT)
-                            setStroke(maxOf(1, dp(1) / 2), tertiaryTextColor, dp(3).toFloat(), dp(3).toFloat())
-                        }
-                        grip -> {
-                            setColor(accentSoftColor)
-                            setStroke(maxOf(1, dp(1)), accentSoftStrongColor)
-                        }
-                        else -> {
-                            setColor(elevatedColor)
-                            setStroke(maxOf(1, dp(1) / 2), borderColor)
-                        }
+            val face = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = radius
+            }
+            val mask = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = radius
+                setColor(Color.WHITE)
+            }
+            val iv = ImageView(this).apply {
+                setPadding(padHoriz, padVert, padHoriz, padVert)
+                background = RippleDrawable(bindings.colors.ripple, face, mask)
+                isClickable = true
+                PressFeedback.attach(this, maxTiltX = 6f, maxTiltY = 6f, pressScale = 0.92f, sinkDp = 1.5f, isEnabled = pressFeedbackEnabled)
+                setOnClickListener {
+                    pickAction(bindings, index, slots[index]) { picked ->
+                        slots[index] = picked
+                        styleSlotView(this, face, index, picked)
                     }
                 }
-                val mask = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = radius
-                    setColor(Color.WHITE)
-                }
-                background = RippleDrawable(ColorStateList.valueOf(rippleColor), face, mask)
-                if (!empty && !grip) elevation = dp(1).toFloat()
-                isClickable = true
-                PressFeedback.attach(this, maxTiltX = 6f, maxTiltY = 6f, pressScale = 0.92f, sinkDp = 1.5f, isEnabled = { prefs.pressFeedback })
-                contentDescription = "${slotPositionDescription(index, count, this@MainActivity)}: ${getString(action.labelRes)}"
-                setOnClickListener { pickAction(index, action) }
-            }, rect.x, rect.y, rect.w, rect.h)
+            }
+            styleSlotView(iv, face, index, slots.getOrElse(index) { PadAction.NONE })
+            place(iv, rect.x, rect.y, rect.w, rect.h)
         }
 
         val totalW = 6 * cell + 5 * gap
@@ -2365,30 +2639,45 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun pickAction(index: Int, current: PadAction) {
-        ActionPicker.build(this, darkUi, current, actions = PadAction.TOUCHPAD_ACTIONS, accentColor = accentColor) { picked ->
-            val list = replaceSlot(prefs.buttons, index, picked, prefs.buttonCount)
-            if (list == null) {
-                toast(getString(R.string.need_move_key))
-                return@build
+    private fun pickAction(
+        bindings: UiBindings,
+        index: Int,
+        current: PadAction,
+        onUpdated: (PadAction) -> Unit,
+    ) {
+        val theme = getThemeFor(bindings.isDark)
+        showTrackedDialog(
+            ActionPicker.build(
+                this,
+                bindings.isDark,
+                current,
+                actions = PadAction.TOUCHPAD_ACTIONS,
+                accentColor = theme.accentColor,
+            ) { picked ->
+                val list = replaceSlot(prefs.buttons, index, picked, prefs.buttonCount)
+                if (list == null) {
+                    toast(getString(R.string.need_move_key))
+                    return@build
+                }
+                prefs.buttons = list
+                reload()
+                onUpdated(picked)
             }
-            prefs.buttons = list
-            reload()
-            recreateKeepingScroll()
-        }.show()
+        )
     }
 
     private fun showDialog(title: String, body: String) {
         val dialogTheme = if (darkUi) R.style.WarmDialog_Dark else R.style.WarmDialog
+        val dialogAccent = accentColor
         val dialog = AlertDialog.Builder(this, dialogTheme)
             .setTitle(title)
             .setMessage(body)
             .setPositiveButton(android.R.string.ok, null)
             .create()
         dialog.setOnShowListener {
-            dialog.getButton(DialogInterface.BUTTON_POSITIVE)?.setTextColor(accentColor)
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE)?.setTextColor(dialogAccent)
         }
-        dialog.show()
+        showTrackedDialog(dialog)
     }
 
     // ───────────────────────── 杂项 ─────────────────────────
@@ -2461,7 +2750,7 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQUEST_CODE_POST_NOTIFICATIONS)
         } else if (!hasNotificationPermission()) {
             prefs.keepAliveNotification = false
-            listOfNotNull(baseKeepAliveSwitch, keepAliveSwitch).distinct().forEach { sw ->
+            allActiveBindings().mapNotNull { it.keepAliveSwitch }.forEach { sw ->
                 sw.tag = SYNCING
                 sw.isChecked = false
                 sw.tag = null
@@ -2475,7 +2764,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun updateStatus(targetView: TextView = statusView, isDark: Boolean = darkUi) {
+    private fun updateStatus(targetView: TextView, isDark: Boolean = darkUi) {
         val on = isServiceEnabled()
         val theme = getThemeFor(isDark)
         targetView.text = getString(if (on) R.string.status_on else R.string.status_off)
@@ -2687,7 +2976,7 @@ class MainActivity : Activity() {
 
         val anim = ValueAnimator.ofFloat(fromRadius, toRadius).apply {
             duration = animDuration
-            interpolator = AccelerateDecelerateInterpolator()
+            interpolator = REVEAL_INTERPOLATOR
             addUpdateListener { va ->
                 val r = va.animatedValue as Float
                 reveal.radius = r
@@ -2732,14 +3021,10 @@ class MainActivity : Activity() {
                             reveal.release()
                             (reveal.parent as? ViewGroup)?.removeView(reveal)
                             currentReveal = null
-                            baseContent?.let { content = it }
-                            baseStatusView?.let { statusView = it }
-                            baseShowPanelSwitch?.let { showPanelSwitch = it }
-                            baseKeepAliveSwitch?.let { keepAliveSwitch = it }
-                            baseBatteryStatusTextView?.let { batteryStatusTextView = it }
-                            baseWidthSliderController?.let { widthSliderController = it }
-                            baseHeightSliderController?.let { heightSliderController = it }
+                            revealBindings?.cancelAllCardAnimations()
+                            revealBindings = null
                             scroller = baseScroller
+                            darkUi = baseThemeDark
                             updateSystemBars(statusDark = baseThemeDark, navDark = baseThemeDark, force = true)
                         } else {
                             finishThemeTransition(reveal, currentRevealDark)
@@ -2829,14 +3114,13 @@ class MainActivity : Activity() {
                 val dy = maxOf(cy, h - cy).toDouble()
                 val maxRadius = kotlin.math.hypot(dx, dy).toFloat() + dp(4).toFloat()
 
-                // 临时切换 darkUi 以构建新主题视图与状态胶囊
-                darkUi = targetDark
-                val targetTheme = currentTheme
-                val newScroller = buildUi().apply {
-                    applyScrollInsets(this, lastInsetsLeft, lastInsetsTop, lastInsetsRight, lastInsetsBottom)
-                }
-                updateStatus(statusView, targetDark)
-                darkUi = baseThemeDark // 恢复底层 baseThemeDark
+                // 在独立 UiBindings 上下文中构建目标主题视图与状态胶囊，不污染底层 baseThemeDark
+                val targetTheme = getThemeFor(targetDark)
+                revealBindings?.cancelAllCardAnimations()
+                val (newScroller, newBindings) = buildUi(targetDark)
+                applyScrollInsets(newScroller, lastInsetsLeft, lastInsetsTop, lastInsetsRight, lastInsetsBottom)
+                updateStatus(newBindings.statusView, targetDark)
+                revealBindings = newBindings
 
                 attachScrollSync(newScroller)
 
@@ -2888,6 +3172,7 @@ class MainActivity : Activity() {
         val currentScroll = winnerScroller.scrollY
 
         winnerReveal.release()
+        baseBindings.cancelAllCardAnimations()
         val host = contentHost ?: rootContainer
         host.removeAllViews()
         winnerReveal.removeView(winnerScroller)
@@ -2903,13 +3188,8 @@ class MainActivity : Activity() {
         scroller = winnerScroller
         darkUi = newDark
         currentReveal = null
-        baseContent = content
-        baseStatusView = statusView
-        baseShowPanelSwitch = showPanelSwitch
-        baseKeepAliveSwitch = keepAliveSwitch
-        baseBatteryStatusTextView = batteryStatusTextView
-        baseWidthSliderController = widthSliderController
-        baseHeightSliderController = heightSliderController
+        revealBindings?.let { baseBindings = it }
+        revealBindings = null
 
         setTheme(if (darkUi) R.style.AppTheme_Dark else R.style.AppTheme)
         rootContainer.setBackgroundColor(pageColor)
@@ -2961,6 +3241,12 @@ class MainActivity : Activity() {
         const val REQUEST_CODE_PICK_SETTINGS_BG = 1002
         const val REQUEST_CODE_POST_NOTIFICATIONS = 1003
         val SYNCING = Any()
+        val ROW_DIVIDER_TAG = Any()
+        val CARD_INTERPOLATOR = PathInterpolator(0.2f, 0f, 0f, 1f)
+        val REVEAL_INTERPOLATOR = AccelerateDecelerateInterpolator()
+        val sansMedium: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        var cachedSerif: Typeface? = null
+        val SWITCH_STATES = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
         val expandedCardIds = mutableSetOf<String>()
         var hasInitializedCardDefaults = false
 

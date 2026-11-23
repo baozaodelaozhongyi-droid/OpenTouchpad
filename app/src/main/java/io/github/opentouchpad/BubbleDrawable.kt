@@ -92,9 +92,81 @@ internal fun buildBubblePath(
 }
 
 /**
+ * 极简气泡遮罩 Drawable（专供 RippleDrawable mask 层使用）：
+ * 仅持有 1 个 Path 并共享不可变白色 Paint，相比完整 BubbleDrawable 省去 4 个 Native Paint、
+ * 1 个 Native Path 与 6 个渐变数组。
+ */
+internal class BubbleMaskDrawable : Drawable() {
+    private val fillPath = Path()
+    private var pathsDirty = true
+
+    private fun rebuildPath(bounds: Rect) {
+        pathsDirty = false
+        val w = bounds.width().toFloat()
+        val h = bounds.height().toFloat()
+        if (w <= 0f || h <= 0f) {
+            fillPath.reset()
+            return
+        }
+        buildBubblePath(
+            fillPath,
+            bounds.left.toFloat(),
+            bounds.top.toFloat(),
+            bounds.right.toFloat(),
+            bounds.bottom.toFloat(),
+        )
+    }
+
+    override fun onBoundsChange(bounds: Rect) {
+        super.onBoundsChange(bounds)
+        rebuildPath(bounds)
+    }
+
+    override fun draw(canvas: Canvas) {
+        if (bounds.width() <= 0 || bounds.height() <= 0) return
+        if (pathsDirty || fillPath.isEmpty) {
+            rebuildPath(bounds)
+        }
+        canvas.drawPath(fillPath, MASK_PAINT)
+    }
+
+    // Mask 永远只需纯白不透明剪裁区域，空操作确保静态 MASK_PAINT 绝对不可变
+    override fun setAlpha(alpha: Int) = Unit
+
+    override fun setColorFilter(colorFilter: ColorFilter?) = Unit
+
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+
+    override fun getOutline(outline: Outline) {
+        if ((pathsDirty || fillPath.isEmpty) && bounds.width() > 0 && bounds.height() > 0) {
+            rebuildPath(bounds)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            outline.setPath(fillPath)
+        } else {
+            @Suppress("DEPRECATION")
+            if (fillPath.isConvex) {
+                outline.setConvexPath(fillPath)
+            } else {
+                val radius = minOf(bounds.width(), bounds.height()) / 2f
+                outline.setRoundRect(bounds, radius)
+            }
+        }
+    }
+
+    private companion object {
+        val MASK_PAINT: Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = Color.WHITE
+        }
+    }
+}
+
+/**
  * 饱满气泡型 Drawable（支持双模态材质）：
  * - 纯正圆/连续弧度自适应；
- * - 高不透明度（80%–100%）：呈现干净柔和的 Material You 容器表面；
+ * - 高不透明度（80%–100%）：呈现干净柔和的 Material You 容器表面（零分配液态玻璃画笔与路径）；
  * - 中低不透明度（20%–60%）：呈现 Apple 液态玻璃（焦散透光基底、内部聚光、张力内高光弧、135° 菲涅尔折光描边）；
  * - 60%–80% 之间平滑演进，并支持 [setInteractiveTilt] 实时按压流光；
  * - 作为遮罩时支持 RippleDrawable 精确剪裁水波纹。
@@ -118,30 +190,37 @@ class BubbleDrawable(
     private var tiltNormY = 0f
     private var shadersDirty = true
     private var pathsDirty = true
+    private var currentColorFilter: ColorFilter? = null
+    internal var cachedRippleColor: Int = 0
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
-    private val causticPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-    }
-    private val bevelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-    }
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-    }
+    private var strokePaint: Paint? = null
+    // 液态玻璃专属画笔与路径：仅在 glassFactor > 0.02f 时按需创建，Material You 模式零分配
+    private var causticPaint: Paint? = null
+    private var bevelPaint: Paint? = null
 
     private val fillPath = Path()
-    private val bevelPath = Path()
+    private var bevelPath: Path? = null
 
-    // 预分配渐变数组，避免每次更新着色器时分配短命数组
-    private val colors3 = IntArray(3)
-    private val colors4 = IntArray(4)
-    private val posGlassFill = floatArrayOf(0f, 0.48f, 1f)
-    private val posCaustic = floatArrayOf(0f, 0.40f, 1f)
-    private val posBevel = floatArrayOf(0f, 0.20f, 0.78f, 1f)
-    private val posRim = floatArrayOf(0f, 0.36f, 0.68f, 1f)
+    private fun ensureStrokePaint(): Paint =
+        strokePaint ?: Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            colorFilter = currentColorFilter
+        }.also { strokePaint = it }
+
+    private fun ensureCausticPaint(): Paint =
+        causticPaint ?: Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            colorFilter = currentColorFilter
+        }.also { causticPaint = it }
+
+    private fun ensureBevelPaint(): Paint =
+        bevelPaint ?: Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            colorFilter = currentColorFilter
+        }.also { bevelPaint = it }
 
     /** 原地更新颜色、描边、不透明度与深浅主题，复用现有 Drawable/Path 实例，零视图背景重建开销。 */
     fun updateStyle(
@@ -210,13 +289,13 @@ class BubbleDrawable(
         val h = bounds.height().toFloat()
         if (w <= 0f || h <= 0f) {
             fillPath.reset()
-            bevelPath.reset()
+            bevelPath?.reset()
             return
         }
 
         if (isMask) {
             buildBubblePath(fillPath, bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat())
-            bevelPath.reset()
+            bevelPath = null
         } else {
             val outerStrokePx = effectiveStrokeWidthPx()
             val halfStroke = if (outerStrokePx > 0f) outerStrokePx / 2f else 0f
@@ -232,15 +311,16 @@ class BubbleDrawable(
             val bevelWidthPx = 0.75f * safeDensity
             val bevelInset = outerStrokePx + bevelWidthPx * 0.5f
             if (glassFactor > 0.02f && w > bevelInset * 2.5f && h > bevelInset * 2.5f) {
+                val bp = bevelPath ?: Path().also { bevelPath = it }
                 buildBubblePath(
-                    bevelPath,
+                    bp,
                     bounds.left + bevelInset,
                     bounds.top + bevelInset,
                     bounds.right - bevelInset,
                     bounds.bottom - bevelInset,
                 )
             } else {
-                bevelPath.reset()
+                bevelPath = null
             }
         }
     }
@@ -263,7 +343,10 @@ class BubbleDrawable(
         val alphaScale = alphaMod / 255f
         val baseAlpha = (255f * (clampedOpacity / 100f) * alphaScale).roundToInt().coerceIn(0, 255)
         val highlightScale = computeGlassHighlightScale(clampedOpacity)
-        val shift = computeSpecularShift(tiltNormX, tiltNormY)
+        computeSpecularShiftInto(tempShift, tiltNormX, tiltNormY)
+        val shiftXRatio = tempShift[0]
+        val shiftYRatio = tempShift[1]
+        val shiftBoost = tempShift[2]
 
         if (w <= 0f || h <= 0f) {
             fillPaint.shader = null
@@ -281,15 +364,16 @@ class BubbleDrawable(
                 topC, botC,
                 Shader.TileMode.CLAMP,
             )
-            causticPaint.shader = null
-            bevelPaint.shader = null
+            causticPaint = null
+            bevelPaint = null
+            bevelPath = null
         } else {
             val topRgb = lerpArgb(
                 lerpArgb(baseColor, glassTint, 0.16f * glassFactor),
                 Color.WHITE,
                 (if (dark) 0.10f else 0.34f) * glassFactor,
             )
-            val topAlpha = (baseAlpha * (1f + (0.08f + shift.boost * 0.35f) * glassFactor))
+            val topAlpha = (baseAlpha * (1f + (0.08f + shiftBoost * 0.35f) * glassFactor))
                 .roundToInt().coerceIn(0, 255)
 
             val midRgb = lerpArgb(baseColor, glassTint, 0.08f * glassFactor)
@@ -303,10 +387,10 @@ class BubbleDrawable(
             colors3[2] = replaceAlpha(botRgb, botAlpha)
             fillPaint.color = Color.WHITE
             fillPaint.shader = LinearGradient(
-                l + w * (0.05f + shift.shiftXRatio * 0.5f),
-                t + h * (0.05f + shift.shiftYRatio * 0.5f),
-                l + w * (0.95f + shift.shiftXRatio * 0.5f),
-                t + h * (0.95f + shift.shiftYRatio * 0.5f),
+                l + w * (0.05f + shiftXRatio * 0.5f),
+                t + h * (0.05f + shiftYRatio * 0.5f),
+                l + w * (0.95f + shiftXRatio * 0.5f),
+                t + h * (0.95f + shiftYRatio * 0.5f),
                 colors3,
                 posGlassFill,
                 Shader.TileMode.CLAMP,
@@ -314,18 +398,19 @@ class BubbleDrawable(
 
             // 2. 液态内部轻焦散光斑图层
             if (glassFactor > 0.02f) {
-                val cx = l + w * (0.28f + shift.shiftXRatio)
-                val cy = t + h * (0.24f + shift.shiftYRatio)
+                val cPaint = ensureCausticPaint()
+                val cx = l + w * (0.28f + shiftXRatio)
+                val cy = t + h * (0.24f + shiftYRatio)
                 val causticRadius = maxOf(w, h) * 0.68f
                 val causticRgb = lerpArgb(Color.WHITE, glassTint, if (dark) 0.25f else 0.15f)
-                val causticAlpha = ((if (dark) 26f else 44f) * glassFactor * highlightScale * (1f + shift.boost * 1.5f) * alphaScale)
+                val causticAlpha = ((if (dark) 26f else 44f) * glassFactor * highlightScale * (1f + shiftBoost * 1.5f) * alphaScale)
                     .roundToInt().coerceIn(0, 255)
 
                 colors3[0] = replaceAlpha(causticRgb, causticAlpha)
                 colors3[1] = replaceAlpha(causticRgb, (causticAlpha * 0.30f).roundToInt())
                 colors3[2] = replaceAlpha(causticRgb, 0)
-                causticPaint.color = Color.WHITE
-                causticPaint.shader = RadialGradient(
+                cPaint.color = Color.WHITE
+                cPaint.shader = RadialGradient(
                     cx, cy, causticRadius.coerceAtLeast(1f),
                     colors3,
                     posCaustic,
@@ -333,9 +418,10 @@ class BubbleDrawable(
                 )
 
                 // 3. 液态表面张力轻内高光弧（极细柔和反光，不与外描边叠成厚亮边）
+                val bPaint = ensureBevelPaint()
                 val bevelWidthPx = 0.75f * maxOf(density, 1f)
-                bevelPaint.strokeWidth = bevelWidthPx
-                val topHighlightAlpha = ((if (dark) 42f else 68f) * glassFactor * highlightScale * (1f + shift.boost * 1.15f) * alphaScale)
+                bPaint.strokeWidth = bevelWidthPx
+                val topHighlightAlpha = ((if (dark) 42f else 68f) * glassFactor * highlightScale * (1f + shiftBoost * 1.15f) * alphaScale)
                     .roundToInt().coerceIn(0, 255)
                 val bottomBounceColor = if (dark) {
                     replaceAlpha(glassTint, (16f * glassFactor * highlightScale * alphaScale).roundToInt())
@@ -348,34 +434,36 @@ class BubbleDrawable(
                 colors4[1] = 0x00FFFFFF
                 colors4[2] = 0x00000000
                 colors4[3] = bottomBounceColor
-                bevelPaint.color = Color.WHITE
-                bevelPaint.shader = LinearGradient(
-                    l + w * (0.35f + shift.shiftXRatio * 0.4f),
+                bPaint.color = Color.WHITE
+                bPaint.shader = LinearGradient(
+                    l + w * (0.35f + shiftXRatio * 0.4f),
                     t,
-                    l + w * (0.65f - shift.shiftXRatio * 0.4f),
+                    l + w * (0.65f - shiftXRatio * 0.4f),
                     btm,
                     colors4,
                     posBevel,
                     Shader.TileMode.CLAMP,
                 )
             } else {
-                causticPaint.shader = null
-                bevelPaint.shader = null
+                causticPaint = null
+                bevelPaint = null
+                bevelPath = null
             }
         }
 
         // 4. 外轮廓描边图层（Material You 微描边 ⇄ 轻盈 135° 菲涅尔折光细边）
         val outerStrokePx = effectiveStrokeWidthPx()
         if (outerStrokePx > 0f) {
-            strokePaint.strokeWidth = outerStrokePx
+            val sPaint = ensureStrokePaint()
+            sPaint.strokeWidth = outerStrokePx
             if (glassFactor <= 0.01f) {
-                strokePaint.shader = null
+                sPaint.shader = null
                 val strokeAlpha = (Color.alpha(strokeColor) * (clampedOpacity / 100f) * alphaScale)
                     .roundToInt().coerceIn(0, 255)
-                strokePaint.color = replaceAlpha(strokeColor, strokeAlpha)
+                sPaint.color = replaceAlpha(strokeColor, strokeAlpha)
             } else {
                 val rimAlphaBase = computeGlassRimAlpha(clampedOpacity, glassFactor)
-                val primaryRimAlpha = (rimAlphaBase * (1f + shift.boost) * alphaScale)
+                val primaryRimAlpha = (rimAlphaBase * (1f + shiftBoost) * alphaScale)
                     .roundToInt().coerceIn(0, 255)
 
                 colors4[0] = replaceAlpha(
@@ -396,17 +484,19 @@ class BubbleDrawable(
                     (primaryRimAlpha * (0.38f + 0.62f * (1f - glassFactor))).roundToInt().coerceIn(0, 255),
                 )
 
-                strokePaint.color = Color.WHITE
-                strokePaint.shader = LinearGradient(
-                    l + w * shift.shiftXRatio * 0.4f,
-                    t + h * shift.shiftYRatio * 0.4f,
-                    r + w * shift.shiftXRatio * 0.4f,
-                    btm + h * shift.shiftYRatio * 0.4f,
+                sPaint.color = Color.WHITE
+                sPaint.shader = LinearGradient(
+                    l + w * shiftXRatio * 0.4f,
+                    t + h * shiftYRatio * 0.4f,
+                    r + w * shiftXRatio * 0.4f,
+                    btm + h * shiftYRatio * 0.4f,
                     colors4,
                     posRim,
                     Shader.TileMode.CLAMP,
                 )
             }
+        } else {
+            strokePaint = null
         }
     }
 
@@ -428,13 +518,15 @@ class BubbleDrawable(
         }
         canvas.drawPath(fillPath, fillPaint)
         if (!isMask && glassFactor > 0.02f) {
-            canvas.drawPath(fillPath, causticPaint)
-            if (!bevelPath.isEmpty) {
-                canvas.drawPath(bevelPath, bevelPaint)
+            causticPaint?.let { canvas.drawPath(fillPath, it) }
+            val bp = bevelPath
+            val bPaint = bevelPaint
+            if (bp != null && bPaint != null && !bp.isEmpty) {
+                canvas.drawPath(bp, bPaint)
             }
         }
         if (!isMask && !fillPath.isEmpty && effectiveStrokeWidthPx() > 0f) {
-            canvas.drawPath(fillPath, strokePaint)
+            strokePaint?.let { canvas.drawPath(fillPath, it) }
         }
     }
 
@@ -448,10 +540,11 @@ class BubbleDrawable(
     }
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
+        currentColorFilter = colorFilter
         fillPaint.colorFilter = colorFilter
-        causticPaint.colorFilter = colorFilter
-        bevelPaint.colorFilter = colorFilter
-        strokePaint.colorFilter = colorFilter
+        causticPaint?.colorFilter = colorFilter
+        bevelPaint?.colorFilter = colorFilter
+        strokePaint?.colorFilter = colorFilter
         invalidateSelf()
     }
 
@@ -473,5 +566,16 @@ class BubbleDrawable(
                 outline.setRoundRect(bounds, radius)
             }
         }
+    }
+
+    private companion object {
+        // 仅在主线程 draw() 同步重建着色器时使用，所有按钮实例共享一份数组，消除每键重复分配
+        val colors3 = IntArray(3)
+        val colors4 = IntArray(4)
+        val tempShift = FloatArray(3)
+        val posGlassFill = floatArrayOf(0f, 0.48f, 1f)
+        val posCaustic = floatArrayOf(0f, 0.40f, 1f)
+        val posBevel = floatArrayOf(0f, 0.20f, 0.78f, 1f)
+        val posRim = floatArrayOf(0f, 0.36f, 0.68f, 1f)
     }
 }

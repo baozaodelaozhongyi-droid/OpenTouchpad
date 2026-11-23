@@ -36,20 +36,63 @@ internal data class SwipeSample(val timeMs: Long, val x: Float, val y: Float)
 internal class SwipeVelocityTracker(
     private val maxAgeMs: Long = 140L,
 ) {
-    private val samples = ArrayDeque<SwipeSample>()
+    private var times = LongArray(INITIAL_CAPACITY)
+    private var xs = FloatArray(INITIAL_CAPACITY)
+    private var ys = FloatArray(INITIAL_CAPACITY)
+    private var head = 0
+    private var count = 0
 
     fun reset() {
-        samples.clear()
+        head = 0
+        count = 0
     }
 
     fun addMovement(timeMs: Long, x: Float, y: Float) {
-        samples.addLast(SwipeSample(timeMs, x, y))
+        val cap = times.size
+        if (count == cap) {
+            if (cap < MAX_CAPACITY) {
+                grow()
+            } else {
+                // 极端高采样爆发达到上限时丢弃最旧样本
+                head = (head + 1) % cap
+                count--
+            }
+        }
+        val idx = (head + count) % times.size
+        times[idx] = timeMs
+        xs[idx] = x
+        ys[idx] = y
+        count++
         prune(timeMs)
     }
 
+    private fun grow() {
+        val oldCap = times.size
+        val newCap = minOf(oldCap * 2, MAX_CAPACITY)
+        val newTimes = LongArray(newCap)
+        val newXs = FloatArray(newCap)
+        val newYs = FloatArray(newCap)
+        val firstPart = minOf(count, oldCap - head)
+        System.arraycopy(times, head, newTimes, 0, firstPart)
+        System.arraycopy(xs, head, newXs, 0, firstPart)
+        System.arraycopy(ys, head, newYs, 0, firstPart)
+        val remaining = count - firstPart
+        if (remaining > 0) {
+            System.arraycopy(times, 0, newTimes, firstPart, remaining)
+            System.arraycopy(xs, 0, newXs, firstPart, remaining)
+            System.arraycopy(ys, 0, newYs, firstPart, remaining)
+        }
+        times = newTimes
+        xs = newXs
+        ys = newYs
+        head = 0
+    }
+
     private fun prune(nowMs: Long) {
-        while (samples.size > 2 && (nowMs - samples.first().timeMs) > maxAgeMs) {
-            samples.removeFirst()
+        val cap = times.size
+        while (count > 2 && (nowMs - times[head]) > maxAgeMs) {
+            head = (head + 1) % cap
+            count--
         }
     }
 
@@ -59,16 +102,22 @@ internal class SwipeVelocityTracker(
      */
     fun computeVelocity(nowMs: Long, stopThresholdMs: Long = 80L): Pair<Float, Float> {
         prune(nowMs)
-        if (samples.size < 2) return 0f to 0f
-        val last = samples.last()
-        if (nowMs - last.timeMs > stopThresholdMs) {
+        if (count < 2) return 0f to 0f
+        val lastIdx = (head + count - 1) % times.size
+        val lastTime = times[lastIdx]
+        if (nowMs - lastTime > stopThresholdMs) {
             return 0f to 0f
         }
-        val first = samples.first()
-        val dt = (last.timeMs - first.timeMs).coerceAtLeast(12L)
-        val vx = (last.x - first.x) / dt * 1000f
-        val vy = (last.y - first.y) / dt * 1000f
+        val firstTime = times[head]
+        val dt = (lastTime - firstTime).coerceAtLeast(12L)
+        val vx = (xs[lastIdx] - xs[head]) / dt * 1000f
+        val vy = (ys[lastIdx] - ys[head]) / dt * 1000f
         return vx to vy
+    }
+
+    companion object {
+        private const val INITIAL_CAPACITY = 64
+        private const val MAX_CAPACITY = 512
     }
 }
 
@@ -528,13 +577,23 @@ internal fun resolveBallCancelThreshold(swipeThresholdPx: Float, minCancelPx: Fl
  * 若未松手重新向外滑，可再次 Armed，有效防止误触并支持后悔撤销。
  */
 internal class BallSwipeTracker(
-    val swipeThresholdPx: Float,
-    val cancelThresholdPx: Float,
+    swipeThresholdPx: Float,
+    cancelThresholdPx: Float,
 ) {
+    var swipeThresholdPx: Float = swipeThresholdPx
+        private set
+    var cancelThresholdPx: Float = cancelThresholdPx
+        private set
     var hasArmedSwipe: Boolean = false
         private set
     var isCancelledByReturn: Boolean = false
         private set
+
+    fun configure(swipeThresholdPx: Float, cancelThresholdPx: Float) {
+        this.swipeThresholdPx = swipeThresholdPx
+        this.cancelThresholdPx = cancelThresholdPx
+        reset()
+    }
 
     /**
      * 根据当前与触摸起点的欧氏距离更新状态。
@@ -1556,3 +1615,319 @@ internal fun resolveDeformSampleDt(sampleGapNs: Long, frameDt: Float): Float =
  */
 internal fun resolveDeformDecayDelayMs(frameDt: Float): Long =
     maxOf(32L, (frameDt * 1000f * 1.6f).toLong())
+
+// ───────────────────────── 内存优化与零分配热路径纯逻辑 ─────────────────────────
+
+/** 按 Center-Crop 规则计算出的底图解码尺寸及是否已达分辨率上限。 */
+internal data class CropDecodePlan(
+    val targetWidth: Int,
+    val targetHeight: Int,
+    val reachedCeiling: Boolean,
+)
+
+/**
+ * 按 Center-Crop 最小覆盖规则计算运行期解码目标尺寸（只缩不放，长边不超过 [maxLongEdge]）：
+ * - 保证任意长宽比（9:20 竖屏立绘、21:9 宽图等）在目标容器内渲染时均保持 >= 1:1 像素清晰度；
+ * - 严格保留原图纵横比以保证焦点偏移（bgFocusX/YPercent）与完整原图 100% 一致；
+ * - [CropDecodePlan.reachedCeiling] 指示是否已解至源图 1:1 或触及 [maxLongEdge] 上限，避免后续放大反复无效重解。
+ */
+internal fun computeCenterCropDecodeSize(
+    srcW: Int,
+    srcH: Int,
+    targetW: Int,
+    targetH: Int,
+    maxLongEdge: Int = 1200,
+): CropDecodePlan {
+    if (srcW <= 0 || srcH <= 0) return CropDecodePlan(0, 0, reachedCeiling = true)
+    val safeTargetW = targetW.coerceAtLeast(1)
+    val safeTargetH = targetH.coerceAtLeast(1)
+    val safeMaxLong = maxLongEdge.coerceAtLeast(1)
+    val maxSrc = maxOf(srcW, srcH)
+
+    val cropScale = maxOf(safeTargetW.toFloat() / srcW, safeTargetH.toFloat() / srcH)
+    val capScale = safeMaxLong.toFloat() / maxSrc
+    val limitScale = minOf(capScale, 1f)
+    val effectiveScale = minOf(cropScale, limitScale)
+    val reachedCeiling = cropScale >= limitScale - 1e-4f
+
+    if (effectiveScale >= 1f) {
+        return CropDecodePlan(srcW, srcH, reachedCeiling = true)
+    }
+    val dw = (srcW * effectiveScale).roundToInt().coerceIn(1, srcW)
+    val dh = (srcH * effectiveScale).roundToInt().coerceIn(1, srcH)
+    return CropDecodePlan(dw, dh, reachedCeiling = reachedCeiling)
+}
+
+/** 判断触控板放大后是否需要对已缓存的自定义底图按需升采样。 */
+internal fun shouldUpsampleTouchpadBg(
+    padW: Int,
+    padH: Int,
+    loadedTargetW: Int,
+    loadedTargetH: Int,
+    reachedCeiling: Boolean,
+    thresholdRatio: Float = 1.15f,
+): Boolean {
+    if (reachedCeiling || padW <= 0 || padH <= 0) return false
+    if (loadedTargetW <= 0 || loadedTargetH <= 0) return true
+    return padW > loadedTargetW * thresholdRatio || padH > loadedTargetH * thresholdRatio
+}
+
+/**
+ * 写入单位水平渐变 (0,0)->(1,0) 到倾斜渐变 (raisedX, raisedY)->(sinkX, sinkY) 的保角正交相似矩阵：
+ * M = [[dx, -dy, ax], [dy, dx, ay], [0, 0, 1]]，在任意非正方形宽高比 w != h 及退化轴下
+ * 与 LinearGradient(raisedX, raisedY, sinkX, sinkY) 100% 代数恒等，零三角函数与堆分配。
+ */
+internal fun writeTiltGradientMatrix(
+    outMatrix: FloatArray,
+    widthPx: Float,
+    heightPx: Float,
+    tiltNormX: Float,
+    tiltNormY: Float,
+): Boolean {
+    if (widthPx <= 0f || heightPx <= 0f) return false
+    val dx = widthPx * tiltNormX
+    val dy = heightPx * tiltNormY
+    if (dx * dx + dy * dy <= 1e-6f) return false
+    val ax = (widthPx - dx) * 0.5f
+    val ay = (heightPx - dy) * 0.5f
+    outMatrix[0] = dx; outMatrix[1] = -dy; outMatrix[2] = ax
+    outMatrix[3] = dy; outMatrix[4] = dx; outMatrix[5] = ay
+    outMatrix[6] = 0f; outMatrix[7] = 0f; outMatrix[8] = 1f
+    return true
+}
+
+internal fun clampCoordToScreen(coord: Int, viewSize: Int, screenSize: Int): Int {
+    val maxCoord = (screenSize - viewSize.coerceAtLeast(0)).coerceAtLeast(0)
+    return coord.coerceIn(0, maxCoord)
+}
+
+internal fun cursorViewOriginCoord(cursorCoord: Float, sizePx: Float): Int =
+    (cursorCoord - cursorHotspotOffset(sizePx)).roundToInt()
+
+/** 热路径零分配版本：[out][0] = normX, [out][1] = normY。 */
+internal fun resolvePadNormalizedCoordsInto(
+    out: FloatArray,
+    rawX: Float,
+    rawY: Float,
+    panelX: Int,
+    panelY: Int,
+    padRectX: Int,
+    padRectY: Int,
+    padRectW: Int,
+    padRectH: Int,
+) {
+    val centerX = panelX + padRectX + padRectW / 2f
+    val centerY = panelY + padRectY + padRectH / 2f
+    val halfW = (padRectW / 2f).coerceAtLeast(1f)
+    val halfH = (padRectH / 2f).coerceAtLeast(1f)
+    out[0] = ((rawX - centerX) / halfW).coerceIn(-1f, 1f)
+    out[1] = ((rawY - centerY) / halfH).coerceIn(-1f, 1f)
+}
+
+/** 热路径零分配版本：[out][0] = shiftXRatio, [out][1] = shiftYRatio, [out][2] = boost。 */
+internal fun computeSpecularShiftInto(
+    out: FloatArray,
+    normX: Float,
+    normY: Float,
+    maxRatio: Float = 0.28f,
+) {
+    val cx = normX.coerceIn(-1f, 1f)
+    val cy = normY.coerceIn(-1f, 1f)
+    out[0] = if (cx == 0f) 0f else -cx * maxRatio
+    out[1] = if (cy == 0f) 0f else -cy * maxRatio
+    out[2] = (kotlin.math.hypot(cx, cy).coerceIn(0f, 1.4f) / 1.4f) * 0.25f
+}
+
+/** 热路径零分配版本：[out][0] = x, [out][1] = y。 */
+internal fun computeDampedSwipeOffsetInto(
+    out: FloatArray,
+    dx: Float,
+    dy: Float,
+    maxOffsetPx: Float,
+    dampingFactor: Float = 1.5f,
+) {
+    val dist = kotlin.math.hypot(dx, dy)
+    if (dist <= 0.001f || maxOffsetPx <= 0f) {
+        out[0] = 0f
+        out[1] = 0f
+        return
+    }
+    val scale = maxOffsetPx * (1f - kotlin.math.exp(-dist / (maxOffsetPx * dampingFactor)))
+    val ratio = scale / dist
+    out[0] = dx * ratio
+    out[1] = dy * ratio
+}
+
+/** 热路径零分配版本：[out] = [stretch, squash, rotationDeg, iconTranslationX, iconTranslationY]。 */
+internal fun computeBallDeformationInto(
+    out: FloatArray,
+    dx: Float,
+    dy: Float,
+    maxOffsetPx: Float,
+    maxStretch: Float = 0.22f,
+    maxSquash: Float = 0.16f,
+    parallaxRatio: Float = 0.10f,
+) {
+    val dist = kotlin.math.hypot(dx, dy)
+    if (dist < 0.5f || maxOffsetPx <= 0f) {
+        out[0] = 1f; out[1] = 1f; out[2] = 0f; out[3] = 0f; out[4] = 0f
+        return
+    }
+    val angleDeg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+    val normalized = (dist / maxOffsetPx).coerceIn(0f, 2.5f)
+    val tension = normalized / (1f + 0.6f * normalized)
+    val stretch = 1f + maxStretch * tension
+    val squash = (1f / (1f + maxStretch * tension * 0.9f)).coerceAtLeast(1f - maxSquash)
+    val maxParallax = maxOffsetPx * 0.25f
+    val currentParallax = (dist * parallaxRatio).coerceAtMost(maxParallax)
+    val invDist = 1f / dist
+    out[0] = stretch
+    out[1] = squash
+    out[2] = angleDeg
+    out[3] = dx * invDist * currentParallax
+    out[4] = dy * invDist * currentParallax
+}
+
+/** 热路径零分配版本：[out] = [stretch, squash, rotationDeg, iconTranslationX, iconTranslationY]。 */
+internal fun computeDragMotionStateInto(
+    out: FloatArray,
+    speedPxPerSec: Float,
+    dirX: Float,
+    dirY: Float,
+    baseScale: Float = 1.16f,
+    refSpeedPxPerSec: Float = 1200f,
+    maxExtraStretch: Float = 0.22f,
+    maxSquash: Float = 0.18f,
+    maxParallaxPx: Float = 14f,
+) {
+    if (speedPxPerSec < 10f || refSpeedPxPerSec <= 0f) {
+        out[0] = baseScale; out[1] = baseScale; out[2] = 0f; out[3] = 0f; out[4] = 0f
+        return
+    }
+    val normalized = (speedPxPerSec / refSpeedPxPerSec).coerceIn(0f, 3f)
+    val tension = normalized / (1f + 0.6f * normalized)
+    val stretch = baseScale * (1f + maxExtraStretch * tension)
+    val squash = baseScale * (1f / (1f + maxSquash * tension))
+    val angleDeg = Math.toDegrees(kotlin.math.atan2(dirY.toDouble(), dirX.toDouble())).toFloat()
+    val parallaxDist = maxParallaxPx * tension
+    out[0] = stretch
+    out[1] = squash
+    out[2] = angleDeg
+    out[3] = -dirX * parallaxDist
+    out[4] = -dirY * parallaxDist
+}
+
+/** 热路径零分配版本：[out][0] = targetX, [out][1] = targetY。 */
+internal fun computePanelDragTargetInto(
+    out: FloatArray,
+    vxPxPerSec: Float,
+    vyPxPerSec: Float,
+    density: Float,
+    deadzoneDpPerSec: Float = 25f,
+    refSpeedDpPerSec: Float = 420f,
+) {
+    val safeDensity = density.coerceAtLeast(1f)
+    val speed = kotlin.math.hypot(vxPxPerSec, vyPxPerSec)
+    val deadzone = deadzoneDpPerSec * safeDensity
+    val refSpeed = (refSpeedDpPerSec * safeDensity).coerceAtLeast(1f)
+    if (speed <= deadzone) {
+        out[0] = 0f
+        out[1] = 0f
+        return
+    }
+    val effectiveSpeed = speed - deadzone
+    val normalized = (effectiveSpeed / refSpeed).coerceIn(0f, 4f)
+    val tension = (normalized / (1f + 0.55f * normalized)).coerceIn(0f, 1f)
+    val invSpeed = 1f / speed
+    out[0] = vxPxPerSec * invSpeed * tension
+    out[1] = vyPxPerSec * invSpeed * tension
+}
+
+/** 可原地更新的面板弹簧状态，供 Choreographer 60–240Hz 热路径零分配使用。 */
+internal class MutablePanelSpringState(
+    var x: Float = 0f,
+    var y: Float = 0f,
+    var vx: Float = 0f,
+    var vy: Float = 0f,
+    var grab: Float = 0f,
+    var grabVel: Float = 0f,
+) {
+    val isSettled: Boolean
+        get() = kotlin.math.abs(x) < 0.002f &&
+            kotlin.math.abs(y) < 0.002f &&
+            kotlin.math.abs(vx) < 0.015f &&
+            kotlin.math.abs(vy) < 0.015f &&
+            kotlin.math.abs(grab) < 0.002f &&
+            kotlin.math.abs(grabVel) < 0.015f
+
+    fun reset() {
+        x = 0f; y = 0f; vx = 0f; vy = 0f; grab = 0f; grabVel = 0f
+    }
+
+    fun isAtRestForTarget(targetX: Float, targetY: Float, targetGrab: Float): Boolean =
+        kotlin.math.abs(x - targetX) < 0.002f &&
+            kotlin.math.abs(y - targetY) < 0.002f &&
+            kotlin.math.abs(vx) < 0.015f &&
+            kotlin.math.abs(vy) < 0.015f &&
+            kotlin.math.abs(grab - targetGrab) < 0.002f &&
+            kotlin.math.abs(grabVel) < 0.015f
+}
+
+/** 与 [stepPanelDragSpring] 公式完全一致的原地步进版本（零对象分配）。 */
+internal fun stepPanelDragSpringInPlace(
+    state: MutablePanelSpringState,
+    targetX: Float,
+    targetY: Float,
+    targetGrab: Float,
+    dtSec: Float,
+    isDragging: Boolean,
+) {
+    val clampedDt = dtSec.coerceIn(0.001f, 0.040f)
+    val subSteps = if (clampedDt > 0.016f) 2 else 1
+    val stepDt = clampedDt / subSteps
+
+    val motionOmega = if (isDragging) 20f else 17f
+    val motionZeta = if (isDragging) 0.68f else 0.50f
+    val motionK = motionOmega * motionOmega
+    val motionC = 2f * motionZeta * motionOmega
+
+    val grabOmega = if (isDragging) 24f else 20f
+    val grabZeta = if (isDragging) 0.85f else 0.92f
+    val grabK = grabOmega * grabOmega
+    val grabC = 2f * grabZeta * grabOmega
+
+    var x = state.x
+    var y = state.y
+    var vx = state.vx
+    var vy = state.vy
+    var grab = state.grab
+    var grabVel = state.grabVel
+
+    repeat(subSteps) {
+        val ax = motionK * (targetX - x) - motionC * vx
+        val ay = motionK * (targetY - y) - motionC * vy
+        vx += ax * stepDt
+        vy += ay * stepDt
+        x += vx * stepDt
+        y += vy * stepDt
+
+        val aGrab = grabK * (targetGrab - grab) - grabC * grabVel
+        grabVel += aGrab * stepDt
+        grab = (grab + grabVel * stepDt).coerceIn(0f, 1.15f)
+    }
+
+    val mag = kotlin.math.hypot(x, y)
+    if (mag > 1.35f) {
+        val s = 1.35f / mag
+        x *= s
+        y *= s
+    }
+
+    state.x = x
+    state.y = y
+    state.vx = vx
+    state.vy = vy
+    state.grab = grab
+    state.grabVel = grabVel
+}
+

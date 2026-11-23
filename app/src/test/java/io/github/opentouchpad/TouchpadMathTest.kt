@@ -1668,5 +1668,244 @@ class TouchpadMathTest {
         assertTrue("30Hz decay delay must exceed 33.3ms frame period, got $at30Hz", at30Hz >= 50L)
         assertEquals(64L, resolveDeformDecayDelayMs(0.040f))
     }
+
+    @Test
+    fun computeCenterCropDecodeSizePreservesSharpnessAndRespectsCeiling() {
+        // 1:1 square downscaled cleanly below ceiling
+        val square = computeCenterCropDecodeSize(1200, 1200, 500, 500, maxLongEdge = 1200)
+        assertEquals(CropDecodePlan(500, 500, reachedCeiling = false), square)
+
+        // 9:20 tall portrait (1080x2400) in wide pad (500x300):
+        // must decode to 500x1111 (not naive 225x500) so Center-Crop keeps 1:1 pixel sharpness
+        val portrait = computeCenterCropDecodeSize(1080, 2400, 500, 300, maxLongEdge = 1200)
+        assertEquals(500, portrait.targetWidth)
+        assertEquals(1111, portrait.targetHeight)
+        assertFalse(portrait.reachedCeiling)
+
+        // Same portrait in large pad (700x400) hits 1200px long-edge ceiling
+        val portraitCapped = computeCenterCropDecodeSize(1080, 2400, 700, 400, maxLongEdge = 1200)
+        assertEquals(540, portraitCapped.targetWidth)
+        assertEquals(1200, portraitCapped.targetHeight)
+        assertTrue(portraitCapped.reachedCeiling)
+
+        // 21:9 wide landscape (2100x900) in pad (400x360) covers height 1:1 -> 840x360
+        val wide = computeCenterCropDecodeSize(2100, 900, 400, 360, maxLongEdge = 1200)
+        assertEquals(CropDecodePlan(840, 360, reachedCeiling = false), wide)
+
+        // Small source never upscales and marks reachedCeiling = true
+        val small = computeCenterCropDecodeSize(200, 150, 500, 400, maxLongEdge = 1200)
+        assertEquals(CropDecodePlan(200, 150, reachedCeiling = true), small)
+
+        // Invalid dimensions return safe zero plan
+        assertEquals(CropDecodePlan(0, 0, reachedCeiling = true), computeCenterCropDecodeSize(0, 100, 500, 400))
+        assertEquals(CropDecodePlan(0, 0, reachedCeiling = true), computeCenterCropDecodeSize(100, -5, 500, 400))
+    }
+
+    @Test
+    fun shouldUpsampleTouchpadBgRespectsThresholdAndCeiling() {
+        // Already at source/1200px ceiling -> never re-decode
+        assertFalse(shouldUpsampleTouchpadBg(900, 600, 400, 300, reachedCeiling = true))
+        // Invalid pad size -> false
+        assertFalse(shouldUpsampleTouchpadBg(0, 300, 400, 300, reachedCeiling = false))
+        // Not yet loaded -> true
+        assertTrue(shouldUpsampleTouchpadBg(500, 300, 0, 0, reachedCeiling = false))
+        // Within 1.15x hysteresis threshold -> false
+        assertFalse(shouldUpsampleTouchpadBg(570, 340, 500, 300, reachedCeiling = false))
+        // Exceeds 1.15x on width -> true
+        assertTrue(shouldUpsampleTouchpadBg(580, 300, 500, 300, reachedCeiling = false))
+        // Exceeds 1.15x on height -> true
+        assertTrue(shouldUpsampleTouchpadBg(500, 350, 500, 300, reachedCeiling = false))
+    }
+
+    @Test
+    fun writeTiltGradientMatrixMatchesOriginalLinearGradientProjection() {
+        val m = FloatArray(9)
+        // Degenerate inputs return false
+        assertFalse(writeTiltGradientMatrix(m, 0f, 300f, 0.5f, 0.5f))
+        assertFalse(writeTiltGradientMatrix(m, 500f, 0f, 0.5f, 0.5f))
+        assertFalse(writeTiltGradientMatrix(m, 500f, 300f, 0f, 0f))
+
+        val sizes = listOf(500f to 300f, 300f to 700f, 420f to 420f)
+        val tilts = listOf(
+            1f to 0f,
+            0f to 1f,
+            -0.7f to 0.4f,
+            0.85f to -0.95f,
+            -1f to -1f,
+        )
+        val sampleFracs = listOf(0f to 0f, 1f to 0f, 0f to 1f, 1f to 1f, 0.3f to 0.7f, 0.5f to 0.5f)
+
+        for ((w, h) in sizes) {
+            for ((tx, ty) in tilts) {
+                assertTrue(writeTiltGradientMatrix(m, w, h, tx, ty))
+                val raisedX = w * (0.5f - tx * 0.5f)
+                val raisedY = h * (0.5f - ty * 0.5f)
+                val sinkX = w * (0.5f + tx * 0.5f)
+                val sinkY = h * (0.5f + ty * 0.5f)
+
+                // (0, 0) -> (raisedX, raisedY), (1, 0) -> (sinkX, sinkY)
+                assertEquals(raisedX, m[2], 1e-4f)
+                assertEquals(raisedY, m[5], 1e-4f)
+                assertEquals(sinkX, m[0] + m[2], 1e-4f)
+                assertEquals(sinkY, m[3] + m[5], 1e-4f)
+
+                // Verify conformal inverse u-projection matches LinearGradient(raised -> sink) across whole rect
+                val vx = sinkX - raisedX
+                val vy = sinkY - raisedY
+                val lenSq = vx * vx + vy * vy
+                val det = m[0] * m[4] - m[1] * m[3]
+                for ((fx, fy) in sampleFracs) {
+                    val px = w * fx
+                    val py = h * fy
+                    val expectedU = ((px - raisedX) * vx + (py - raisedY) * vy) / lenSq
+                    // M^{-1} * [px - m[2], py - m[5]]_x
+                    val dx = px - m[2]
+                    val dy = py - m[5]
+                    val actualU = (m[4] * dx - m[1] * dy) / det
+                    assertEquals(expectedU, actualU, 1e-4f)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun swipeVelocityTrackerRingBufferGrowsCapsAndWrapsCleanly() {
+        val tracker = SwipeVelocityTracker(maxAgeMs = 100L)
+        // 200 samples within 100ms (> initial 64 capacity -> tests dynamic growth)
+        for (i in 0 until 200) {
+            val t = i / 2L // 0..99ms
+            tracker.addMovement(t, t * 0.6f, -t * 0.4f) // 600 px/s, -400 px/s
+        }
+        val (vx1, vy1) = tracker.computeVelocity(nowMs = 99L)
+        assertEquals(600f, vx1, 15f)
+        assertEquals(-400f, vy1, 15f)
+
+        // Exceed 512 hard cap in a tight window (800 samples in 80ms -> tests circular overwrite)
+        tracker.reset()
+        for (i in 0 until 800) {
+            val t = i / 10L // 0..79ms
+            tracker.addMovement(t, i * 0.1f, i * 0.05f) // 1000 px/s, 500 px/s
+        }
+        val (vx2, vy2) = tracker.computeVelocity(nowMs = 79L)
+        assertEquals(1000f, vx2, 25f)
+        assertEquals(500f, vy2, 25f)
+
+        // Advance past window to exercise head wrap-around pruning
+        for (i in 0 until 80) {
+            val t = 500L + i
+            tracker.addMovement(t, i * -0.5f, i * 0.25f) // -500 px/s, +250 px/s
+        }
+        val (vx3, vy3) = tracker.computeVelocity(nowMs = 579L)
+        assertEquals(-500f, vx3, 15f)
+        assertEquals(250f, vy3, 15f)
+
+        tracker.reset()
+        assertEquals(0f to 0f, tracker.computeVelocity(nowMs = 579L))
+    }
+
+    @Test
+    fun ballSwipeTrackerConfigureUpdatesThresholdsAndResetsState() {
+        val tracker = BallSwipeTracker(swipeThresholdPx = 100f, cancelThresholdPx = 50f)
+        assertFalse(tracker.onMove(120f))
+        assertTrue(tracker.hasArmedSwipe)
+
+        // Reconfigure with stricter threshold and verify previous state is cleared
+        tracker.configure(swipeThresholdPx = 200f, cancelThresholdPx = 80f)
+        assertFalse(tracker.hasArmedSwipe)
+        assertFalse(tracker.isCancelledByReturn)
+        assertFalse(tracker.onMove(120f))
+        assertFalse(tracker.hasArmedSwipe)
+        assertFalse(tracker.onMove(210f))
+        assertTrue(tracker.hasArmedSwipe)
+        // Retract inside new cancelThreshold (80px) -> returns true to trigger cancel haptic
+        assertTrue(tracker.onMove(60f))
+        assertFalse(tracker.hasArmedSwipe)
+        assertTrue(tracker.isCancelledByReturn)
+    }
+
+    @Test
+    fun zeroAllocHotPathHelpersMatchAllocatingOriginals() {
+        // 1. resolvePadNormalizedCoordsInto
+        val normOut = FloatArray(2)
+        val normOrig = resolvePadNormalizedCoords(275f, 210f, 100, 150, 20, 30, 220, 140)
+        resolvePadNormalizedCoordsInto(normOut, 275f, 210f, 100, 150, 20, 30, 220, 140)
+        assertEquals(normOrig.first, normOut[0], 1e-6f)
+        assertEquals(normOrig.second, normOut[1], 1e-6f)
+
+        // 2. computeSpecularShiftInto
+        val specOut = FloatArray(3)
+        val specOrig = computeSpecularShift(0.65f, -0.45f, 0.24f)
+        computeSpecularShiftInto(specOut, 0.65f, -0.45f, 0.24f)
+        assertEquals(specOrig.shiftXRatio, specOut[0], 1e-6f)
+        assertEquals(specOrig.shiftYRatio, specOut[1], 1e-6f)
+        assertEquals(specOrig.boost, specOut[2], 1e-6f)
+
+        // 3. computeDampedSwipeOffsetInto
+        val dampOut = FloatArray(2)
+        val dampOrig = computeDampedSwipeOffset(85f, -42f, 60f)
+        computeDampedSwipeOffsetInto(dampOut, 85f, -42f, 60f)
+        assertEquals(dampOrig.x, dampOut[0], 1e-6f)
+        assertEquals(dampOrig.y, dampOut[1], 1e-6f)
+
+        // 4. computeBallDeformationInto
+        val ballOut = FloatArray(5)
+        val ballOrig = computeBallDeformation(55f, -30f, 60f)
+        computeBallDeformationInto(ballOut, 55f, -30f, 60f)
+        assertEquals(ballOrig.stretch, ballOut[0], 1e-6f)
+        assertEquals(ballOrig.squash, ballOut[1], 1e-6f)
+        assertEquals(ballOrig.rotationDeg, ballOut[2], 1e-6f)
+        assertEquals(ballOrig.iconTranslationX, ballOut[3], 1e-6f)
+        assertEquals(ballOrig.iconTranslationY, ballOut[4], 1e-6f)
+
+        // 5. computeDragMotionStateInto
+        val dragOut = FloatArray(5)
+        val dragOrig = computeDragMotionState(950f, 0.6f, -0.8f, baseScale = 1.16f)
+        computeDragMotionStateInto(dragOut, 950f, 0.6f, -0.8f, baseScale = 1.16f)
+        assertEquals(dragOrig.stretch, dragOut[0], 1e-6f)
+        assertEquals(dragOrig.squash, dragOut[1], 1e-6f)
+        assertEquals(dragOrig.rotationDeg, dragOut[2], 1e-6f)
+        assertEquals(dragOrig.iconTranslationX, dragOut[3], 1e-6f)
+        assertEquals(dragOrig.iconTranslationY, dragOut[4], 1e-6f)
+
+        // 6. computePanelDragTargetInto
+        val targetOut = FloatArray(2)
+        val targetOrig = computePanelDragTarget(1400f, -900f, density = 3f)
+        computePanelDragTargetInto(targetOut, 1400f, -900f, density = 3f)
+        assertEquals(targetOrig.x, targetOut[0], 1e-6f)
+        assertEquals(targetOrig.y, targetOut[1], 1e-6f)
+
+        // 7. stepPanelDragSpringInPlace vs stepPanelDragSpring over drag + rebound
+        var imm = PanelSpringState()
+        val mut = MutablePanelSpringState()
+        repeat(20) {
+            imm = stepPanelDragSpring(imm, 0.8f, -0.5f, 1f, 1f / 60f, isDragging = true)
+            stepPanelDragSpringInPlace(mut, 0.8f, -0.5f, 1f, 1f / 60f, isDragging = true)
+            assertEquals(imm.x, mut.x, 1e-6f)
+            assertEquals(imm.y, mut.y, 1e-6f)
+            assertEquals(imm.vx, mut.vx, 1e-6f)
+            assertEquals(imm.vy, mut.vy, 1e-6f)
+            assertEquals(imm.grab, mut.grab, 1e-6f)
+            assertEquals(imm.grabVel, mut.grabVel, 1e-6f)
+            assertEquals(isPanelSpringAtRestForTarget(imm, 0.8f, -0.5f, 1f), mut.isAtRestForTarget(0.8f, -0.5f, 1f))
+        }
+        repeat(60) {
+            imm = stepPanelDragSpring(imm, 0f, 0f, 0f, 1f / 60f, isDragging = false)
+            stepPanelDragSpringInPlace(mut, 0f, 0f, 0f, 1f / 60f, isDragging = false)
+            assertEquals(imm.x, mut.x, 1e-6f)
+            assertEquals(imm.y, mut.y, 1e-6f)
+            assertEquals(imm.isSettled, mut.isSettled)
+        }
+        mut.reset()
+        assertTrue(mut.isSettled)
+
+        // 8. clampCoordToScreen & cursorViewOriginCoord
+        val clampedPos = clampPanelPosition(-20, 2500, 100, 120, 1080, 2400)
+        assertEquals(clampedPos.x, clampCoordToScreen(-20, 100, 1080))
+        assertEquals(clampedPos.y, clampCoordToScreen(2500, 120, 2400))
+        val originPos = cursorViewOrigin(320.4f, 640.8f, 72f)
+        assertEquals(originPos.x, cursorViewOriginCoord(320.4f, 72f))
+        assertEquals(originPos.y, cursorViewOriginCoord(640.8f, 72f))
+    }
 }
+
 
