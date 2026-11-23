@@ -1906,6 +1906,185 @@ class TouchpadMathTest {
         assertEquals(originPos.x, cursorViewOriginCoord(320.4f, 72f))
         assertEquals(originPos.y, cursorViewOriginCoord(640.8f, 72f))
     }
+
+    @Test
+    fun clampGestureCoordGuardsNonFiniteValues() {
+        assertEquals(0f, clampGestureCoord(Float.NaN, 1080), 0.001f)
+        assertEquals(0f, clampGestureCoord(Float.POSITIVE_INFINITY, 1080), 0.001f)
+        assertEquals(0f, clampGestureCoord(Float.NEGATIVE_INFINITY, 1080), 0.001f)
+        assertEquals(0f, clampGestureCoord(50f, 0), 0.001f)
+        assertEquals(1079f, clampGestureCoord(1200f, 1080), 0.001f)
+    }
+
+    @Test
+    fun ballDoubleTapWindowLocksOnSecondDownWithGraceAndRejectsExpiredOrNegative() {
+        // Not waiting -> never armed
+        assertFalse(isBallSecondTapDownWithinWindow(false, 1000L, 1100L))
+        // Normal double tap cadence (e.g. 220ms after first tap up, well within 260ms)
+        assertTrue(isBallSecondTapDownWithinWindow(true, 1000L, 1220L))
+        // Exact timeout boundary
+        assertTrue(isBallSecondTapDownWithinWindow(true, 1000L, 1000L + BALL_DOUBLE_TAP_TIMEOUT_MS))
+        // Main-thread jank grace window while single-tap runnable hasn't fired yet
+        assertTrue(
+            isBallSecondTapDownWithinWindow(
+                true,
+                1000L,
+                1000L + BALL_DOUBLE_TAP_TIMEOUT_MS + BALL_DOUBLE_TAP_GRACE_MS,
+            ),
+        )
+        // Beyond timeout + grace -> rejected
+        assertFalse(
+            isBallSecondTapDownWithinWindow(
+                true,
+                1000L,
+                1000L + BALL_DOUBLE_TAP_TIMEOUT_MS + BALL_DOUBLE_TAP_GRACE_MS + 1L,
+            ),
+        )
+        // Clock jump backwards -> rejected
+        assertFalse(isBallSecondTapDownWithinWindow(true, 1000L, 999L))
+    }
+
+    @Test
+    fun ballTapSlopAndDoubleTapReleasePreventSmallRollDeadZone() {
+        assertEquals(30f, resolveBallTapSlopPx(scaledTouchSlopPx = 24f, minSlopPx = 30f), 0.001f)
+        assertEquals(36f, resolveBallTapSlopPx(scaledTouchSlopPx = 36f, minSlopPx = 30f), 0.001f)
+        assertEquals(0f, resolveBallTapSlopPx(scaledTouchSlopPx = -5f, minSlopPx = -1f), 0.001f)
+
+        // Armed double-tap with thumb roll below swipeThreshold -> still triggers double-tap!
+        assertTrue(
+            shouldTreatBallReleaseAsDoubleTap(
+                doubleTapArmed = true,
+                hasArmedSwipe = false,
+                isCancelledByReturn = false,
+                distPx = 35f,
+                swipeThresholdPx = 76f,
+            ),
+        )
+        // Reached swipe threshold -> treated as swipe, not double-tap
+        assertFalse(
+            shouldTreatBallReleaseAsDoubleTap(
+                doubleTapArmed = true,
+                hasArmedSwipe = false,
+                isCancelledByReturn = false,
+                distPx = 76f,
+                swipeThresholdPx = 76f,
+            ),
+        )
+        // Previously armed swipe or cancelled by return -> not double-tap
+        assertFalse(
+            shouldTreatBallReleaseAsDoubleTap(
+                doubleTapArmed = true,
+                hasArmedSwipe = true,
+                isCancelledByReturn = false,
+                distPx = 20f,
+                swipeThresholdPx = 76f,
+            ),
+        )
+        assertFalse(
+            shouldTreatBallReleaseAsDoubleTap(
+                doubleTapArmed = true,
+                hasArmedSwipe = false,
+                isCancelledByReturn = true,
+                distPx = 5f,
+                swipeThresholdPx = 76f,
+            ),
+        )
+        // Not armed -> false
+        assertFalse(
+            shouldTreatBallReleaseAsDoubleTap(
+                doubleTapArmed = false,
+                hasArmedSwipe = false,
+                isCancelledByReturn = false,
+                distPx = 0f,
+                swipeThresholdPx = 76f,
+            ),
+        )
+    }
+
+    @Test
+    fun buttonHitTargetToleratesPressFeedbackSinkSlopAndStationaryRelease() {
+        // Button at screen rect (100, 500), size 120x120, slop 24px
+        assertTrue(isPointInsideButtonHitTarget(160f, 560f, 100, 500, 120, 120, 24f))
+        // Tapping top edge while PressFeedback sinks button down 3dp (9px): rawY is at 500, well inside slop
+        assertTrue(isPointInsideButtonHitTarget(150f, 495f, 100, 500, 120, 120, 24f))
+        // Slightly outside right edge within slop -> still valid
+        assertTrue(isPointInsideButtonHitTarget(244f, 560f, 100, 500, 120, 120, 24f))
+        // Dragged clearly outside button beyond slop -> cancelled
+        assertFalse(isPointInsideButtonHitTarget(250f, 560f, 100, 500, 120, 120, 24f))
+        // Zero-sized view -> false
+        assertFalse(isPointInsideButtonHitTarget(100f, 500f, 100, 500, 0, 120, 24f))
+
+        // Stationary release during expand scale animation (even if rect snapshot differed) -> valid
+        assertTrue(
+            isButtonReleaseWithinHitTarget(
+                rawX = 50f, rawY = 400f,
+                downRawX = 55f, downRawY = 404f,
+                left = 100, top = 500, width = 120, height = 120, slopPx = 24f,
+            ),
+        )
+        // Dragged across wide capsule button (> slop from down, still inside rect) -> valid
+        assertTrue(
+            isButtonReleaseWithinHitTarget(
+                rawX = 210f, rawY = 560f,
+                downRawX = 110f, downRawY = 560f,
+                left = 100, top = 500, width = 120, height = 120, slopPx = 24f,
+            ),
+        )
+        // Dragged clearly away from button (> slop from down and outside rect + slop) -> cancelled
+        assertFalse(
+            isButtonReleaseWithinHitTarget(
+                rawX = 300f, rawY = 560f,
+                downRawX = 160f, downRawY = 560f,
+                left = 100, top = 500, width = 120, height = 120, slopPx = 24f,
+            ),
+        )
+    }
+
+    @Test
+    fun panelBoundsCheckCoversBothScreenLocationParamTargetAndMargin() {
+        // Screen location lags 1 frame at (100, 1200), LayoutParams already moved to (140, 1200)
+        assertTrue(isPointInsidePanelBounds(105f, 1250f, 100, 1200, 140, 1200, 400, 500))
+        assertTrue(isPointInsidePanelBounds(530f, 1250f, 100, 1200, 140, 1200, 400, 500))
+        // 2px margin around edges
+        assertTrue(isPointInsidePanelBounds(98f, 1198f, 100, 1200, 100, 1200, 400, 500, marginPx = 2f))
+        assertFalse(isPointInsidePanelBounds(97f, 1250f, 100, 1200, 100, 1200, 400, 500, marginPx = 2f))
+        // Clearly outside both
+        assertFalse(isPointInsidePanelBounds(50f, 200f, 100, 1200, 140, 1200, 400, 500))
+        // Zero size panel -> false
+        assertFalse(isPointInsidePanelBounds(100f, 1200f, 100, 1200, 100, 1200, 0, 500))
+    }
+
+    @Test
+    fun gestureWatchdogTimeoutCoversShortLongDirectAndPassThroughGestures() {
+        assertEquals(2500L, resolveGestureWatchdogTimeoutMs(expectedMs = 50L, needsPassThrough = false))
+        assertEquals(2550L, resolveGestureWatchdogTimeoutMs(expectedMs = 50L, needsPassThrough = true, passThroughDelayMs = 50L))
+        assertEquals(4500L, resolveGestureWatchdogTimeoutMs(expectedMs = 3000L, needsPassThrough = false))
+        assertEquals(4550L, resolveGestureWatchdogTimeoutMs(expectedMs = 3000L, needsPassThrough = true, passThroughDelayMs = 50L))
+    }
+
+    @Test
+    fun panelRebuildDefersWheneverAnyInteractionOrDispatchIsActive() {
+        assertFalse(
+            shouldDeferPanelRebuild(
+                padFingerDown = false,
+                movingPanel = false,
+                resizingPanel = false,
+                isDraggingBall = false,
+                ballTouchDown = false,
+                isWaitingForBallDoubleTap = false,
+                actionButtonDownCount = 0,
+                isDispatchingGesture = false,
+                isPassThroughActive = false,
+            ),
+        )
+        assertTrue(shouldDeferPanelRebuild(true, false, false, false, false, false, 0, false, false))
+        assertTrue(shouldDeferPanelRebuild(false, true, false, false, false, false, 0, false, false))
+        assertTrue(shouldDeferPanelRebuild(false, false, true, false, false, false, 0, false, false))
+        assertTrue(shouldDeferPanelRebuild(false, false, false, true, false, false, 0, false, false))
+        assertTrue(shouldDeferPanelRebuild(false, false, false, false, true, false, 0, false, false))
+        assertTrue(shouldDeferPanelRebuild(false, false, false, false, false, true, 0, false, false))
+        assertTrue(shouldDeferPanelRebuild(false, false, false, false, false, false, 1, false, false))
+        assertTrue(shouldDeferPanelRebuild(false, false, false, false, false, false, 0, true, false))
+        assertTrue(shouldDeferPanelRebuild(false, false, false, false, false, false, 0, false, true))
+    }
 }
-
-

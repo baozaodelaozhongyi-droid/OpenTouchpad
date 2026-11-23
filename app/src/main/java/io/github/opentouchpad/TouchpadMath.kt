@@ -1462,6 +1462,7 @@ internal fun computePanelDragMatrix(
  */
 internal fun clampGestureCoord(value: Float, screenSize: Int): Float {
     val maxCoord = (screenSize - 1).coerceAtLeast(0).toFloat()
+    if (!value.isFinite()) return 0f
     return value.coerceIn(0f, maxCoord)
 }
 
@@ -1931,3 +1932,148 @@ internal fun stepPanelDragSpringInPlace(
     state.grabVel = grabVel
 }
 
+// ───────────────────────── 交互响应可靠性与手势派发纯逻辑 ─────────────────────────
+
+/** 悬浮球双击等待时长（ms）：覆盖正常单手拇指双击节奏，同时保持单击响应干脆。 */
+internal const val BALL_DOUBLE_TAP_TIMEOUT_MS = 260L
+
+/** 主线程短暂抖动时的双击宽限时长（ms）：只要单击回调尚未触发，允许第二次按下平滑衔接为双击。 */
+internal const val BALL_DOUBLE_TAP_GRACE_MS = 100L
+
+/**
+ * 判断悬浮球第二次按下（ACTION_DOWN）是否落在双击判定窗口内。
+ * 在 ACTION_DOWN（而非 ACTION_UP）就锁定双击资格，避免第二次按住稍久时因抬手总耗时超出上限而误判失效。
+ */
+internal fun isBallSecondTapDownWithinWindow(
+    isWaitingForDoubleTap: Boolean,
+    lastTapUpMs: Long,
+    secondTapDownMs: Long,
+    timeoutMs: Long = BALL_DOUBLE_TAP_TIMEOUT_MS,
+    graceMs: Long = BALL_DOUBLE_TAP_GRACE_MS,
+): Boolean {
+    if (!isWaitingForDoubleTap) return false
+    val elapsed = secondTapDownMs - lastTapUpMs
+    val maxWindow = timeoutMs.coerceAtLeast(0L) + graceMs.coerceAtLeast(0L)
+    return elapsed in 0L..maxWindow
+}
+
+/** 悬浮球点击容差（px）：至少不低于系统 scaledTouchSlop 与最小防微抖阈值，减少轻点滚动被静默吞掉。 */
+internal fun resolveBallTapSlopPx(scaledTouchSlopPx: Float, minSlopPx: Float): Float =
+    maxOf(scaledTouchSlopPx.coerceAtLeast(0f), minSlopPx.coerceAtLeast(0f))
+
+/**
+ * 悬浮球第二次抬手（ACTION_UP）是否应触发双击动作：
+ * 只要第二次按下已锁定双击资格，且未进入滑动阈值或滑回取消区，即视为有效双击，消除 6dp–25dp 误判死区。
+ */
+internal fun shouldTreatBallReleaseAsDoubleTap(
+    doubleTapArmed: Boolean,
+    hasArmedSwipe: Boolean,
+    isCancelledByReturn: Boolean,
+    distPx: Float,
+    swipeThresholdPx: Float,
+): Boolean =
+    doubleTapArmed && !hasArmedSwipe && !isCancelledByReturn && distPx < swipeThresholdPx
+
+/**
+ * 基于按钮未形变屏幕矩形 + 触摸容差 [slopPx] 判定点击落点：
+ * 完全免疫 PressFeedback 3D 倾斜、0.92× 缩放与 3dp 下沉造成的 View 局部坐标偏移，杜绝点击按钮边缘无响应。
+ */
+internal fun isPointInsideButtonHitTarget(
+    rawX: Float,
+    rawY: Float,
+    left: Int,
+    top: Int,
+    width: Int,
+    height: Int,
+    slopPx: Float,
+): Boolean {
+    if (width <= 0 || height <= 0) return false
+    val safeSlop = slopPx.coerceAtLeast(0f)
+    return rawX >= left - safeSlop &&
+        rawX <= left + width + safeSlop &&
+        rawY >= top - safeSlop &&
+        rawY <= top + height + safeSlop
+}
+
+/**
+ * 判定按钮点击落点是否有效：
+ * 1. 手指相对按下点几乎未滑动（位移 <= [slopPx]），即使面板正处于展开缩放动画或快速连点回弹期也绝不丢点击；
+ * 2. 否则回退到按钮未形变屏幕矩形 + 容差 [slopPx] 判定，保留拖离按钮外取消点击的直觉手势。
+ */
+internal fun isButtonReleaseWithinHitTarget(
+    rawX: Float,
+    rawY: Float,
+    downRawX: Float,
+    downRawY: Float,
+    left: Int,
+    top: Int,
+    width: Int,
+    height: Int,
+    slopPx: Float,
+): Boolean {
+    val safeSlop = slopPx.coerceAtLeast(0f)
+    if (kotlin.math.hypot(rawX - downRawX, rawY - downRawY) <= safeSlop) return true
+    return isPointInsideButtonHitTarget(rawX, rawY, left, top, width, height, safeSlop)
+}
+
+/**
+ * 判定注入手势坐标是否可能命中面板窗口（合并 View.getLocationOnScreen 与 LayoutParams 目标坐标，
+ * 并留出 [marginPx] 边界余量），杜绝移动面板后或过渡帧期间误判导致注入手势点到自身悬浮窗。
+ */
+internal fun isPointInsidePanelBounds(
+    px: Float,
+    py: Float,
+    screenX: Int,
+    screenY: Int,
+    paramX: Int,
+    paramY: Int,
+    width: Int,
+    height: Int,
+    marginPx: Float = 2f,
+): Boolean {
+    if (width <= 0 || height <= 0) return false
+    val m = marginPx.coerceAtLeast(0f)
+    val inScreen = px >= screenX - m && px <= screenX + width + m &&
+        py >= screenY - m && py <= screenY + height + m
+    if (inScreen) return true
+    return px >= paramX - m && px <= paramX + width + m &&
+        py >= paramY - m && py <= paramY + height + m
+}
+
+/**
+ * 计算任意注入手势（穿透或直发）的统一看门狗超时时长（ms）：
+ * 若系统异常丢弃 GestureResultCallback，到期自动解锁 isDispatching 并恢复可触摸，杜绝手势队列永久死锁。
+ */
+internal fun resolveGestureWatchdogTimeoutMs(
+    expectedMs: Long,
+    needsPassThrough: Boolean,
+    passThroughDelayMs: Long = 50L,
+): Long {
+    val base = maxOf(2500L, expectedMs.coerceAtLeast(0L) + 1500L)
+    return if (needsPassThrough) base + passThroughDelayMs.coerceAtLeast(0L) else base
+}
+
+/**
+ * 判断此刻是否应暂缓惰性面板重建：
+ * 只要存在任何活跃手指触摸、按钮按压、悬浮球双击等待、或手势派发/穿透过程，均延后至交互彻底结束后再重建。
+ */
+internal fun shouldDeferPanelRebuild(
+    padFingerDown: Boolean,
+    movingPanel: Boolean,
+    resizingPanel: Boolean,
+    isDraggingBall: Boolean,
+    ballTouchDown: Boolean,
+    isWaitingForBallDoubleTap: Boolean,
+    actionButtonDownCount: Int,
+    isDispatchingGesture: Boolean,
+    isPassThroughActive: Boolean,
+): Boolean =
+    padFingerDown ||
+        movingPanel ||
+        resizingPanel ||
+        isDraggingBall ||
+        ballTouchDown ||
+        isWaitingForBallDoubleTap ||
+        actionButtonDownCount > 0 ||
+        isDispatchingGesture ||
+        isPassThroughActive

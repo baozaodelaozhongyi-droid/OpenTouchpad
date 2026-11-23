@@ -38,6 +38,7 @@ import android.view.Choreographer
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.OvershootInterpolator
 import android.view.accessibility.AccessibilityEvent
@@ -64,6 +65,8 @@ class TouchpadService : AccessibilityService() {
         private const val TOUCH_RING_RADIUS_DP = 11
         /** 穿透点击前等待 FLAG_NOT_TOUCHABLE 真正同步到系统 InputDispatcher 的安全延时（毫秒）。 */
         private const val OVERLAY_PASS_THROUGH_DELAY_MS = 50L
+        /** 待派发非续接手势队列上限，防止极端连点造成积压。 */
+        private const val MAX_GESTURE_QUEUE_SIZE = 8
         private const val NOTIFICATION_CHANNEL_ID = "opentouchpad_keepalive"
         private const val NOTIFICATION_ID_KEEPALIVE = 2001
         /** 面板收起/隐藏后延迟释放触控板自定义底图的防抖时长（避开 220ms 退场动画与快速反复切换）。 */
@@ -99,6 +102,7 @@ class TouchpadService : AccessibilityService() {
     private var cachedLongPressMs = 600
     private var cachedHaptics = true
     private var cachedHasTouchpadBg = false
+    private var cachedScaledTouchSlopPx = 0f
 
     // VSync 合并提交 WindowManager.updateViewLayout，消除 240Hz/360Hz 触控下的冗余 Binder IPC 风暴
     private var pendingCursorLayout = false
@@ -129,20 +133,52 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
+    private var lastPanelScreenW = 0
+    private var lastPanelScreenH = 0
+    private var lastPanelLandscape = false
+    private var lastPanelDark = false
+    private var lastPanelDensity = 0f
+    private var actionButtonDownCount = 0
+    private var activeButtonCancelCallback: (() -> Unit)? = null
     private var pendingBoundsRebuild = false
+    private var pendingKeyboardMinimizeSync = false
     private val deferredBoundsCheckRunnable = Runnable {
-        if (!hasActiveTouch()) {
+        if (!shouldDeferRebuildNow()) {
             syncScreenBoundsIfChanged(rebuildNow = true)
+        } else {
+            syncScreenBoundsIfChanged(rebuildNow = false)
+        }
+    }
+    private val flushBoundsRebuildRunnable = Runnable {
+        if (shouldDeferRebuildNow()) return@Runnable
+        if (pendingBoundsRebuild) {
+            pendingBoundsRebuild = false
+            pendingKeyboardMinimizeSync = false
+            buildPanel()
+            updateCursor(immediate = true)
+            syncKeyboardMinimize()
+        } else if (pendingKeyboardMinimizeSync) {
+            pendingKeyboardMinimizeSync = false
+            syncKeyboardMinimize()
         }
     }
 
-    private fun hasActiveTouch(): Boolean =
-        padFingerDown || movingPanel || resizingPanel || isDraggingBall
+    private fun shouldDeferRebuildNow(): Boolean = shouldDeferPanelRebuild(
+        padFingerDown = padFingerDown,
+        movingPanel = movingPanel,
+        resizingPanel = resizingPanel,
+        isDraggingBall = isDraggingBall,
+        ballTouchDown = ballTouchDown,
+        isWaitingForBallDoubleTap = isWaitingForBallDoubleTap,
+        actionButtonDownCount = actionButtonDownCount,
+        isDispatchingGesture = isDispatching || pendingPassThroughDispatchRunnable != null,
+        isPassThroughActive = isPassThroughActive,
+    )
 
     /**
      * 惰性同步屏幕尺寸：替代常驻 DisplayListener，彻底消除 LTPO 屏幕每次 120↔90↔60↔30↔10↔1Hz
      * 自动换档时唤醒服务主线程；在 ACTION_DOWN 传 rebuildNow = false 仅更新边界不毁窗，
-     * 待手势结束（ACTION_UP/CANCEL）再安全重建，杜绝手势中途撕毁接收触摸的窗口。
+     * 待手势与派发彻底结束后再异步安全重建，杜绝手势中途或 ACTION_UP 同步撕毁接收触摸的窗口。
      */
     private fun syncScreenBoundsIfChanged(rebuildNow: Boolean) {
         if (!::wm.isInitialized || !::prefs.isInitialized) return
@@ -152,8 +188,9 @@ class TouchpadService : AccessibilityService() {
         if (screenW != oldW || screenH != oldH) {
             cursorX = clampGestureCoord(cursorX, screenW)
             cursorY = clampGestureCoord(cursorY, screenH)
-            if (rebuildNow) {
+            if (rebuildNow && !shouldDeferRebuildNow()) {
                 pendingBoundsRebuild = false
+                main.removeCallbacks(flushBoundsRebuildRunnable)
                 buildPanel()
                 updateCursor(immediate = true)
             } else {
@@ -163,10 +200,10 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun flushPendingBoundsRebuild() {
-        if (!pendingBoundsRebuild || hasActiveTouch()) return
-        pendingBoundsRebuild = false
-        buildPanel()
-        updateCursor(immediate = true)
+        if ((!pendingBoundsRebuild && !pendingKeyboardMinimizeSync) || shouldDeferRebuildNow()) return
+        main.removeCallbacks(flushBoundsRebuildRunnable)
+        // 异步投递至下一轮消息循环：确保当前 ACTION_UP 完成 finishInputEvent 且已入队的穿透手势先完成，不中途毁窗
+        main.post(flushBoundsRebuildRunnable)
     }
 
     private var activeDialog: AlertDialog? = null
@@ -407,11 +444,13 @@ class TouchpadService : AccessibilityService() {
     private var resizingLastAppliedHeight = -1
 
     // 悬浮球手势状态与坐标记录
+    private var ballTouchDown = false
     private var isDraggingBall = false
     private var ballLongPressTriggered = false
     private var ballMoved = false
     private var lastBallTapTime = 0L
     private var isWaitingForBallDoubleTap = false
+    private var ballDoubleTapArmed = false
     private var ballFromX = 0f
     private var ballFromY = 0f
     private var ballX = 0
@@ -455,12 +494,16 @@ class TouchpadService : AccessibilityService() {
             if (act != PadAction.NONE) {
                 performAction(act, withHaptic = false)
             }
+            flushPendingBoundsRebuild()
         }
     }
 
     private val ballLongPressRunnable = Runnable {
-        if (ballMoved) return@Runnable
+        if (ballMoved || !ballTouchDown || isPassThroughActive) return@Runnable
         val act = prefs.ballActionLongPress
+        isWaitingForBallDoubleTap = false
+        ballDoubleTapArmed = false
+        main.removeCallbacks(ballSingleTapRunnable)
         ballLongPressTriggered = true
         ballHapticLongPress()
         if (act == PadAction.MOVE_BALL) {
@@ -556,7 +599,7 @@ class TouchpadService : AccessibilityService() {
     // 键盘弹出时自动最小化的标记存在 Prefs.minimizedByKeyboard（服务重启后也能自动还原）
 
     private val longPressRunnable = Runnable {
-        if (!moved) {
+        if (!moved && padFingerDown && !isPassThroughActive) {
             longPressFired = true
             customSwipeArmed = true
             customSwipeStartX = cursorX
@@ -582,6 +625,7 @@ class TouchpadService : AccessibilityService() {
 
         prefs = Prefs(this)
         refreshHotPrefs()
+        cachedScaledTouchSlopPx = runCatching { ViewConfiguration.get(this).scaledTouchSlop.toFloat() }.getOrDefault(0f)
         cachedHasTouchpadBg = CustomBackgroundManager.hasTouchpadBg(this)
         prefs.registerChangeListener(prefChangeListener)
         syncAccessibilityEventSubscription()
@@ -620,21 +664,18 @@ class TouchpadService : AccessibilityService() {
         dismissActiveDialog()
         cancelKeepAliveNotification()
         cancelPendingLayouts()
-        pendingPassThroughDispatchRunnable?.let { main.removeCallbacks(it) }
-        pendingPassThroughDispatchRunnable = null
         main.removeCallbacks(deferredBoundsCheckRunnable)
+        main.removeCallbacks(flushBoundsRebuildRunnable)
         pendingBoundsRebuild = false
+        pendingKeyboardMinimizeSync = false
+        resetGestureDispatchState(clearQueue = true)
         main.removeCallbacksAndMessages(null)
-        gestureQueue.clear()
-        isDispatching = false
-        isPassThroughActive = false
-        setOverlayTouchable(true)
         instance = null
         onPanelResized = null
         cancelDrag()
         removeTouchRing()
-        cancelTransitions()
-        removePanel()
+        cancelTransitions(immediate = true)
+        removePanel(immediate = true)
         cursorView?.let { v ->
             runCatching { wm.removeViewImmediate(v) }.onFailure { runCatching { wm.removeView(v) } }
         }
@@ -677,20 +718,40 @@ class TouchpadService : AccessibilityService() {
         main.removeCallbacks(ballLongPressRunnable)
         main.removeCallbacks(ballSingleTapRunnable)
         main.removeCallbacks(deferredBoundsCheckRunnable)
+        main.removeCallbacks(flushBoundsRebuildRunnable)
         main.removeCallbacks(bgUpsampleRunnable)
         pendingBoundsRebuild = false
+        pendingKeyboardMinimizeSync = false
         cancelPendingLayouts()
+        activeButtonCancelCallback?.invoke()
+        activeButtonCancelCallback = null
+        actionButtonDownCount = 0
         padFingerDown = false
+        padTouchIgnored = false
         movingPanel = false
         resizingPanel = false
+        ballTouchDown = false
         isDraggingBall = false
         ballLongPressTriggered = false
         isWaitingForBallDoubleTap = false
+        ballDoubleTapArmed = false
+        ballMoved = false
+        ballSwipeTracker.reset()
         ballSnapAnimator?.cancel()
         ballSnapAnimator = null
         stopPanelDeformation(resetVisuals = true)
         resetBallDeformation(animated = false)
         customSwipeArmed = false
+        // 息屏时清空挂起/未完结的手势派发，防止系统息屏吞掉 GestureResultCallback 导致亮屏后永久死锁或卡在不可触摸态
+        resetGestureDispatchState(clearQueue = true)
+        // 始终清理退场过渡窗并恢复当前入场面板的静息透明度，避免息屏中断过渡动画导致透明可触摸窗残留
+        cancelTransitions(immediate = false)
+        panel?.let { current ->
+            current.animate().cancel()
+            current.scaleX = 1f
+            current.scaleY = 1f
+            current.alpha = if (current === miniBallView) ballRestingAlpha() else 1f
+        }
         if (touchRing?.isIdle == true && !dragging) {
             removeTouchRing()
         } else {
@@ -698,7 +759,6 @@ class TouchpadService : AccessibilityService() {
         }
         // 仅在面板未展开（最小化/隐藏）时回收触控板底图；展开态底图按实际尺寸已极小，避免亮屏未重建导致丢图
         if (!isFullPanelVisible()) {
-            cancelTransitions()
             releaseTouchpadBgIfSafe()
         }
         if (cursorView?.visibility != View.VISIBLE) {
@@ -761,16 +821,24 @@ class TouchpadService : AccessibilityService() {
 
     override fun onInterrupt() {
         cancelPendingLayouts()
-        pendingPassThroughDispatchRunnable?.let { main.removeCallbacks(it) }
-        pendingPassThroughDispatchRunnable = null
         main.removeCallbacks(deferredBoundsCheckRunnable)
+        main.removeCallbacks(flushBoundsRebuildRunnable)
         pendingBoundsRebuild = false
-        main.removeCallbacksAndMessages(null)
+        pendingKeyboardMinimizeSync = false
+        activeButtonCancelCallback?.invoke()
+        activeButtonCancelCallback = null
+        actionButtonDownCount = 0
         padFingerDown = false
+        padTouchIgnored = false
+        movingPanel = false
+        resizingPanel = false
+        ballTouchDown = false
+        isDraggingBall = false
+        isWaitingForBallDoubleTap = false
+        ballDoubleTapArmed = false
         stopPanelDeformation(resetVisuals = true)
-        gestureQueue.clear()
-        isDispatching = false
-        setOverlayTouchable(true)
+        resetGestureDispatchState(clearQueue = true)
+        main.removeCallbacksAndMessages(null)
         cancelDrag()
     }
 
@@ -789,39 +857,78 @@ class TouchpadService : AccessibilityService() {
      */
     fun syncKeyboardMinimize() {
         if (!this::prefs.isInitialized) return
-        syncAccessibilityEventSubscription()
         if (!prefs.minimizeOnKeyboard) {
             if (prefs.minimizedByKeyboard) {
+                if (shouldDeferRebuildNow()) {
+                    pendingKeyboardMinimizeSync = true
+                    return
+                }
+                pendingKeyboardMinimizeSync = false
                 prefs.minimizedByKeyboard = false
                 prefs.minimized = false
                 syncAccessibilityEventSubscription()
                 buildPanel()
+            } else {
+                pendingKeyboardMinimizeSync = false
+                syncAccessibilityEventSubscription()
             }
             return
         }
         // 已由用户手动收起且非键盘触发时，无需再跨进程查询 getWindows()
-        if (prefs.minimized && !prefs.minimizedByKeyboard) return
+        if (prefs.minimized && !prefs.minimizedByKeyboard) {
+            pendingKeyboardMinimizeSync = false
+            return
+        }
         val ime = isImeVisible()
         if (ime && !prefs.minimized) {
+            if (shouldDeferRebuildNow()) {
+                pendingKeyboardMinimizeSync = true
+                return
+            }
+            pendingKeyboardMinimizeSync = false
             prefs.minimizedByKeyboard = true
             prefs.minimized = true
             buildPanel()
         } else if (!ime && prefs.minimizedByKeyboard) {
+            if (shouldDeferRebuildNow()) {
+                pendingKeyboardMinimizeSync = true
+                return
+            }
+            pendingKeyboardMinimizeSync = false
             prefs.minimizedByKeyboard = false
             prefs.minimized = false
             buildPanel()
+        } else {
+            pendingKeyboardMinimizeSync = false
         }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         main.removeCallbacks(deferredBoundsCheckRunnable)
-        pendingBoundsRebuild = false
+        cachedScaledTouchSlopPx = runCatching { ViewConfiguration.get(this).scaledTouchSlop.toFloat() }
+            .getOrDefault(cachedScaledTouchSlopPx)
         refreshScreenMetrics(newConfig)
         cursorX = clampGestureCoord(cursorX, screenW)
         cursorY = clampGestureCoord(cursorY, screenH)
-        buildPanel()
-        updateCursor(immediate = true)
+        val newLand = isLandscape(newConfig)
+        val newDark = isDarkTheme()
+        val newDensity = resources.displayMetrics.density
+        val visualChanged = screenW != lastPanelScreenW ||
+            screenH != lastPanelScreenH ||
+            newLand != lastPanelLandscape ||
+            newDark != lastPanelDark ||
+            abs(newDensity - lastPanelDensity) > 0.01f
+        if (visualChanged) {
+            if (shouldDeferRebuildNow()) {
+                pendingBoundsRebuild = true
+            } else {
+                pendingBoundsRebuild = false
+                main.removeCallbacks(flushBoundsRebuildRunnable)
+                buildPanel()
+            }
+            updateCursor(immediate = true)
+        }
         // 部分定制系统在 onConfigurationChanged 瞬间 maximumWindowMetrics 滞后 1 帧，120ms 后静默兜底校验一次
         main.postDelayed(deferredBoundsCheckRunnable, 120L)
     }
@@ -832,7 +939,7 @@ class TouchpadService : AccessibilityService() {
         refreshHotPrefs()
         syncAccessibilityEventSubscription()
         removeTouchRing()
-        isPassThroughActive = false
+        resetGestureDispatchState(clearQueue = true)
         buildCursor()
         buildPanel()
         updateCursor(immediate = true)
@@ -1095,7 +1202,13 @@ class TouchpadService : AccessibilityService() {
     }
 
     fun toggleMinimize() {
-        prefs.minimized = !prefs.minimized
+        val currentlyMinimized = when {
+            isFullPanelVisible() -> false
+            miniBallView != null -> true
+            else -> prefs.minimized
+        }
+        pendingKeyboardMinimizeSync = false
+        prefs.minimized = !currentlyMinimized
         prefs.minimizedByKeyboard = false
         buildPanel(animate = true)
     }
@@ -1105,23 +1218,21 @@ class TouchpadService : AccessibilityService() {
     private fun refreshScreenMetrics(config: Configuration? = null) {
         val conf = config ?: resources.configuration
         val isLand = isLandscape(conf)
-        if (::wm.isInitialized) {
+        val resolved = if (::wm.isInitialized) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val bounds = wm.maximumWindowMetrics.bounds
-                val resolved = resolveScreenBounds(bounds.width(), bounds.height(), isLand, trustWindowMetrics = true)
-                screenW = resolved.x
-                screenH = resolved.y
+                resolveScreenBounds(bounds.width(), bounds.height(), isLand, trustWindowMetrics = true)
             } else {
                 val dm = android.util.DisplayMetrics()
                 @Suppress("DEPRECATION")
                 wm.defaultDisplay.getRealMetrics(dm)
-                val resolved = resolveScreenBounds(dm.widthPixels, dm.heightPixels, isLand, trustWindowMetrics = false)
-                screenW = resolved.x
-                screenH = resolved.y
+                resolveScreenBounds(dm.widthPixels, dm.heightPixels, isLand, trustWindowMetrics = false)
             }
         } else {
             val dm = resources.displayMetrics
-            val resolved = resolveScreenBounds(dm.widthPixels, dm.heightPixels, isLand, trustWindowMetrics = false)
+            resolveScreenBounds(dm.widthPixels, dm.heightPixels, isLand, trustWindowMetrics = false)
+        }
+        if (resolved.x > 0 && resolved.y > 0) {
             screenW = resolved.x
             screenH = resolved.y
         }
@@ -1172,6 +1283,12 @@ class TouchpadService : AccessibilityService() {
 
     private fun buildPanel(animate: Boolean = false) {
         pendingBoundsRebuild = false
+        main.removeCallbacks(flushBoundsRebuildRunnable)
+        lastPanelScreenW = screenW
+        lastPanelScreenH = screenH
+        lastPanelLandscape = isLandscape()
+        lastPanelDark = isDarkTheme()
+        lastPanelDensity = resources.displayMetrics.density
         // 用户主动展开/收起时做过渡动画：旧窗口先摘下来单独播放退场，再建新窗口播放入场。
         val outgoing = if (animate) detachPanelForTransition() else null
         removePanel()
@@ -1212,7 +1329,9 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 展开／收起过渡 ─────────────────────────
 
-    private class Outgoing(val view: View, val lp: WindowManager.LayoutParams)
+    private class Outgoing(val view: View, val lp: WindowManager.LayoutParams) {
+        var finished = false
+    }
 
     private var enteringWithTransition = false
 
@@ -1223,6 +1342,7 @@ class TouchpadService : AccessibilityService() {
     private fun detachPanelForTransition(): Outgoing? {
         stopPanelDeformation(resetVisuals = true)
         pendingPanelLayout = false
+        passThroughSynced = false
         val v = panel ?: return null
         val lp = panelParams ?: return null
         // 退场期间不再接收触摸，避免误触
@@ -1234,7 +1354,9 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun finishOutgoing(o: Outgoing) {
-        o.view.animate().cancel()
+        if (o.finished) return
+        o.finished = true
+        o.view.animate().setListener(null).cancel()
         // 先让最后一帧变成全透明并提交，再移除窗口，避免系统拿到一张半透明快照
         o.view.alpha = 0f
         o.view.visibility = View.INVISIBLE
@@ -1244,16 +1366,23 @@ class TouchpadService : AccessibilityService() {
             return
         }
         o.view.postOnAnimation {
-            runningOutgoing.remove(o.view)
-            runCatching { wm.removeView(o.view) }
+            if (runningOutgoing.remove(o.view) || o.view.isAttachedToWindow) {
+                runCatching { wm.removeView(o.view) }
+            }
         }
     }
 
-    /** 当前所有退场中的窗口立即移除（服务销毁、重建时调用）。 */
-    private fun cancelTransitions() {
+    /** 当前所有退场中的窗口立即移除（服务销毁、息屏、重建时调用）。 */
+    private fun cancelTransitions(immediate: Boolean = false) {
         runningOutgoing.toList().forEach { v ->
-            v.animate().cancel()
-            runCatching { wm.removeViewImmediate(v) }.onFailure { runCatching { wm.removeView(v) } }
+            v.animate().setListener(null).cancel()
+            v.alpha = 0f
+            v.visibility = View.INVISIBLE
+            if (immediate) {
+                runCatching { wm.removeViewImmediate(v) }.onFailure { runCatching { wm.removeView(v) } }
+            } else {
+                runCatching { wm.removeView(v) }
+            }
         }
         runningOutgoing.clear()
     }
@@ -1261,12 +1390,22 @@ class TouchpadService : AccessibilityService() {
     /**
      * 面板 ⇄ 悬浮球：两者都朝对方所在的位置缩放。
      * 收起：面板缩向悬浮球并淡出，悬浮球从小弹出；展开：悬浮球缩小淡出，面板从悬浮球方向长出来。
-     * 系统「动画时长缩放」设为关闭时，ViewPropertyAnimator 会直接跳到终点。
+     * 系统关闭动画时长缩放时直接落位，杜绝新窗口滞留在透明可触摸状态。
      */
     private fun playTransition(o: Outgoing) {
         val incoming = panel
         val inLp = panelParams
+        val targetAlpha = if (incoming === miniBallView) ballRestingAlpha() else 1f
         runningOutgoing += o.view
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            finishOutgoing(o)
+            if (incoming != null) {
+                incoming.alpha = targetAlpha
+                incoming.scaleX = 1f
+                incoming.scaleY = 1f
+            }
+            return
+        }
         // 两个窗口中心点（屏幕坐标）
         val outW = o.view.width.takeIf { it > 0 } ?: o.lp.width
         val outH = o.view.height.takeIf { it > 0 } ?: o.lp.height
@@ -1288,17 +1427,29 @@ class TouchpadService : AccessibilityService() {
             .alpha(0f)
             .setDuration(if (collapsing) 220L else 140L)
             .setInterpolator(transitionInterpolator)
-            .withEndAction { finishOutgoing(o) }
+            .setListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    finishOutgoing(o)
+                }
+
+                override fun onAnimationCancel(animation: Animator) {
+                    finishOutgoing(o)
+                }
+            })
             .start()
 
         if (incoming == null || inLp == null) return
-        val targetAlpha = if (incoming === miniBallView) ballRestingAlpha() else 1f
         incoming.alpha = 0f
         incoming.scaleX = if (collapsing) 0.4f else 0.2f
         incoming.scaleY = incoming.scaleX
         incoming.post {
             if (panel !== incoming) {
-                incoming.alpha = targetAlpha; incoming.scaleX = 1f; incoming.scaleY = 1f
+                return@post
+            }
+            if (!ValueAnimator.areAnimatorsEnabled()) {
+                incoming.scaleX = 1f
+                incoming.scaleY = 1f
+                incoming.alpha = targetAlpha
                 return@post
             }
             // 新窗口从旧窗口中心方向长出来
@@ -1309,23 +1460,46 @@ class TouchpadService : AccessibilityService() {
                 .setStartDelay(if (collapsing) 120L else 40L)
                 .setDuration(if (collapsing) 200L else 260L)
                 .setInterpolator(if (collapsing) OVERSHOOT_160 else transitionInterpolator)
-                .withEndAction {
-                    incoming.scaleX = 1f; incoming.scaleY = 1f; incoming.alpha = targetAlpha
-                }
+                .setListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        if (panel === incoming) {
+                            incoming.scaleX = 1f
+                            incoming.scaleY = 1f
+                            incoming.alpha = targetAlpha
+                        }
+                    }
+
+                    override fun onAnimationCancel(animation: Animator) {
+                        if (panel === incoming) {
+                            incoming.scaleX = 1f
+                            incoming.scaleY = 1f
+                            incoming.alpha = targetAlpha
+                        }
+                    }
+                })
                 .start()
         }
     }
 
-    private fun removePanel() {
+    private fun removePanel(immediate: Boolean = false) {
         stopPanelDeformation(resetVisuals = false)
         dismissActiveDialog()
         pendingPanelLayout = false
         main.removeCallbacks(bgUpsampleRunnable)
+        activeButtonCancelCallback?.invoke()
+        activeButtonCancelCallback = null
+        actionButtonDownCount = 0
         padArea?.animate()?.cancel()
         padFingerDown = false
         // 拖拽锁定状态（以及跟随光标的圆环）跨面板重建保留，不在这里结束
         panel?.let { v ->
-            runCatching { wm.removeViewImmediate(v) }.onFailure { runCatching { wm.removeView(v) } }
+            v.animate().setListener(null).cancel()
+            if (immediate) {
+                runCatching { wm.removeViewImmediate(v) }.onFailure { runCatching { wm.removeView(v) } }
+            } else {
+                // 使用异步 removeView：避免在 ACTION_UP 同步执行 removeViewImmediate 提前销毁 InputChannel
+                runCatching { wm.removeView(v) }
+            }
         }
         panel = null
         panelParams = null
@@ -1343,15 +1517,26 @@ class TouchpadService : AccessibilityService() {
         padControlRect = ControlRect(0, 0, 0, 0)
         actionViews.clear()
         actionSlots.clear()
-        main.removeCallbacks(restoreTouchRunnable)
         main.removeCallbacks(delayedRestoreTouchRunnable)
-        pendingPassThroughDispatchRunnable?.let { main.removeCallbacks(it) }
-        pendingPassThroughDispatchRunnable = null
+        // 若上一笔穿透手势尚处于 50ms 延时等待（尚未调用系统 dispatchGesture），取消它时必须同步解锁 isDispatching，
+        // 否则 isDispatching 将永久卡在 true，导致此后所有触控板点击/滑动/桌面点应用全部死锁无响应！
+        pendingPassThroughDispatchRunnable?.let { pending ->
+            main.removeCallbacks(pending)
+            pendingPassThroughDispatchRunnable = null
+            cancelGestureWatchdog()
+            gestureDispatchGen++
+            isDispatching = false
+            if (gestureQueue.isNotEmpty()) {
+                main.post { drainGestureQueue() }
+            }
+        }
         main.removeCallbacks(ballLongPressRunnable)
         main.removeCallbacks(ballSingleTapRunnable)
         ballSnapAnimator?.cancel()
         ballSnapAnimator = null
+        ballTouchDown = false
         isWaitingForBallDoubleTap = false
+        ballDoubleTapArmed = false
         isDraggingBall = false
         ballLongPressTriggered = false
         ballMoved = false
@@ -1364,8 +1549,8 @@ class TouchpadService : AccessibilityService() {
         if (customSwipeArmed) touchRing?.release()
         customSwipeArmed = false
         padTouchIgnored = false
-        // 新窗口本来就是可触摸的；上一笔穿透手势的兜底恢复已在上面移除，这里同步清掉拦截标记，
-        // 否则面板重建成「无窗口」（收起且隐藏悬浮球 / 横屏隐藏）时标记会一直留着，之后所有按键都失灵。
+        // 新窗口本来就是可触摸的；同步清掉穿透标记与同步状态，避免重建后面板一直处于穿透态而忽略触摸。
+        passThroughSynced = false
         isPassThroughActive = false
     }
 
@@ -1479,7 +1664,12 @@ class TouchpadService : AccessibilityService() {
 
         val lp = panelLayoutParams(widthPx, heightPx)
         if (enteringWithTransition) root.alpha = 0f
-        runCatching { wm.addView(root, lp) }
+        if (runCatching { wm.addView(root, lp) }.isFailure) {
+            padArea = null
+            actionViews.clear()
+            actionSlots.clear()
+            return
+        }
         panel = root
         panelParams = lp
         root.post {
@@ -1690,13 +1880,15 @@ class TouchpadService : AccessibilityService() {
             setOnTouchListener { v, e ->
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        v.isPressed = true
-                        bg.isPressed = true
+                        if (!isPassThroughActive) {
+                            v.isPressed = true
+                            bg.isPressed = true
+                        }
                     }
                     MotionEvent.ACTION_UP -> {
                         v.isPressed = false
                         bg.isPressed = false
-                        v.performClick()
+                        if (!isPassThroughActive) v.performClick()
                     }
                     MotionEvent.ACTION_CANCEL -> {
                         v.isPressed = false
@@ -1709,7 +1901,13 @@ class TouchpadService : AccessibilityService() {
         }
         val lp = ballLayoutParams(size)
         if (enteringWithTransition) dot.alpha = 0f
-        runCatching { wm.addView(dot, lp) }
+        if (runCatching { wm.addView(dot, lp) }.isFailure) {
+            ballRingDrawable = null
+            ballDiscDrawable = null
+            ballLayerDrawable = null
+            ballRippleDrawable = null
+            return
+        }
         panel = dot
         miniBallView = dot
         ballBgView = bg
@@ -1839,11 +2037,18 @@ class TouchpadService : AccessibilityService() {
             isClickable = true
             isHapticFeedbackEnabled = false
             setOnTouchListener { v, e ->
-                if (isPassThroughActive) return@setOnTouchListener false
-                // 自己处理拖动，同时让水波纹跟随按下/抬起
                 when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { v.isPressed = true; haptic(v) }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.isPressed = false
+                    MotionEvent.ACTION_DOWN -> {
+                        if (isPassThroughActive) return@setOnTouchListener false
+                        v.isPressed = true
+                        haptic(v)
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (isPassThroughActive && !movingPanel && !resizingPanel) return@setOnTouchListener false
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        v.isPressed = false
+                    }
                 }
                 onTouch(v, e)
             }
@@ -1865,36 +2070,91 @@ class TouchpadService : AccessibilityService() {
         slot: Int,
         action: PadAction,
     ) {
-        val slop = dp(6).toFloat()
-        var downX = 0f
-        var downY = 0f
+        val slop = maxOf(cachedScaledTouchSlopPx, dp(8).toFloat())
+        var downRawX = 0f
+        var downRawY = 0f
+        var btnScreenLeft = 0
+        var btnScreenTop = 0
+        var btnWidth = 0
+        var btnHeight = 0
         var longPressFired = false
         var isDown = false
 
+        var cancelSelf: (() -> Unit)? = null
+
         val longPressRunnable = Runnable {
-            if (!isDown) return@Runnable
+            if (!isDown || isPassThroughActive || !button.isAttachedToWindow) return@Runnable
             longPressFired = true
             isDown = false
+            actionButtonDownCount = (actionButtonDownCount - 1).coerceAtLeast(0)
+            if (activeButtonCancelCallback === cancelSelf) {
+                activeButtonCancelCallback = null
+            }
             button.isPressed = false
-            if (cachedPressFeedback && !isPassThroughActive) {
+            if (cachedPressFeedback) {
                 PressFeedback.applyButtonRelease(button)
             }
             haptic(button)
             showActionPicker(slot, action)
         }
 
+        val resetState: (Boolean) -> Unit = { releaseVisual ->
+            button.removeCallbacks(longPressRunnable)
+            if (isDown) {
+                isDown = false
+                actionButtonDownCount = (actionButtonDownCount - 1).coerceAtLeast(0)
+            }
+            if (activeButtonCancelCallback === cancelSelf) {
+                activeButtonCancelCallback = null
+            }
+            longPressFired = false
+            button.isPressed = false
+            if (releaseVisual && cachedPressFeedback) {
+                PressFeedback.applyButtonRelease(button)
+            }
+        }
+        cancelSelf = { resetState(true) }
+
+        button.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+            override fun onViewDetachedFromWindow(v: View) {
+                resetState(false)
+            }
+        })
+
         button.setOnTouchListener { v, event ->
-            if (isPassThroughActive) return@setOnTouchListener false
-            val w = v.width.toFloat().coerceAtLeast(1f)
-            val h = v.height.toFloat().coerceAtLeast(1f)
+            if (isPassThroughActive) {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (isDown || v.isPressed) {
+                            resetState(true)
+                            flushPendingBoundsRebuild()
+                            return@setOnTouchListener true
+                        }
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (isDown) return@setOnTouchListener true
+                    }
+                }
+                return@setOnTouchListener false
+            }
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     syncScreenBoundsIfChanged(rebuildNow = false)
-                    isDown = true
+                    refreshPanelScreenLocation()
+                    btnScreenLeft = panelLocationOnScreen[0] + v.left
+                    btnScreenTop = panelLocationOnScreen[1] + v.top
+                    btnWidth = v.width
+                    btnHeight = v.height
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    if (!isDown) {
+                        isDown = true
+                        actionButtonDownCount++
+                    }
+                    activeButtonCancelCallback = cancelSelf
                     longPressFired = false
-                    downX = event.x
-                    downY = event.y
                     v.isPressed = true
                     v.drawableHotspotChanged(event.x, event.y)
                     if (cachedPressFeedback) {
@@ -1906,6 +2166,7 @@ class TouchpadService : AccessibilityService() {
                     }
                     if (prefs.longPressButtonToCustomize) {
                         val holdMs = prefs.buttonCustomizeHoldMs.toLong()
+                        v.removeCallbacks(longPressRunnable)
                         v.postDelayed(longPressRunnable, holdMs)
                     }
                     true
@@ -1913,9 +2174,15 @@ class TouchpadService : AccessibilityService() {
 
                 MotionEvent.ACTION_MOVE -> {
                     if (!isDown) return@setOnTouchListener true
-                    val dx = event.x - downX
-                    val dy = event.y - downY
-                    val inside = event.x in -slop..(w + slop) && event.y in -slop..(h + slop)
+                    val dx = event.rawX - downRawX
+                    val dy = event.rawY - downRawY
+                    // 使用未形变屏幕矩形 + 容差（或原地微动 <= slop），免疫 PressFeedback 下沉 3dp、3D 倾斜及展开缩放动画期间的坐标偏移
+                    val inside = isButtonReleaseWithinHitTarget(
+                        event.rawX, event.rawY,
+                        downRawX, downRawY,
+                        btnScreenLeft, btnScreenTop, btnWidth, btnHeight,
+                        slop,
+                    )
                     if (!inside || kotlin.math.hypot(dx, dy) > slop * 2f) {
                         v.removeCallbacks(longPressRunnable)
                         if (!inside) {
@@ -1938,18 +2205,31 @@ class TouchpadService : AccessibilityService() {
                 MotionEvent.ACTION_UP -> {
                     v.removeCallbacks(longPressRunnable)
                     val wasDown = isDown
-                    isDown = false
+                    val wasLongPressed = longPressFired
+                    if (isDown) {
+                        isDown = false
+                        actionButtonDownCount = (actionButtonDownCount - 1).coerceAtLeast(0)
+                    }
+                    if (activeButtonCancelCallback === cancelSelf) {
+                        activeButtonCancelCallback = null
+                    }
+                    longPressFired = false
                     v.isPressed = false
                     if (cachedPressFeedback) {
                         PressFeedback.applyButtonRelease(v)
                     }
-                    if (longPressFired) {
-                        longPressFired = false
+                    if (wasLongPressed) {
                         flushPendingBoundsRebuild()
                         return@setOnTouchListener true
                     }
                     if (wasDown) {
-                        val inside = event.x in 0f..w && event.y in 0f..h
+                        // 抬手同样采用未形变屏幕矩形 + 容差（或原地微动 <= slop），杜绝按在按键边缘或展开动画期被误判为出界而无响应
+                        val inside = isButtonReleaseWithinHitTarget(
+                            event.rawX, event.rawY,
+                            downRawX, downRawY,
+                            btnScreenLeft, btnScreenTop, btnWidth, btnHeight,
+                            slop,
+                        )
                         if (inside) {
                             v.performClick()
                             performAction(action)
@@ -1960,18 +2240,12 @@ class TouchpadService : AccessibilityService() {
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
-                    v.removeCallbacks(longPressRunnable)
-                    isDown = false
-                    longPressFired = false
-                    v.isPressed = false
-                    if (cachedPressFeedback) {
-                        PressFeedback.applyButtonRelease(v)
-                    }
+                    resetState(true)
                     flushPendingBoundsRebuild()
                     true
                 }
 
-                else -> false
+                else -> isDown
             }
         }
     }
@@ -2008,10 +2282,23 @@ class TouchpadService : AccessibilityService() {
      */
     private var padTouchIgnored = false
 
+    private fun cancelPadTouchState() {
+        val wasDown = padFingerDown
+        padFingerDown = false
+        padTouchIgnored = false
+        main.removeCallbacks(longPressRunnable)
+        swipeVelocityTracker.reset()
+        if (customSwipeArmed) touchRing?.release()
+        customSwipeArmed = false
+        if (wasDown && cachedPressFeedback) {
+            padArea?.let { pad -> PressFeedback.applyPadRelease(pad) }
+        }
+    }
+
     private fun handlePadTouch(e: MotionEvent) {
         if (isPassThroughActive) {
             if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
-                padFingerDown = false
+                cancelPadTouchState()
                 flushPendingBoundsRebuild()
             }
             return
@@ -2019,12 +2306,30 @@ class TouchpadService : AccessibilityService() {
         val slop = dp(6).toFloat()
         if (e.actionMasked == MotionEvent.ACTION_DOWN) {
             syncScreenBoundsIfChanged(rebuildNow = false)
+            refreshPanelScreenLocation()
             val pad = padArea
-            padTouchIgnored = pad != null && !insideTouchArea(
-                e.x, e.y, pad.width.toFloat(), pad.height.toFloat(), padCornerRadius,
+            val p = panel
+            val panelAtRestScale = p != null && abs(p.scaleX - 1f) < 0.01f && abs(p.scaleY - 1f) < 0.01f
+            val localX: Float
+            val localY: Float
+            val padW: Float
+            val padH: Float
+            if (padControlRect.w > 0 && padControlRect.h > 0 && panelAtRestScale) {
+                // 使用未形变底座坐标判定边缘死区，免疫上一笔松手 200ms 回弹动画期间的局部坐标偏移
+                localX = e.rawX - (panelLocationOnScreen[0] + padControlRect.x)
+                localY = e.rawY - (panelLocationOnScreen[1] + padControlRect.y)
+                padW = padControlRect.w.toFloat()
+                padH = padControlRect.h.toFloat()
+            } else {
+                localX = e.x
+                localY = e.y
+                padW = pad?.width?.toFloat() ?: 0f
+                padH = pad?.height?.toFloat() ?: 0f
+            }
+            padTouchIgnored = pad != null && padW > 0f && padH > 0f && !insideTouchArea(
+                localX, localY, padW, padH, padCornerRadius,
                 dp(cachedPadEdgeDeadZoneDp).toFloat(),
             )
-            refreshPanelScreenLocation()
         }
         if (padTouchIgnored) {
             if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
@@ -2081,6 +2386,7 @@ class TouchpadService : AccessibilityService() {
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (!padFingerDown) return
                 if (cachedPressFeedback) {
                     padArea?.let { pad ->
                         PressFeedback.applyPadMove(pad, normX, normY, resources.displayMetrics.density)
@@ -2112,6 +2418,7 @@ class TouchpadService : AccessibilityService() {
             }
 
             MotionEvent.ACTION_UP -> {
+                val wasDown = padFingerDown
                 padFingerDown = false
                 if (cachedPressFeedback) {
                     padArea?.let { pad ->
@@ -2125,6 +2432,11 @@ class TouchpadService : AccessibilityService() {
                     0f to 0f
                 }
                 swipeVelocityTracker.reset()
+                if (!wasDown) {
+                    customSwipeArmed = false
+                    flushPendingBoundsRebuild()
+                    return
+                }
                 val distance = kotlin.math.hypot(customSwipeEndX - customSwipeStartX, customSwipeEndY - customSwipeStartY)
                 if (dragging) {
                     // 拖拽锁定期间圆环继续跟着光标，等第二次按拖拽锁定再收缩
@@ -2154,16 +2466,7 @@ class TouchpadService : AccessibilityService() {
             }
 
             MotionEvent.ACTION_CANCEL -> {
-                padFingerDown = false
-                if (cachedPressFeedback) {
-                    padArea?.let { pad ->
-                        PressFeedback.applyPadRelease(pad)
-                    }
-                }
-                main.removeCallbacks(longPressRunnable)
-                swipeVelocityTracker.reset()
-                if (customSwipeArmed) touchRing?.release()
-                customSwipeArmed = false
+                cancelPadTouchState()
                 flushPendingBoundsRebuild()
             }
         }
@@ -2404,16 +2707,18 @@ class TouchpadService : AccessibilityService() {
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                movingPanel = false
-                movePendingDx = 0f
-                movePendingDy = 0f
-                moveSmoothedVx = 0f
-                moveSmoothedVy = 0f
-                flushPendingLayoutsNow()
-                panelParams?.let { lp ->
-                    prefs.setPadPosition(isLandscape(), lp.x, lp.y)
+                if (movingPanel) {
+                    movingPanel = false
+                    movePendingDx = 0f
+                    movePendingDy = 0f
+                    moveSmoothedVx = 0f
+                    moveSmoothedVy = 0f
+                    flushPendingLayoutsNow()
+                    panelParams?.let { lp ->
+                        prefs.setPadPosition(isLandscape(), lp.x, lp.y)
+                    }
+                    startPanelDeformationLoop()
                 }
-                startPanelDeformationLoop()
                 flushPendingBoundsRebuild()
             }
         }
@@ -2544,15 +2849,41 @@ class TouchpadService : AccessibilityService() {
         anim.start()
     }
 
+    private fun cancelBallTouchState() {
+        main.removeCallbacks(ballLongPressRunnable)
+        main.removeCallbacks(ballSingleTapRunnable)
+        flushPendingLayoutsNow()
+        ballTouchDown = false
+        isWaitingForBallDoubleTap = false
+        ballDoubleTapArmed = false
+        ballSwipeTracker.reset()
+        resetBallDeformation(animated = true, duration = 180L)
+        if (isDraggingBall) {
+            isDraggingBall = false
+            ballDragLastTimeNs = 0L
+            ballDragHoverSettled = true
+            ballBgView?.animate()?.cancel()
+            ballIconView?.animate()?.cancel()
+            ballBgView?.animate()?.rotation(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(180)?.start()
+            ballIconView?.animate()?.translationX(0f)?.translationY(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(180)?.start()
+            keepBallInBounds()
+        } else {
+            snapBallBackToAnchor()
+        }
+        ballLongPressTriggered = false
+        ballMoved = false
+    }
+
     /**
      * 关闭悬浮球手势时的极简模式：
      * - 点击悬浮球直接展开触控板（0ms 延迟，无需等待双击超时）；
      * - 拖动悬浮球直接实时移动位置（无需长按触发，无阻尼手势判定与误触发）。
      */
     private fun handleSimpleBallTouch(v: View, e: MotionEvent): Boolean {
-        val slop = dp(6).toFloat()
+        val slop = resolveBallTapSlopPx(cachedScaledTouchSlopPx, dp(10).toFloat())
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                ballTouchDown = true
                 ballSnapAnimator?.cancel()
                 ballSnapAnimator = null
                 resetBallDeformation(animated = false)
@@ -2564,6 +2895,7 @@ class TouchpadService : AccessibilityService() {
                 ballDragStartY = panelParams?.y ?: prefs.getBallY(land).coerceAtLeast(0)
             }
             MotionEvent.ACTION_MOVE -> {
+                if (!ballTouchDown) return true
                 val dx = e.rawX - ballFromX
                 val dy = e.rawY - ballFromY
                 if (!ballMoved && kotlin.math.hypot(dx, dy) >= slop) {
@@ -2584,16 +2916,23 @@ class TouchpadService : AccessibilityService() {
                 }
             }
             MotionEvent.ACTION_UP -> {
+                val wasDown = ballTouchDown
+                ballTouchDown = false
                 flushPendingLayoutsNow()
-                if (!ballMoved) {
-                    haptic()
-                    toggleMinimize()
-                } else {
-                    keepBallInBounds()
+                if (wasDown) {
+                    if (!ballMoved) {
+                        haptic()
+                        toggleMinimize()
+                    } else {
+                        keepBallInBounds()
+                    }
                 }
+                ballMoved = false
                 flushPendingBoundsRebuild()
             }
             MotionEvent.ACTION_CANCEL -> {
+                ballTouchDown = false
+                ballMoved = false
                 flushPendingLayoutsNow()
                 keepBallInBounds()
                 flushPendingBoundsRebuild()
@@ -2603,7 +2942,21 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun handleBallTouch(v: View, e: MotionEvent): Boolean {
-        if (isPassThroughActive) return false
+        if (isPassThroughActive) {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (ballTouchDown || isDraggingBall || ballLongPressTriggered || isWaitingForBallDoubleTap || ballDoubleTapArmed) {
+                        cancelBallTouchState()
+                        flushPendingBoundsRebuild()
+                        return true
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (ballTouchDown) return true
+                }
+            }
+            return false
+        }
         if (e.actionMasked == MotionEvent.ACTION_DOWN) {
             syncScreenBoundsIfChanged(rebuildNow = false)
         }
@@ -2612,6 +2965,7 @@ class TouchpadService : AccessibilityService() {
         }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                ballTouchDown = true
                 ballSnapAnimator?.cancel()
                 ballSnapAnimator = null
                 resetBallDeformation(animated = false)
@@ -2650,19 +3004,31 @@ class TouchpadService : AccessibilityService() {
                 ballX = ballAnchorX
                 ballY = ballAnchorY
 
-                // 若之前在等待双击的单击超时，在第二次按下时立即移除单击任务，避免双击误触发单次操作
+                // 在第二次 ACTION_DOWN 就锁定双击资格并取消第一次单击超时，避免抬手稍慢或微抖导致双击失效
+                val downNow = SystemClock.uptimeMillis()
+                ballDoubleTapArmed = isBallSecondTapDownWithinWindow(
+                    isWaitingForDoubleTap = isWaitingForBallDoubleTap,
+                    lastTapUpMs = lastBallTapTime,
+                    secondTapDownMs = downNow,
+                    timeoutMs = BALL_DOUBLE_TAP_TIMEOUT_MS,
+                    graceMs = BALL_DOUBLE_TAP_GRACE_MS,
+                )
                 if (isWaitingForBallDoubleTap) {
                     main.removeCallbacks(ballSingleTapRunnable)
+                    isWaitingForBallDoubleTap = false
                 }
                 main.removeCallbacks(ballLongPressRunnable)
                 val holdDuration = resolveBallLongPressHoldMs(prefs.ballLongPressMs)
                 main.postDelayed(ballLongPressRunnable, holdDuration)
             }
             MotionEvent.ACTION_MOVE -> {
+                if (!ballTouchDown) return true
                 val dx = e.rawX - ballFromX
                 val dy = e.rawY - ballFromY
                 val dist = kotlin.math.hypot(dx, dy)
-                val slop = dp(6).toFloat()
+                val rawSlop = resolveBallTapSlopPx(cachedScaledTouchSlopPx, dp(10).toFloat())
+                val swipeThreshold = ballSwipeTracker.swipeThresholdPx
+                val slop = if (swipeThreshold > 0f) minOf(rawSlop, swipeThreshold * 0.8f) else rawSlop
 
                 if (shouldCancelBallLongPress(dist, slop) && !ballMoved) {
                     ballMoved = true
@@ -2768,7 +3134,14 @@ class TouchpadService : AccessibilityService() {
             }
             MotionEvent.ACTION_UP -> {
                 main.removeCallbacks(ballLongPressRunnable)
+                val wasDown = ballTouchDown
+                ballTouchDown = false
                 flushPendingLayoutsNow()
+                if (!wasDown) {
+                    ballDoubleTapArmed = false
+                    flushPendingBoundsRebuild()
+                    return true
+                }
                 val dx = e.rawX - ballFromX
                 val dy = e.rawY - ballFromY
                 val dist = kotlin.math.hypot(dx, dy)
@@ -2776,6 +3149,8 @@ class TouchpadService : AccessibilityService() {
 
                 if (isDraggingBall) {
                     isDraggingBall = false
+                    isWaitingForBallDoubleTap = false
+                    ballDoubleTapArmed = false
                     ballDragLastTimeNs = 0L
                     ballDragHoverSettled = true
                     ballBgView?.animate()?.cancel()
@@ -2797,15 +3172,19 @@ class TouchpadService : AccessibilityService() {
                     keepBallInBounds()
                 } else if (ballLongPressTriggered) {
                     ballLongPressTriggered = false
+                    isWaitingForBallDoubleTap = false
+                    ballDoubleTapArmed = false
                     snapBallBackToAnchor()
                 } else if (ballSwipeTracker.isCancelledByReturn) {
                     // 用户拖回中心打断手势：不触发滑动动作，也不触发点击，平滑复位
                     main.removeCallbacks(ballSingleTapRunnable)
                     isWaitingForBallDoubleTap = false
+                    ballDoubleTapArmed = false
                     snapBallBackToAnchor()
                 } else if (ballSwipeTracker.hasArmedSwipe || dist >= swipeThreshold) {
                     main.removeCallbacks(ballSingleTapRunnable)
                     isWaitingForBallDoubleTap = false
+                    ballDoubleTapArmed = false
 
                     val dir = resolveSwipeDirection(dx, dy)
                     val act = resolveBallSwipeAction(
@@ -2820,7 +3199,27 @@ class TouchpadService : AccessibilityService() {
                         haptic()
                         performAction(act, withHaptic = false)
                     }
+                } else if (
+                    shouldTreatBallReleaseAsDoubleTap(
+                        doubleTapArmed = ballDoubleTapArmed,
+                        hasArmedSwipe = ballSwipeTracker.hasArmedSwipe,
+                        isCancelledByReturn = ballSwipeTracker.isCancelledByReturn,
+                        distPx = dist,
+                        swipeThresholdPx = swipeThreshold,
+                    )
+                ) {
+                    // 第二次点击抬起（已锁定双击且未达到滑动阈值）：立即震动并触发双击动作
+                    ballDoubleTapArmed = false
+                    main.removeCallbacks(ballSingleTapRunnable)
+                    isWaitingForBallDoubleTap = false
+                    snapBallBackToAnchor()
+                    val doubleAction = prefs.ballActionDoubleTap
+                    if (doubleAction != PadAction.NONE) {
+                        haptic()
+                        performAction(doubleAction, withHaptic = false)
+                    }
                 } else if (!ballMoved) {
+                    ballDoubleTapArmed = false
                     snapBallBackToAnchor()
                     val doubleAction = prefs.ballActionDoubleTap
                     if (doubleAction == PadAction.NONE) {
@@ -2831,25 +3230,16 @@ class TouchpadService : AccessibilityService() {
                             performAction(act, withHaptic = false)
                         }
                     } else {
-                        val now = SystemClock.uptimeMillis()
-                        val doubleTapTimeout = 190L
-                        if (isWaitingForBallDoubleTap && (now - lastBallTapTime < 350L)) {
-                            // 第二次点击抬起：立即震动并触发双击动作
-                            main.removeCallbacks(ballSingleTapRunnable)
-                            isWaitingForBallDoubleTap = false
-                            haptic()
-                            performAction(doubleAction, withHaptic = false)
-                        } else {
-                            // 第一次点击抬起：立即震动反馈（0ms 消除感知延迟），启动紧凑双击等待
-                            haptic()
-                            lastBallTapTime = now
-                            isWaitingForBallDoubleTap = true
-                            main.removeCallbacks(ballSingleTapRunnable)
-                            main.postDelayed(ballSingleTapRunnable, doubleTapTimeout)
-                        }
+                        // 第一次点击抬起：立即震动反馈（0ms 消除感知延迟），启动双击等待窗口
+                        haptic()
+                        lastBallTapTime = SystemClock.uptimeMillis()
+                        isWaitingForBallDoubleTap = true
+                        main.removeCallbacks(ballSingleTapRunnable)
+                        main.postDelayed(ballSingleTapRunnable, BALL_DOUBLE_TAP_TIMEOUT_MS)
                     }
                 } else {
                     // 微小拖动但未达到滑动阈值，不派发点击，平滑复位
+                    ballDoubleTapArmed = false
                     main.removeCallbacks(ballSingleTapRunnable)
                     isWaitingForBallDoubleTap = false
                     snapBallBackToAnchor()
@@ -2857,26 +3247,7 @@ class TouchpadService : AccessibilityService() {
                 flushPendingBoundsRebuild()
             }
             MotionEvent.ACTION_CANCEL -> {
-                main.removeCallbacks(ballLongPressRunnable)
-                main.removeCallbacks(ballSingleTapRunnable)
-                flushPendingLayoutsNow()
-                isWaitingForBallDoubleTap = false
-                ballSwipeTracker.reset()
-                resetBallDeformation(animated = true, duration = 180L)
-                if (isDraggingBall) {
-                    isDraggingBall = false
-                    ballDragLastTimeNs = 0L
-                    ballDragHoverSettled = true
-                    ballBgView?.animate()?.cancel()
-                    ballIconView?.animate()?.cancel()
-                    ballBgView?.animate()?.rotation(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(180)?.start()
-                    ballIconView?.animate()?.translationX(0f)?.translationY(0f)?.scaleX(1f)?.scaleY(1f)?.setDuration(180)?.start()
-                    keepBallInBounds()
-                } else {
-                    snapBallBackToAnchor()
-                }
-                ballLongPressTriggered = false
-                ballMoved = false
+                cancelBallTouchState()
                 flushPendingBoundsRebuild()
             }
         }
@@ -2918,30 +3289,57 @@ class TouchpadService : AccessibilityService() {
 
     // ───────────────────────── 手势注入与队列 ─────────────────────────
 
-    private data class QueuedGesture(
+    private class QueuedGesture(
         val gesture: GestureDescription,
-        val needsPassThrough: Boolean,
+        val checkPoints: FloatArray,
         val expectedMs: Long = 500L,
         val keepPassThroughAfterComplete: Boolean = false,
+        val isContinuation: Boolean = false,
         val onComplete: (() -> Unit)? = null,
     )
 
     private var isDispatching = false
+    private var gestureDispatchGen = 0L
+    private var passThroughSynced = false
     private val gestureQueue = ArrayDeque<QueuedGesture>()
-
-    private val restoreTouchRunnable = Runnable {
-        isPassThroughActive = false
-        setOverlayTouchable(true)
-    }
 
     /** 具名可取消的 20ms 延迟恢复任务，杜绝连续穿透点击时前一次恢复覆盖下一次穿透态。 */
     private val delayedRestoreTouchRunnable = Runnable {
         setOverlayTouchable(true)
+        flushPendingBoundsRebuild()
     }
 
     private var pendingPassThroughDispatchRunnable: Runnable? = null
+    private var activeGestureWatchdogRunnable: Runnable? = null
+
+    private fun cancelGestureWatchdog() {
+        activeGestureWatchdogRunnable?.let { main.removeCallbacks(it) }
+        activeGestureWatchdogRunnable = null
+    }
+
+    private fun resetGestureDispatchState(clearQueue: Boolean) {
+        gestureDispatchGen++
+        pendingPassThroughDispatchRunnable?.let { main.removeCallbacks(it) }
+        pendingPassThroughDispatchRunnable = null
+        cancelGestureWatchdog()
+        main.removeCallbacks(delayedRestoreTouchRunnable)
+        passThroughSynced = false
+        isDispatching = false
+        if (clearQueue) {
+            gestureQueue.clear()
+        }
+        setOverlayTouchable(true)
+    }
 
     private fun setOverlayTouchable(touchable: Boolean) {
+        if (touchable) {
+            passThroughSynced = false
+        } else if (!isPassThroughActive) {
+            // 切入穿透态瞬间主动取消当前活跃的按钮/触控板/悬浮球长按计时，防止被穿透吞掉抬手事件后延迟误弹 ActionPicker 或误触发长按
+            activeButtonCancelCallback?.invoke()
+            main.removeCallbacks(longPressRunnable)
+            main.removeCallbacks(ballLongPressRunnable)
+        }
         // 先同步拦截标记：即使此刻没有面板窗口（收起且隐藏悬浮球 / 横屏隐藏），恢复时也要清掉，
         // 否则之后重建出来的面板会一直处于「穿透中」而忽略所有触摸。
         isPassThroughActive = !touchable
@@ -2961,68 +3359,157 @@ class TouchpadService : AccessibilityService() {
         val w = if (p.width > 0) p.width else lp.width
         val h = if (p.height > 0) p.height else lp.height
         refreshPanelScreenLocation()
-        return isPointInsideRect(x, y, panelLocationOnScreen[0], panelLocationOnScreen[1], w, h)
+        return isPointInsidePanelBounds(
+            px = x,
+            py = y,
+            screenX = panelLocationOnScreen[0],
+            screenY = panelLocationOnScreen[1],
+            paramX = lp.x,
+            paramY = lp.y,
+            width = w,
+            height = h,
+            marginPx = 2f,
+        )
+    }
+
+    private fun isAnyPointInsidePanel(points: FloatArray): Boolean {
+        if (panel == null || panelParams == null || points.size < 2) return false
+        var i = 0
+        while (i + 1 < points.size) {
+            if (isPointInsidePanel(points[i], points[i + 1])) return true
+            i += 2
+        }
+        return false
     }
 
     /**
      * 顺序派发注入手势：
-     * 1. 仅当光标位于触控板面板范围内时才短暂切换 FLAG_NOT_TOUCHABLE，让光标能精准点击触控板下层内容；
-     * 2. 穿透期间锁定 isPassThroughActive 状态，触控板按钮、把手与触控板自身全面拦截任何点击与触摸反馈，彻底杜绝误触；
+     * 1. 仅当光标位于触控板面板范围内时才短暂切换 FLAG_NOT_TOUCHABLE，且在真正派发时按当前面板实时判定，避免对已切换的悬浮球误设穿透；
+     * 2. 穿透期间锁定 isPassThroughActive 状态，触控板按钮、把手与触控板自身全面拦截任何新触摸并安全清理残留按压状态，彻底杜绝误触；
      * 3. 光标在面板外部（绝大多数常规操作场景）时，面板始终保持可触摸状态，快速连续点击绝不会击穿面板触发底层内容；
-     * 4. 使用手势队列串行化派发，并取消上一笔延迟恢复回调，彻底消除快速连续穿透点击时的状态竞态与续接手势空等。
+     * 4. 所有手势均受单调代数 gestureDispatchGen 与统一看门狗保护，即使系统丢回调或窗口重建也绝不发生 isDispatching 永久死锁。
      */
     private fun dispatch(
         gesture: GestureDescription,
-        needsPassThrough: Boolean = false,
+        checkPoints: FloatArray,
         expectedMs: Long = 500L,
         keepPassThroughAfterComplete: Boolean = false,
         onComplete: (() -> Unit)? = null,
     ) {
-        gestureQueue.addLast(QueuedGesture(gesture, needsPassThrough, expectedMs, keepPassThroughAfterComplete, onComplete))
+        if (gestureQueue.size >= MAX_GESTURE_QUEUE_SIZE) {
+            val dropIdx = gestureQueue.indexOfFirst { !it.isContinuation }
+            if (dropIdx >= 0) {
+                gestureQueue.removeAt(dropIdx)
+            } else {
+                gestureQueue.removeFirstOrNull()
+            }
+        }
+        gestureQueue.addLast(
+            QueuedGesture(
+                gesture = gesture,
+                checkPoints = checkPoints,
+                expectedMs = expectedMs,
+                keepPassThroughAfterComplete = keepPassThroughAfterComplete,
+                isContinuation = false,
+                onComplete = onComplete,
+            ),
+        )
+        drainGestureQueue()
+    }
+
+    /** 拖拽续接（continueStroke）必须紧跟在 holdStroke 之后立即派发，绝不可被排队手势插队导致穿透态泄漏或断触。 */
+    private fun dispatchFront(
+        gesture: GestureDescription,
+        checkPoints: FloatArray,
+        expectedMs: Long = 500L,
+    ) {
+        gestureQueue.addFirst(
+            QueuedGesture(
+                gesture = gesture,
+                checkPoints = checkPoints,
+                expectedMs = expectedMs,
+                keepPassThroughAfterComplete = false,
+                isContinuation = true,
+                onComplete = null,
+            ),
+        )
         drainGestureQueue()
     }
 
     private fun drainGestureQueue() {
         if (isDispatching) return
-        val item = gestureQueue.removeFirstOrNull() ?: return
+        val item = gestureQueue.removeFirstOrNull() ?: run {
+            flushPendingBoundsRebuild()
+            return
+        }
         isDispatching = true
+        val gen = ++gestureDispatchGen
 
-        if (item.needsPassThrough && panel != null && panelParams != null) {
-            // 取消上一笔手势可能尚未执行的 20ms 恢复回调与兜底定时，杜绝恢复竞态
+        val needsPassThroughNow = isAnyPointInsidePanel(item.checkPoints)
+
+        // 统一看门狗保护（覆盖穿透与直发两条路径）：若系统异常丢弃 GestureResultCallback，到期自动解锁队列并恢复面板可触摸
+        cancelGestureWatchdog()
+        val watchdogTimeout = resolveGestureWatchdogTimeoutMs(
+            expectedMs = item.expectedMs,
+            needsPassThrough = needsPassThroughNow,
+            passThroughDelayMs = OVERLAY_PASS_THROUGH_DELAY_MS,
+        )
+        val watchdog = Runnable {
+            if (gestureDispatchGen != gen) return@Runnable
+            activeGestureWatchdogRunnable = null
+            pendingPassThroughDispatchRunnable?.let { main.removeCallbacks(it) }
+            pendingPassThroughDispatchRunnable = null
             main.removeCallbacks(delayedRestoreTouchRunnable)
-            main.removeCallbacks(restoreTouchRunnable)
+            isDispatching = false
+            setOverlayTouchable(true)
+            drainGestureQueue()
+        }
+        activeGestureWatchdogRunnable = watchdog
+        main.postDelayed(watchdog, watchdogTimeout)
+
+        if (needsPassThroughNow && panel != null && panelParams != null) {
+            // 取消上一笔手势可能尚未执行的 20ms 恢复回调与等待派发任务，杜绝恢复竞态
+            main.removeCallbacks(delayedRestoreTouchRunnable)
             pendingPassThroughDispatchRunnable?.let { main.removeCallbacks(it) }
             pendingPassThroughDispatchRunnable = null
 
-            val alreadyNonTouchable = isPassThroughActive &&
+            // 仅当上一次 FLAG_NOT_TOUCHABLE 已完成 50ms 窗口同步且仍处于穿透态时才可跳过等待
+            val alreadySyncedNonTouchable = passThroughSynced &&
+                isPassThroughActive &&
                 ((panelParams?.flags ?: 0) and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0
             setOverlayTouchable(false)
-            // 兜底保护：手势预期耗时 + 1.5 秒后无论如何恢复面板可触摸，防止异常时卡在不可触摸状态
-            val fallbackTimeout = maxOf(3000L, item.expectedMs + 1500L)
-            main.postDelayed(restoreTouchRunnable, fallbackTimeout)
 
             val runDispatch = Runnable {
+                if (gestureDispatchGen != gen) return@Runnable
                 pendingPassThroughDispatchRunnable = null
+                passThroughSynced = isPassThroughActive
                 val ok = runCatching {
                     dispatchGesture(item.gesture, object : GestureResultCallback() {
                         override fun onCompleted(gestureDescription: GestureDescription?) {
-                            main.removeCallbacks(restoreTouchRunnable)
-                            val nextNeedsPassThrough = gestureQueue.firstOrNull()?.needsPassThrough == true
-                            if (!item.keepPassThroughAfterComplete && !nextNeedsPassThrough) {
+                            if (gestureDispatchGen != gen) return
+                            cancelGestureWatchdog()
+                            isDispatching = false
+                            runCatching { item.onComplete?.invoke() }
+                            if (gestureDispatchGen != gen) return
+                            if (gestureQueue.isNotEmpty() && !isDispatching) {
+                                drainGestureQueue()
+                            }
+                            if (gestureDispatchGen != gen || isDispatching) return
+                            if (item.keepPassThroughAfterComplete) {
+                                // 续接回调未能启动下一笔手势：立即恢复可触摸，杜绝穿透态残留
+                                main.removeCallbacks(delayedRestoreTouchRunnable)
+                                setOverlayTouchable(true)
+                                flushPendingBoundsRebuild()
+                            } else {
                                 // 延迟 20ms 恢复可触摸，确保注入手势的 UP 事件在底层应用中完全处理完毕
                                 main.removeCallbacks(delayedRestoreTouchRunnable)
                                 main.postDelayed(delayedRestoreTouchRunnable, 20L)
                             }
-                            isDispatching = false
-                            runCatching { item.onComplete?.invoke() }
-                            drainGestureQueue()
-                            if (item.keepPassThroughAfterComplete && !isDispatching && gestureQueue.isEmpty()) {
-                                setOverlayTouchable(true)
-                            }
                         }
 
                         override fun onCancelled(gestureDescription: GestureDescription?) {
-                            main.removeCallbacks(restoreTouchRunnable)
+                            if (gestureDispatchGen != gen) return
+                            cancelGestureWatchdog()
                             main.removeCallbacks(delayedRestoreTouchRunnable)
                             setOverlayTouchable(true)
                             isDispatching = false
@@ -3030,8 +3517,8 @@ class TouchpadService : AccessibilityService() {
                         }
                     }, main)
                 }.getOrDefault(false)
-                if (!ok) {
-                    main.removeCallbacks(restoreTouchRunnable)
+                if (!ok && gestureDispatchGen == gen) {
+                    cancelGestureWatchdog()
                     main.removeCallbacks(delayedRestoreTouchRunnable)
                     setOverlayTouchable(true)
                     isDispatching = false
@@ -3039,31 +3526,41 @@ class TouchpadService : AccessibilityService() {
                 }
             }
 
-            if (shouldSkipPassThroughDelay(alreadyNonTouchable)) {
-                // 面板已处于 FLAG_NOT_TOUCHABLE（例如拖拽 continueStroke 续接或连续穿透点击），立即派发零间隙
+            if (shouldSkipPassThroughDelay(alreadySyncedNonTouchable)) {
+                // 面板已处于同步完成的 FLAG_NOT_TOUCHABLE（例如拖拽 continueStroke 续接或连续穿透点击），立即派发零间隙
                 runDispatch.run()
             } else {
                 pendingPassThroughDispatchRunnable = runDispatch
                 main.postDelayed(runDispatch, OVERLAY_PASS_THROUGH_DELAY_MS)
             }
         } else {
-            // 光标在触控板外部，直接派发手势。面板始终保持可触摸，绝不设置 FLAG_NOT_TOUCHABLE，
-            // 彻底杜绝快速连续点击时物理手指穿透面板触发底层内容。
+            // 光标在触控板外部，直接派发手势；若上一笔遗留了穿透恢复计时，立即恢复可触摸，
+            // 绝不在直发手势期间保持 FLAG_NOT_TOUCHABLE。
+            if (isPassThroughActive) {
+                main.removeCallbacks(delayedRestoreTouchRunnable)
+                setOverlayTouchable(true)
+            }
             val ok = runCatching {
                 dispatchGesture(item.gesture, object : GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
+                        if (gestureDispatchGen != gen) return
+                        cancelGestureWatchdog()
                         isDispatching = false
                         runCatching { item.onComplete?.invoke() }
+                        if (gestureDispatchGen != gen || isDispatching) return
                         drainGestureQueue()
                     }
 
                     override fun onCancelled(gestureDescription: GestureDescription?) {
+                        if (gestureDispatchGen != gen) return
+                        cancelGestureWatchdog()
                         isDispatching = false
                         drainGestureQueue()
                     }
                 }, main)
             }.getOrDefault(false)
-            if (!ok) {
+            if (!ok && gestureDispatchGen == gen) {
+                cancelGestureWatchdog()
                 isDispatching = false
                 drainGestureQueue()
             }
@@ -3074,13 +3571,12 @@ class TouchpadService : AccessibilityService() {
         val sx = clampGestureCoord(x, screenW)
         val sy = clampGestureCoord(y, screenH)
         if (showFeedbackRing) showTouchRing(sx, sy, ms)
-        val overPanel = isPointInsidePanel(sx, sy)
         val path = Path().apply { moveTo(sx, sy) }
         dispatch(
             GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
                 .build(),
-            needsPassThrough = overPanel,
+            checkPoints = floatArrayOf(sx, sy),
             expectedMs = ms,
         )
     }
@@ -3111,9 +3607,12 @@ class TouchpadService : AccessibilityService() {
             screenHeight = screenH,
         ) ?: return
 
-        val overPanel = isPointInsidePanel(plan.startX, plan.startY) ||
-            isPointInsidePanel(plan.endX, plan.endY) ||
-            isPointInsidePanel(plan.targetX, plan.targetY)
+        val checkPoints = floatArrayOf(
+            plan.startX, plan.startY,
+            (plan.startX + plan.endX) * 0.5f, (plan.startY + plan.endY) * 0.5f,
+            plan.endX, plan.endY,
+            plan.targetX, plan.targetY,
+        )
 
         val path = Path().apply {
             moveTo(plan.startX, plan.startY)
@@ -3129,7 +3628,7 @@ class TouchpadService : AccessibilityService() {
             GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, plan.durationMs))
                 .build(),
-            needsPassThrough = overPanel,
+            checkPoints = checkPoints,
             expectedMs = plan.durationMs,
         )
         haptic()
@@ -3140,7 +3639,6 @@ class TouchpadService : AccessibilityService() {
         val y0 = clampGestureCoord(cursorY, screenH)
         val x1 = clampGestureCoord(x0 + dx, screenW)
         val y1 = clampGestureCoord(y0 + dy, screenH)
-        val overPanel = isPointInsidePanel(x0, y0) || isPointInsidePanel(x1, y1)
         val path = Path().apply {
             moveTo(x0, y0)
             lineTo(x1, y1)
@@ -3149,7 +3647,7 @@ class TouchpadService : AccessibilityService() {
             GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
                 .build(),
-            needsPassThrough = overPanel,
+            checkPoints = floatArrayOf(x0, y0, (x0 + x1) * 0.5f, (y0 + y1) * 0.5f, x1, y1),
             expectedMs = ms,
         )
     }
@@ -3189,9 +3687,11 @@ class TouchpadService : AccessibilityService() {
         if (trailLength(trail) < dp(8)) return
         val startX = clampGestureCoord(start.x, screenW)
         val startY = clampGestureCoord(start.y, screenH)
-        val endX = clampGestureCoord(cursorX, screenW)
-        val endY = clampGestureCoord(cursorY, screenH)
-        val overPanel = isPointInsidePanel(startX, startY) || isPointInsidePanel(endX, endY)
+        val dragPoints = FloatArray(trail.size * 2)
+        trail.forEachIndexed { idx, pt ->
+            dragPoints[idx * 2] = clampGestureCoord(pt.x, screenW)
+            dragPoints[idx * 2 + 1] = clampGestureCoord(pt.y, screenH)
+        }
         val hold = prefs.cursorHoldMs.toLong()
         val moveMs = dragMoveDurationMs(trailLength(trail))
         val holdPath = Path().apply { moveTo(startX, startY) }
@@ -3208,20 +3708,20 @@ class TouchpadService : AccessibilityService() {
             dispatch(
                 GestureDescription.Builder()
                     .addStroke(GestureDescription.StrokeDescription(movePath, 0, hold + moveMs)).build(),
-                needsPassThrough = overPanel,
+                checkPoints = dragPoints,
                 expectedMs = hold + moveMs,
             )
             return
         }
         dispatch(
             GestureDescription.Builder().addStroke(holdStroke).build(),
-            needsPassThrough = overPanel,
+            checkPoints = dragPoints,
             expectedMs = hold,
             keepPassThroughAfterComplete = true,
         ) {
-            dispatch(
+            dispatchFront(
                 GestureDescription.Builder().addStroke(moveStroke).build(),
-                needsPassThrough = overPanel,
+                checkPoints = dragPoints,
                 expectedMs = moveMs,
             )
         }
