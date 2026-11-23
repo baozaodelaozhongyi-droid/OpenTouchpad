@@ -28,7 +28,11 @@ class TouchRingView(context: Context) : View(context) {
     private val blurPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
 
     var accent: Int = 0xFFC96442.toInt()
-        set(value) { field = value; invalidate() }
+        set(value) {
+            if (field == value) return
+            field = value
+            if (phase != Phase.IDLE) invalidate()
+        }
 
     /** 完全展开时的外半径（px）。 */
     var maxRadius = 0f
@@ -49,11 +53,25 @@ class TouchRingView(context: Context) : View(context) {
     init {
         background = null
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        visibility = View.INVISIBLE
+    }
+
+    private fun ensureVisible() {
+        if (visibility != View.VISIBLE) {
+            visibility = View.VISIBLE
+        }
+    }
+
+    private fun hideWhenIdle() {
+        if (visibility != View.INVISIBLE) {
+            visibility = View.INVISIBLE
+        }
     }
 
     /** 点击：展开 → 停留 → 收缩淡出。 */
     fun tap() {
         restartFromZero()
+        ensureVisible()
         expand(EXPAND_MS, thenHoldMs = TAP_HOLD_MS)
     }
 
@@ -65,6 +83,7 @@ class TouchRingView(context: Context) : View(context) {
         val from = if (phase == Phase.EXPANDING || phase == Phase.HOLDING) progress else 0f
         stopAnimation()
         progress = from
+        ensureVisible()
         val hold = holdMs.coerceAtLeast(EXPAND_MS)
         val expandMs = (hold * (1f - from)).toLong()
         expand(expandMs, thenHoldMs = hold - expandMs)
@@ -73,15 +92,8 @@ class TouchRingView(context: Context) : View(context) {
     /** 展开后保持，直到调用 [release]。 */
     fun pressUntilRelease() {
         restartFromZero()
+        ensureVisible()
         expand(EXPAND_MS, thenHoldMs = -1L)
-    }
-
-    /** 直接显示为完全展开并保持（不播展开动画），直到 [release]。面板重建后恢复拖拽锁定圆环用。 */
-    fun holdExpanded() {
-        stopAnimation()
-        progress = 1f
-        phase = Phase.HOLDING
-        invalidate()
     }
 
     /** 松开：从当前大小向内收缩并淡出。 */
@@ -94,6 +106,7 @@ class TouchRingView(context: Context) : View(context) {
         stopAnimation()
         phase = Phase.IDLE
         progress = 0f
+        hideWhenIdle()
         invalidate()
     }
 
@@ -166,6 +179,7 @@ class TouchRingView(context: Context) : View(context) {
                     phase = Phase.IDLE
                     progress = 0f
                     animator = null
+                    hideWhenIdle()
                     invalidate()
                 }
             })
@@ -197,33 +211,37 @@ class TouchRingView(context: Context) : View(context) {
         val cx = width / 2f
         val cy = height / 2f
 
-        // ── 动态模糊计算 (Motion Blur Calculation) ──
-        val blurParams = calculateTouchRingMotionBlur(
-            isExpanding = expanding,
-            isCollapsing = collapsing,
-            progress = progress,
-            collapseFromProgress = collapseFromProgress,
-            baseAlpha = alpha,
-            maxRadius = maxRadius,
-            strokeWidthPx = strokeWidthPx,
-            density = resources.displayMetrics.density,
-        )
+        // ── 动态模糊计算（与 calculateTouchRingMotionBlur 公式严格一致，热路径零对象分配）──
+        var blurSpeed = 0f
+        var blurAlpha = 0f
+        var lag = 0f
+        var sigma = 0f
+        if (expanding || collapsing) {
+            val safeProgress = progress.coerceIn(0f, 1f)
+            val rawSpeed = if (expanding) {
+                Math.pow((1f - safeProgress).toDouble(), 0.7).toFloat().coerceIn(0f, 1f)
+            } else {
+                val safeCollapseFrom = collapseFromProgress.coerceIn(0.01f, 1f)
+                val s = (1f - safeProgress / safeCollapseFrom).coerceIn(0f, 1f)
+                Math.pow((1f - s).toDouble(), 0.7).toFloat().coerceIn(0f, 1f)
+            }
+            if (rawSpeed > 0.02f) {
+                blurSpeed = rawSpeed
+                val safeDensity = resources.displayMetrics.density.coerceAtLeast(1f)
+                sigma = (strokeWidthPx * 1.5f + 2f * safeDensity) * rawSpeed
+                lag = (strokeWidthPx * 0.8f + maxRadius * 0.12f) * rawSpeed
+                blurAlpha = (alpha * rawSpeed * 0.72f).coerceIn(0f, 1f)
+            }
+        }
 
         // ── 硬件加速高斯动态模糊与径向拖尾层 (Gaussian Motion Blur Layer) ──
-        // 仅在动速 > 0 时激活，使用多级高斯柔光卷积叠加，呈现与 v0.5.52 相同的高级发光与羽化感，
-        // 纯硬件加速直接绘制，仅对描边环体采样，绝不画全填充模糊圆盘，彻底消除多余图层与方框暗影。
-        if (blurParams.speed > 0.02f && blurParams.blurAlpha > 0.01f) {
-            val speed = blurParams.speed
-            val blurAlpha = blurParams.blurAlpha
-            val lag = blurParams.trailLag
-            val sigma = blurParams.blurRadius // 高斯羽化扩散半径
-
+        if (blurSpeed > 0.02f && blurAlpha > 0.01f) {
             // 1. 径向运动拖影：沿运动轨迹绘制 2 级半透明渐变微步拖影
             if (lag > 0.5f) {
                 val lagSteps = 2
                 for (step in 1..lagSteps) {
                     val frac = step / (lagSteps + 1f) // 0.33f, 0.67f
-                    val sampleR = if (blurParams.isExpanding) {
+                    val sampleR = if (expanding) {
                         (r - lag * (1f - frac)).coerceAtLeast(0f)
                     } else {
                         minOf(r + lag * (1f - frac), limit)
@@ -239,25 +257,21 @@ class TouchRingView(context: Context) : View(context) {
             }
 
             // 2. 多级高斯羽化柔光晕染：4 级向外平滑递减的高斯卷积描边，产生饱满的高级光学模糊
-            // Level 1: 最外层柔光光晕 (Outer Soft Aura)
             val sw1 = sw + 2.6f * sigma
             blurPaint.strokeWidth = sw1
             blurPaint.color = withAlpha(accent, blurAlpha * 0.10f)
             canvas.drawCircle(cx, cy, (r - sw1 / 2f).coerceAtLeast(0f), blurPaint)
 
-            // Level 2: 中层羽化漫射 (Mid Glow)
             val sw2 = sw + 1.8f * sigma
             blurPaint.strokeWidth = sw2
             blurPaint.color = withAlpha(accent, blurAlpha * 0.18f)
             canvas.drawCircle(cx, cy, (r - sw2 / 2f).coerceAtLeast(0f), blurPaint)
 
-            // Level 3: 内层高斯光晕 (Inner Bloom)
             val sw3 = sw + 1.0f * sigma
             blurPaint.strokeWidth = sw3
             blurPaint.color = withAlpha(accent, blurAlpha * 0.30f)
             canvas.drawCircle(cx, cy, (r - sw3 / 2f).coerceAtLeast(0f), blurPaint)
 
-            // Level 4: 近核高密羽化 (Near Core Bloom)
             val sw4 = sw + 0.4f * sigma
             blurPaint.strokeWidth = sw4
             blurPaint.color = withAlpha(accent, blurAlpha * 0.42f)
@@ -265,9 +279,8 @@ class TouchRingView(context: Context) : View(context) {
         }
 
         // ── 清晰主体层 (Sharp Core Ring & Fill) ──
-        // 动速较高时主体环稍加微透光晕，静止或低速时 100% 锐利凝聚
-        val coreAlpha = if (blurParams.speed > 0f) {
-            alpha * (1f - 0.15f * blurParams.speed)
+        val coreAlpha = if (blurSpeed > 0f) {
+            alpha * (1f - 0.15f * blurSpeed)
         } else {
             alpha
         }

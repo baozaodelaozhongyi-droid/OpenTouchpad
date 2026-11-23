@@ -6,6 +6,7 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.ActivityManager
 import android.app.AlertDialog
+import android.app.NotificationManager
 import android.content.Context
 import android.content.DialogInterface
 import android.content.Intent
@@ -46,6 +47,10 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
 /**
@@ -91,7 +96,9 @@ class MainActivity : Activity() {
     private var currentRevealDark = false
     private var appliedStatusBarDark: Boolean? = null
     private var appliedNavBarDark: Boolean? = null
+    private var lastInsetsLeft = 0
     private var lastInsetsTop = 0
+    private var lastInsetsRight = 0
     private var lastInsetsBottom = 0
     private var activeAnimator: ValueAnimator? = null
     private var isSyncingScroll = false
@@ -99,9 +106,49 @@ class MainActivity : Activity() {
     private var settingsBgScrimView: View? = null
     private var settingsBgBitmap: android.graphics.Bitmap? = null
     private var contentHost: FrameLayout? = null
+    private var backInvokedCallback: OnBackInvokedCallback? = null
+    private val bgIoExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
+    private var cachedLightTheme: SettingsTheme? = null
+    private var cachedDarkTheme: SettingsTheme? = null
+    private var cachedThemeDynamic = false
+    private var cachedThemeAccent = 0
+    private var cachedDynamicAccentLight: Int? = null
+    private var cachedDynamicAccentDark: Int? = null
+    private var cachedHasCustomSettingsBg: Boolean? = null
+
+    private fun invalidateThemeCache() {
+        cachedLightTheme = null
+        cachedDarkTheme = null
+        cachedDynamicAccentLight = null
+        cachedDynamicAccentDark = null
+    }
+
+    private fun getThemeFor(isDark: Boolean): SettingsTheme {
+        val dyn = prefs.dynamicColor
+        val accent = prefs.uiAccentColor
+        if (cachedThemeDynamic != dyn || cachedThemeAccent != accent) {
+            cachedLightTheme = null
+            cachedDarkTheme = null
+            cachedThemeDynamic = dyn
+            cachedThemeAccent = accent
+        }
+        return if (isDark) {
+            cachedDarkTheme ?: resolveSettingsTheme(this, true, dyn, accent).also { cachedDarkTheme = it }
+        } else {
+            cachedLightTheme ?: resolveSettingsTheme(this, false, dyn, accent).also { cachedLightTheme = it }
+        }
+    }
+
+    private fun getDynamicAccent(isDark: Boolean): Int =
+        if (isDark) {
+            cachedDynamicAccentDark ?: resolveDynamicAccentColor(this, true).also { cachedDynamicAccentDark = it }
+        } else {
+            cachedDynamicAccentLight ?: resolveDynamicAccentColor(this, false).also { cachedDynamicAccentLight = it }
+        }
 
     private val currentTheme: SettingsTheme
-        get() = resolveSettingsTheme(this, darkUi, prefs.dynamicColor, prefs.uiAccentColor)
+        get() = getThemeFor(darkUi)
 
     private val pageColor get() = currentTheme.pageColor
     private val surfaceColor get() = currentTheme.surfaceColor
@@ -118,7 +165,10 @@ class MainActivity : Activity() {
     private val accentSoftStrongColor get() = currentTheme.accentSoftStrongColor
     private val rippleColor get() = currentTheme.rippleColor
     private val dangerColor get() = currentTheme.dangerColor
-    private val hasCustomSettingsBg get() = CustomBackgroundManager.hasSettingsBg(this)
+    private val hasCustomSettingsBg: Boolean
+        get() = cachedHasCustomSettingsBg ?: CustomBackgroundManager.hasSettingsBg(this).also {
+            cachedHasCustomSettingsBg = it
+        }
     private val cardBgColor
         get() = if (hasCustomSettingsBg) {
             Color.argb(230, Color.red(surfaceColor), Color.green(surfaceColor), Color.blue(surfaceColor))
@@ -185,20 +235,43 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
             applySettingsBackground()
-            // Android 15 起强制全面屏：内容会画到状态栏下面，这里按系统栏高度补内边距并隔离顶部状态栏区。
+            // Android 15 起强制全面屏：内容会画到状态栏/刘海区下面，这里按系统栏与挖孔安全区四边补内边距。
             setOnApplyWindowInsetsListener { _, insets ->
+                val left: Int
                 val top: Int
+                val right: Int
                 val bottom: Int
                 if (Build.VERSION.SDK_INT >= 30) {
                     val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-                    top = bars.top; bottom = bars.bottom
+                    left = bars.left
+                    top = bars.top
+                    right = bars.right
+                    bottom = bars.bottom
                 } else {
                     @Suppress("DEPRECATION")
-                    top = insets.systemWindowInsetTop
+                    val sysLeft = insets.systemWindowInsetLeft
                     @Suppress("DEPRECATION")
-                    bottom = insets.systemWindowInsetBottom
+                    val sysTop = insets.systemWindowInsetTop
+                    @Suppress("DEPRECATION")
+                    val sysRight = insets.systemWindowInsetRight
+                    @Suppress("DEPRECATION")
+                    val sysBottom = insets.systemWindowInsetBottom
+                    if (Build.VERSION.SDK_INT >= 28) {
+                        val cutout = insets.displayCutout
+                        left = maxOf(sysLeft, cutout?.safeInsetLeft ?: 0)
+                        top = maxOf(sysTop, cutout?.safeInsetTop ?: 0)
+                        right = maxOf(sysRight, cutout?.safeInsetRight ?: 0)
+                        bottom = maxOf(sysBottom, cutout?.safeInsetBottom ?: 0)
+                    } else {
+                        left = sysLeft
+                        top = sysTop
+                        right = sysRight
+                        bottom = sysBottom
+                    }
                 }
+                lastInsetsLeft = left
                 lastInsetsTop = top
+                lastInsetsRight = right
                 lastInsetsBottom = bottom
                 host.let { h ->
                     for (i in 0 until h.childCount) {
@@ -208,7 +281,7 @@ class MainActivity : Activity() {
                             is RevealLayout -> c.scroller
                             else -> null
                         }
-                        s?.let { applyScrollInsets(it, top, bottom) }
+                        s?.let { applyScrollInsets(it, left, top, right, bottom) }
                     }
                 }
                 insets
@@ -216,6 +289,15 @@ class MainActivity : Activity() {
         }
         setContentView(rootContainer)
         updateSystemBars()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val cb = OnBackInvokedCallback { moveTaskToBack(true) }
+            backInvokedCallback = cb
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                cb
+            )
+        }
 
         val savedScroll = savedInstanceState?.getInt(KEY_SCROLL_Y, 0) ?: 0
         if (savedScroll > 0) {
@@ -231,6 +313,13 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            backInvokedCallback?.let {
+                runCatching { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
+            }
+            backInvokedCallback = null
+        }
+        bgIoExecutor.shutdownNow()
         val oldAnim = activeAnimator
         activeAnimator = null
         oldAnim?.cancel()
@@ -257,7 +346,11 @@ class MainActivity : Activity() {
             val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
             prefs.keepAliveNotification = granted
             TouchpadService.instance?.updateKeepAliveNotification()
-            keepAliveSwitch?.isChecked = granted
+            listOfNotNull(baseKeepAliveSwitch, keepAliveSwitch).distinct().forEach { sw ->
+                sw.tag = SYNCING
+                sw.isChecked = granted
+                sw.tag = null
+            }
             pendingKeepAliveToggle?.invoke(granted)
             pendingKeepAliveToggle = null
             if (!granted) {
@@ -319,9 +412,9 @@ class MainActivity : Activity() {
             val appContext = applicationContext
             when (requestCode) {
                 REQUEST_CODE_PICK_TOUCHPAD_BG -> {
-                    Thread {
+                    bgIoExecutor.execute {
                         val success = CustomBackgroundManager.saveBackgroundFromUri(
-                            appContext, uri, CustomBackgroundManager.getTouchpadBgFile(appContext), maxDim = 1200
+                            appContext, uri, CustomBackgroundManager.getTouchpadBgSaveFile(appContext), maxDim = 1200
                         )
                         runOnUiThread {
                             if (!isFinishing && !isDestroyed) {
@@ -334,20 +427,24 @@ class MainActivity : Activity() {
                                 }
                             }
                         }
-                    }.start()
+                    }
                 }
                 REQUEST_CODE_PICK_SETTINGS_BG -> {
                     val dm = resources.displayMetrics
                     val maxDim = maxOf(dm.widthPixels, dm.heightPixels).coerceAtLeast(1080)
-                    Thread {
+                    bgIoExecutor.execute {
                         val success = CustomBackgroundManager.saveBackgroundFromUri(
-                            appContext, uri, CustomBackgroundManager.getSettingsBgFile(appContext), maxDim = maxDim
+                            appContext, uri, CustomBackgroundManager.getSettingsBgSaveFile(appContext), maxDim = maxDim
                         )
                         runOnUiThread {
                             if (!isFinishing && !isDestroyed) {
                                 if (success) {
                                     toast(getString(R.string.bg_image_applied))
+                                    currentReveal?.release()
+                                    settingsBgImageView?.setImageDrawable(null)
+                                    settingsBgBitmap?.recycle()
                                     settingsBgBitmap = null
+                                    cachedHasCustomSettingsBg = true
                                     applySettingsBackground()
                                     recreateKeepingScroll()
                                 } else {
@@ -355,7 +452,7 @@ class MainActivity : Activity() {
                                 }
                             }
                         }
-                    }.start()
+                    }
                 }
             }
         }
@@ -377,6 +474,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        invalidateThemeCache()
         applyExcludeFromRecents(prefs.excludeFromRecents)
         baseStatusView?.let { updateStatus(it, baseThemeDark) } ?: updateStatus(statusView, darkUi)
         if (currentReveal != null && statusView !== baseStatusView) {
@@ -390,6 +488,11 @@ class MainActivity : Activity() {
                 sw.isChecked = shown
                 sw.tag = null
             }
+        }
+        // 若用户在系统设置中撤销了通知权限，回到设置页时自动同步关闭开关状态
+        if (prefs.keepAliveNotification && !hasNotificationPermission()) {
+            prefs.keepAliveNotification = false
+            TouchpadService.instance?.updateKeepAliveNotification()
         }
         listOfNotNull(baseKeepAliveSwitch, keepAliveSwitch).distinct().forEach { sw ->
             if (sw.isChecked != prefs.keepAliveNotification) {
@@ -406,7 +509,7 @@ class MainActivity : Activity() {
         listOfNotNull(baseBatteryStatusTextView, batteryStatusTextView).distinct().forEach { tv ->
             tv.text = batteryLabel
         }
-        val maxPanelWidth = pixelsToDp(resources.displayMetrics.widthPixels, resources.displayMetrics.density)
+        val maxPanelWidth = pixelsToDp(fullScreenWidthPx(), resources.displayMetrics.density)
             .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
         val w = if (prefs.panelWidthDp > 0) {
             prefs.panelWidthDp
@@ -470,7 +573,7 @@ class MainActivity : Activity() {
 
         // ── 外观 ──
         val appearanceSummary = buildAppearanceSummary()
-        val hasSettingsBg = CustomBackgroundManager.hasSettingsBg(this)
+        val hasSettingsBg = hasCustomSettingsBg
         val appearanceRows = mutableListOf<View>(
             themeModeRow(),
             switchRow(
@@ -479,6 +582,7 @@ class MainActivity : Activity() {
                 hint = getString(R.string.switch_dynamic_color_hint),
                 onChange = {
                     prefs.dynamicColor = it
+                    invalidateThemeCache()
                     TouchpadService.instance?.let { svc ->
                         svc.reload()
                         svc.updateTouchRingAppearance()
@@ -492,7 +596,7 @@ class MainActivity : Activity() {
                 getString(R.string.set_ui_accent_color),
                 UI_ACCENT_COLORS,
                 { prefs.uiAccentColor },
-                { prefs.uiAccentColor = it },
+                { prefs.uiAccentColor = it; invalidateThemeCache() },
                 onServiceUpdate = {
                     TouchpadService.instance?.let { svc ->
                         svc.reload()
@@ -509,7 +613,8 @@ class MainActivity : Activity() {
                     launchImagePicker(REQUEST_CODE_PICK_SETTINGS_BG)
                 },
                 onClear = {
-                    CustomBackgroundManager.clearBackground(CustomBackgroundManager.getSettingsBgFile(this))
+                    CustomBackgroundManager.clearSettingsBg(this)
+                    cachedHasCustomSettingsBg = false
                     currentReveal?.release()
                     settingsBgImageView?.setImageDrawable(null)
                     settingsBgBitmap?.recycle()
@@ -545,7 +650,7 @@ class MainActivity : Activity() {
         )
 
         // ── 触控板 ──
-        val maxPanelWidth = pixelsToDp(resources.displayMetrics.widthPixels, resources.displayMetrics.density)
+        val maxPanelWidth = pixelsToDp(fullScreenWidthPx(), resources.displayMetrics.density)
             .coerceIn(PANEL_MIN_WIDTH_DP, CONTROL_MAX_SIZE_DP)
         val currentPanelWidth = (prefs.panelWidthDp.takeIf { it > 0 }
             ?: (maxPanelWidth * prefs.padWidthPercent / 100)).coerceIn(PANEL_MIN_WIDTH_DP, maxPanelWidth)
@@ -593,7 +698,7 @@ class MainActivity : Activity() {
                     launchImagePicker(REQUEST_CODE_PICK_TOUCHPAD_BG)
                 },
                 onClear = {
-                    CustomBackgroundManager.clearBackground(CustomBackgroundManager.getTouchpadBgFile(this))
+                    CustomBackgroundManager.clearTouchpadBg(this)
                     TouchpadService.instance?.reloadTouchpadBackground()
                     toast(getString(R.string.bg_image_cleared))
                     recreateKeepingScroll()
@@ -979,9 +1084,13 @@ class MainActivity : Activity() {
             },
             actionRow(getString(R.string.btn_reset_all), destructive = true) {
                 prefs.resetAll()
-                CustomBackgroundManager.clearBackground(CustomBackgroundManager.getTouchpadBgFile(this))
-                CustomBackgroundManager.clearBackground(CustomBackgroundManager.getSettingsBgFile(this))
+                invalidateThemeCache()
+                CustomBackgroundManager.clearTouchpadBg(this)
+                CustomBackgroundManager.clearSettingsBg(this)
+                cachedHasCustomSettingsBg = false
                 TouchpadService.instance?.reloadTouchpadBackground()
+                currentReveal?.release()
+                settingsBgImageView?.setImageDrawable(null)
                 settingsBgBitmap?.recycle()
                 settingsBgBitmap = null
                 expandedCardIds.clear()
@@ -999,7 +1108,7 @@ class MainActivity : Activity() {
         updateExpandAllText()
 
         col.addView(TextView(this).apply {
-            text = "OpenTouchpad ${appVersion()}"
+            text = footerVersionText()
             textSize = 12f
             gravity = Gravity.CENTER
             setTextColor(if (hasCustomSettingsBg || darkUi) 0x99FFFFFF.toInt() else tertiaryTextColor)
@@ -1039,8 +1148,8 @@ class MainActivity : Activity() {
         override fun getBottomFadingEdgeStrength(): Float = 0f
     }
 
-    private fun applyScrollInsets(scrollView: ScrollView, top: Int, bottom: Int) {
-        scrollView.setPadding(0, top, 0, 0)
+    private fun applyScrollInsets(scrollView: ScrollView, left: Int, top: Int, right: Int, bottom: Int) {
+        scrollView.setPadding(left, top, right, 0)
         scrollView.getChildAt(0)?.setPadding(dp(16), dp(16), dp(16), dp(40) + bottom)
     }
 
@@ -1711,14 +1820,7 @@ class MainActivity : Activity() {
                 isClickable = true
                 contentDescription = getString(labelRes)
                 setOnClickListener {
-                    if (prefs.haptics) {
-                        runCatching {
-                            performHapticFeedback(
-                                HapticFeedbackConstants.VIRTUAL_KEY,
-                                HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
-                            )
-                        }
-                    }
+                    haptic(this)
                     switchThemeWithReveal(mode, this)
                 }
             }, LinearLayout.LayoutParams(0, dp(42), 1f))
@@ -1730,7 +1832,7 @@ class MainActivity : Activity() {
     }
 
     private fun updateThemeSelector(track: LinearLayout, selectedMode: ThemeMode, isDark: Boolean) {
-        val theme = resolveSettingsTheme(this, isDark, prefs.dynamicColor, prefs.uiAccentColor)
+        val theme = getThemeFor(isDark)
         val elevated = theme.elevatedColor
         val border = theme.borderColor
         val text = theme.textColor
@@ -1886,8 +1988,8 @@ class MainActivity : Activity() {
             val selected = currentColor == color
             val isDyn = color == COLOR_DYNAMIC
             val fill = when (color) {
-                COLOR_DYNAMIC -> resolveDynamicAccentColor(this, darkUi)
-                0 -> if (prefs.dynamicColor) resolveDynamicAccentColor(this, darkUi) else (if (darkUi) 0xFFD97757.toInt() else 0xFFC96442.toInt())
+                COLOR_DYNAMIC -> getDynamicAccent(darkUi)
+                0 -> if (prefs.dynamicColor) getDynamicAccent(darkUi) else (if (darkUi) 0xFFD97757.toInt() else 0xFFC96442.toInt())
                 else -> color
             }
             val swatch = TextView(this).apply {
@@ -2301,34 +2403,26 @@ class MainActivity : Activity() {
 
     private fun isIgnoringBatteryOptimizations(): Boolean {
         val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            pm.isIgnoringBatteryOptimizations(packageName)
-        } else {
-            true
-        }
+        return pm.isIgnoringBatteryOptimizations(packageName)
     }
 
     private fun requestIgnoreBatteryOptimization() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (isIgnoringBatteryOptimizations()) {
-                toast(getString(R.string.battery_already_whitelisted))
-                return
-            }
-            try {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                startActivity(intent)
-            } catch (e: Exception) {
-                try {
-                    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                    startActivity(intent)
-                } catch (e2: Exception) {
-                    toast(getString(R.string.cannot_open_settings))
-                }
-            }
-        } else {
+        if (isIgnoringBatteryOptimizations()) {
             toast(getString(R.string.battery_already_whitelisted))
+            return
+        }
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                startActivity(intent)
+            } catch (e2: Exception) {
+                toast(getString(R.string.cannot_open_settings))
+            }
         }
     }
 
@@ -2343,6 +2437,17 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun hasNotificationPermission(): Boolean {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        if (nm != null && !nm.areNotificationsEnabled()) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return false
+        }
+        return true
+    }
+
     private fun checkAndEnableKeepAliveNotification(enable: Boolean, onComplete: (Boolean) -> Unit) {
         if (!enable) {
             prefs.keepAliveNotification = false
@@ -2354,6 +2459,15 @@ class MainActivity : Activity() {
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             pendingKeepAliveToggle = onComplete
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQUEST_CODE_POST_NOTIFICATIONS)
+        } else if (!hasNotificationPermission()) {
+            prefs.keepAliveNotification = false
+            listOfNotNull(baseKeepAliveSwitch, keepAliveSwitch).distinct().forEach { sw ->
+                sw.tag = SYNCING
+                sw.isChecked = false
+                sw.tag = null
+            }
+            toast(getString(R.string.notification_permission_denied))
+            onComplete(false)
         } else {
             prefs.keepAliveNotification = true
             TouchpadService.instance?.updateKeepAliveNotification()
@@ -2363,7 +2477,7 @@ class MainActivity : Activity() {
 
     private fun updateStatus(targetView: TextView = statusView, isDark: Boolean = darkUi) {
         val on = isServiceEnabled()
-        val theme = resolveSettingsTheme(this, isDark, prefs.dynamicColor, prefs.uiAccentColor)
+        val theme = getThemeFor(isDark)
         targetView.text = getString(if (on) R.string.status_on else R.string.status_off)
         if (hasCustomSettingsBg || isDark) {
             targetView.setTextColor(0xFFE8E6DC.toInt())
@@ -2386,6 +2500,19 @@ class MainActivity : Activity() {
     private fun appVersion(): String = runCatching {
         packageManager.getPackageInfo(packageName, 0).versionName
     }.getOrNull().orEmpty()
+
+    private fun footerVersionText(): String {
+        val ver = appVersion()
+        val name = getString(R.string.app_name)
+        return if (ver.isNotEmpty()) "$name $ver" else name
+    }
+
+    private fun fullScreenWidthPx(): Int =
+        if (Build.VERSION.SDK_INT >= 30) {
+            windowManager.maximumWindowMetrics.bounds.width()
+        } else {
+            resources.displayMetrics.widthPixels
+        }
 
     private fun isServiceEnabled(): Boolean {
         val flat = Settings.Secure.getString(
@@ -2410,11 +2537,11 @@ class MainActivity : Activity() {
         appliedStatusBarDark = statusDark
         appliedNavBarDark = navDark
 
-        val statusTheme = resolveSettingsTheme(this, statusDark, prefs.dynamicColor, prefs.uiAccentColor)
+        val statusTheme = getThemeFor(statusDark)
         val navTheme = if (navDark == statusDark) {
             statusTheme
         } else {
-            resolveSettingsTheme(this, navDark, prefs.dynamicColor, prefs.uiAccentColor)
+            getThemeFor(navDark)
         }
         val lightStatus = !statusDark && !hasCustomSettingsBg
         val lightNav = !navDark
@@ -2706,7 +2833,7 @@ class MainActivity : Activity() {
                 darkUi = targetDark
                 val targetTheme = currentTheme
                 val newScroller = buildUi().apply {
-                    applyScrollInsets(this, lastInsetsTop, lastInsetsBottom)
+                    applyScrollInsets(this, lastInsetsLeft, lastInsetsTop, lastInsetsRight, lastInsetsBottom)
                 }
                 updateStatus(statusView, targetDark)
                 darkUi = baseThemeDark // 恢复底层 baseThemeDark

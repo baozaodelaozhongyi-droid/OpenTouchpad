@@ -125,8 +125,8 @@ internal fun planCustomSwipe(
 
     // 惯性滑动延伸距离（基于超出初速度的平滑动量，上限不超过 450 dp）
     val extraPx = ((projSpeed - minFlingVelocity) * 0.16f).coerceIn(0f, 450f * density)
-    val targetX = (endX + dirX * extraPx).coerceIn(0f, screenWidth.toFloat())
-    val targetY = (endY + dirY * extraPx).coerceIn(0f, screenHeight.toFloat())
+    val targetX = clampGestureCoord(endX + dirX * extraPx, screenWidth)
+    val targetY = clampGestureCoord(endY + dirY * extraPx, screenHeight)
 
     // 惯性滑动手势耗时缩短，赋予注入手势高初速度以触发底层系统的原生惯性飞滑
     val speedRatio = ((projSpeed - minFlingVelocity) / (2500f * density)).coerceIn(0f, 1f)
@@ -1395,5 +1395,115 @@ internal fun computePanelDragMatrix(
     return true
 }
 
+// ───────────────────────── 兼容性与性能热路径纯逻辑 ─────────────────────────
 
+/**
+ * 将注入手势坐标严格钳制在系统有效像素区间 [0, screenSize - 1] 内：
+ * Android 10–16 部分机型 InputDispatcher 会静默丢弃 x >= screenWidth 或 y >= screenHeight 的手势。
+ */
+internal fun clampGestureCoord(value: Float, screenSize: Int): Float {
+    val maxCoord = (screenSize - 1).coerceAtLeast(0).toFloat()
+    return value.coerceIn(0f, maxCoord)
+}
 
+/**
+ * 过滤与输入法显隐无关的 TYPE_WINDOWS_CHANGED 变更位（API 28+）。
+ * 仅对窗口新增、移除、边界改变、层级改变或活跃切换响应，跳过标题/焦点/PiP/子窗口等无关变更。
+ * [windowChanges] 为 0（API < 28 或系统未填充细粒度位）时默认放行。
+ */
+internal const val IME_RELEVANT_WINDOW_CHANGES = 1 or 2 or 8 or 16 or 32 // ADDED | REMOVED | BOUNDS | LAYER | ACTIVE
+
+internal fun shouldReactToWindowsChanged(windowChanges: Int): Boolean =
+    windowChanges == 0 || (windowChanges and IME_RELEVANT_WINDOW_CHANGES) != 0
+
+/**
+ * 判断 TYPE_INPUT_METHOD 窗口在屏幕上的边界是否为真实可见的输入法面板：
+ * 过滤部分 ROM（三星、Gboard 悬浮模式、国产输入法）收起后仍残留的空矩形或极窄导航条占位窗口。
+ */
+internal fun isEffectiveImeBounds(
+    left: Int,
+    top: Int,
+    right: Int,
+    bottom: Int,
+    minHeightPx: Int,
+): Boolean {
+    val w = right - left
+    val h = bottom - top
+    return w > 0 && h >= minHeightPx.coerceAtLeast(1)
+}
+
+/**
+ * 解析屏幕逻辑宽高：
+ * - Android 11+ (API 30+) [trustWindowMetrics] 为 true，直接信任 maximumWindowMetrics.bounds，
+ *   不再按横竖屏配置强行互换宽高，避免折叠屏展开态/近似方形内屏被错误颠倒；
+ * - Android 8–10 [trustWindowMetrics] 为 false，保留旧版 getRealMetrics 旋转不同步时的兜底互换。
+ */
+internal fun resolveScreenBounds(
+    metricsWidth: Int,
+    metricsHeight: Int,
+    isLandscapeConfig: Boolean,
+    trustWindowMetrics: Boolean,
+): PanelPosition {
+    var w = metricsWidth.coerceAtLeast(0)
+    var h = metricsHeight.coerceAtLeast(0)
+    if (!trustWindowMetrics && w != h) {
+        if ((isLandscapeConfig && w < h) || (!isLandscapeConfig && w > h)) {
+            val tmp = w
+            w = h
+            h = tmp
+        }
+    }
+    return PanelPosition(w, h)
+}
+
+/**
+ * 判断当前是否已处于穿透态（FLAG_NOT_TOUCHABLE 已生效），用于续接手势（continueStroke）
+ * 或队列连续穿透点击时跳过重复的 50ms 等待。
+ */
+internal fun shouldSkipPassThroughDelay(alreadyNonTouchable: Boolean): Boolean = alreadyNonTouchable
+
+/**
+ * 3D 倾斜流光变化量化过滤：忽略肉眼不可见的微小浮点抖动，回零时必刷新。
+ */
+internal fun quantizeTiltChanged(
+    prevX: Float,
+    prevY: Float,
+    prevIntensity: Float,
+    newX: Float,
+    newY: Float,
+    newIntensity: Float,
+    threshold: Float = 0.008f,
+): Boolean {
+    val resettingToZero = newX == 0f && newY == 0f && newIntensity == 0f &&
+        (prevX != 0f || prevY != 0f || prevIntensity != 0f)
+    if (resettingToZero) return true
+    return kotlin.math.abs(newX - prevX) >= threshold ||
+        kotlin.math.abs(newY - prevY) >= threshold ||
+        kotlin.math.abs(newIntensity - prevIntensity) >= threshold
+}
+
+/**
+ * 判断面板拖动形变弹簧是否已在当前目标值收敛静止（用于按住移动把手停顿时暂停 Choreographer 空转）。
+ */
+internal fun isPanelSpringAtRestForTarget(
+    state: PanelSpringState,
+    targetX: Float,
+    targetY: Float,
+    targetGrab: Float,
+): Boolean =
+    kotlin.math.abs(state.x - targetX) < 0.002f &&
+        kotlin.math.abs(state.y - targetY) < 0.002f &&
+        kotlin.math.abs(state.vx) < 0.015f &&
+        kotlin.math.abs(state.vy) < 0.015f &&
+        kotlin.math.abs(state.grab - targetGrab) < 0.002f &&
+        kotlin.math.abs(state.grabVel) < 0.015f
+
+/**
+ * 将 android.media.ExifInterface 方向枚举映射为顺时针旋转角度（0 / 90 / 180 / 270）。
+ */
+internal fun resolveExifRotationDegrees(exifOrientation: Int): Int = when (exifOrientation) {
+    6 -> 90   // ExifInterface.ORIENTATION_ROTATE_90
+    3 -> 180  // ExifInterface.ORIENTATION_ROTATE_180
+    8 -> 270  // ExifInterface.ORIENTATION_ROTATE_270
+    else -> 0
+}

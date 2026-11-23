@@ -1,8 +1,8 @@
 package io.github.opentouchpad
 
+import android.annotation.SuppressLint
 import android.graphics.drawable.RippleDrawable
 import android.os.SystemClock
-import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
@@ -24,6 +24,11 @@ object PressFeedback {
     val overshoot = OvershootInterpolator(1.25f)
 
     private var padDownTimeMs: Long = 0L
+    private var padDownAnimRunning: Boolean = false
+
+    private var buttonDownTimeMs: Long = 0L
+    private var buttonDownAnimRunning: Boolean = false
+    private var buttonLastInside: Boolean = true
 
     private fun updateBubbleTilt(view: View, normX: Float, normY: Float) {
         when (val bg = view.background) {
@@ -38,8 +43,9 @@ object PressFeedback {
 
     /**
      * 为按钮等普通 View 挂载 3D 倾斜下沉按压反馈。
-     * 返回 false 保持 View 原有的 onTouchEvent 继续触发点击（OnClickListener）和长按（OnLongClickListener）。
+     * 返回 false 保持 View 原有的 onTouchEvent 继续触发点击（OnClickListener/performClick）和长按（OnLongClickListener）。
      */
+    @SuppressLint("ClickableViewAccessibility")
     fun attach(
         view: View,
         maxTiltX: Float = 8f,
@@ -85,6 +91,9 @@ object PressFeedback {
         val sinkPx = (sinkDp * density).roundToInt().toFloat()
         val clampedNormX = normX.coerceIn(-1f, 1f)
         val clampedNormY = normY.coerceIn(-1f, 1f)
+        buttonDownTimeMs = SystemClock.uptimeMillis()
+        buttonDownAnimRunning = true
+        buttonLastInside = true
         updateBubbleTilt(v, clampedNormX, clampedNormY)
         v.animate().cancel()
         v.animate()
@@ -118,16 +127,34 @@ object PressFeedback {
             val clampedNormX = normX.coerceIn(-1f, 1f)
             val clampedNormY = normY.coerceIn(-1f, 1f)
             updateBubbleTilt(v, clampedNormX, clampedNormY)
-            v.animate()
-                .rotationX(-clampedNormY * maxTiltX)
-                .rotationY(clampedNormX * maxTiltY)
-                .scaleX(pressScale)
-                .scaleY(pressScale)
-                .translationY(sinkPx)
-                .setDuration(35)
-                .start()
-        } else {
-            // 手指拖移出按钮较远区域，平滑复原
+            val elapsed = SystemClock.uptimeMillis() - buttonDownTimeMs
+            if (!buttonLastInside || elapsed < 70L) {
+                buttonLastInside = true
+                buttonDownAnimRunning = true
+                val remainingMs = if (elapsed < 70L) (70L - elapsed).coerceAtLeast(16L) else 45L
+                v.animate()
+                    .rotationX(-clampedNormY * maxTiltX)
+                    .rotationY(clampedNormX * maxTiltY)
+                    .scaleX(pressScale)
+                    .scaleY(pressScale)
+                    .translationY(sinkPx)
+                    .setDuration(remainingMs)
+                    .start()
+            } else {
+                if (buttonDownAnimRunning) {
+                    v.animate().cancel()
+                    buttonDownAnimRunning = false
+                }
+                v.scaleX = pressScale
+                v.scaleY = pressScale
+                v.translationY = sinkPx
+                v.rotationX = -clampedNormY * maxTiltX
+                v.rotationY = clampedNormX * maxTiltY
+            }
+        } else if (buttonLastInside) {
+            // 手指拖移出按钮较远区域，仅在状态切换时触发一次平滑复原
+            buttonLastInside = false
+            buttonDownAnimRunning = false
             updateBubbleTilt(v, 0f, 0f)
             v.animate().cancel()
             v.animate()
@@ -143,6 +170,9 @@ object PressFeedback {
     }
 
     fun applyButtonRelease(v: View) {
+        buttonDownTimeMs = 0L
+        buttonDownAnimRunning = false
+        buttonLastInside = true
         updateBubbleTilt(v, 0f, 0f)
         v.animate().cancel()
         v.animate()
@@ -171,6 +201,7 @@ object PressFeedback {
         sinkDp: Float = 4.5f,
     ) {
         padDownTimeMs = SystemClock.uptimeMillis()
+        padDownAnimRunning = true
         val clampedNormX = normX.coerceIn(-1f, 1f)
         val clampedNormY = normY.coerceIn(-1f, 1f)
         val sinkPx = (sinkDp * density).roundToInt().toFloat()
@@ -210,12 +241,17 @@ object PressFeedback {
 
         val elapsed = SystemClock.uptimeMillis() - padDownTimeMs
         if (elapsed >= 65L) {
-            pad.animate().cancel()
-            pad.scaleX = pressScale
-            pad.scaleY = pressScale
-            pad.translationY = sinkPx
-            pad.rotationX = -clampedNormY * maxTiltX
-            pad.rotationY = clampedNormX * maxTiltY
+            if (padDownAnimRunning) {
+                pad.animate().cancel()
+                padDownAnimRunning = false
+            }
+            if (pad.scaleX != pressScale) pad.scaleX = pressScale
+            if (pad.scaleY != pressScale) pad.scaleY = pressScale
+            if (pad.translationY != sinkPx) pad.translationY = sinkPx
+            val targetRx = -clampedNormY * maxTiltX
+            val targetRy = clampedNormX * maxTiltY
+            if (kotlin.math.abs(pad.rotationX - targetRx) > 0.05f) pad.rotationX = targetRx
+            if (kotlin.math.abs(pad.rotationY - targetRy) > 0.05f) pad.rotationY = targetRy
             (pad as? TouchpadSurfaceView)?.setTilt(clampedNormX, clampedNormY, 1f)
         } else {
             val remainingMs = (65L - elapsed).coerceAtLeast(10L)
@@ -237,6 +273,7 @@ object PressFeedback {
      */
     fun applyPadRelease(pad: View) {
         padDownTimeMs = 0L
+        padDownAnimRunning = false
         (pad as? TouchpadSurfaceView)?.animateTilt(0f, 0f, 0f, 200, overshoot)
 
         pad.animate().cancel()

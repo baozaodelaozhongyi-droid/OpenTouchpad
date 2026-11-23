@@ -14,9 +14,6 @@
     <string name="steps_body">1. Navigate to System Settings → Accessibility → Installed apps, then enable OpenTouchpad.\n2. If restricted by the system ("Restricted setting"), go to App info → ⋮ (top-right) → Allow restricted settings, then enable the service.\n3. Return to this app to customize panel dimensions, cursor sensitivity, and button mappings.</string>
 
     <!-- 面板把手 -->
-    <string name="handle_move">⣿ Move</string>
-    <string name="handle_resize">⤡ Resize</string>
-    <string name="handle_minimize">⌄ Collapse</string>
     <string name="cursor_content_description">Screen pointer cursor</string>
     <string name="control_surface_content_description">OpenTouchpad control panel</string>
     <string name="touchpad_content_description">Touchpad area. Slide to move cursor; press and hold until haptic feedback, then drag and release to execute a custom swipe gesture.</string>
@@ -83,8 +80,6 @@
     <string name="set_long_press">Touchpad Long-Press Threshold</string>
     <string name="set_scroll_distance">Scroll Step Distance</string>
     <string name="scroll_distance_hint">Controls simulated scroll distance per click for panel scroll buttons (↑ / ↓ / ← / →).</string>
-    <string name="set_swipe_distance">Swipe Gesture Distance</string>
-    <string name="set_button_radius">Button Corner Radius</string>
     <string name="set_button_spacing">Button Spacing</string>
 
     <string name="switch_haptics">Haptic Vibration Feedback</string>

@@ -1450,5 +1450,167 @@ class TouchpadMathTest {
             }
         }
     }
+
+    @Test
+    fun clampGestureCoordStaysWithinStrictPixelBounds() {
+        assertEquals(0f, clampGestureCoord(-50f, 1080), 0.0001f)
+        assertEquals(0f, clampGestureCoord(0f, 1080), 0.0001f)
+        assertEquals(540.5f, clampGestureCoord(540.5f, 1080), 0.0001f)
+        assertEquals(1079f, clampGestureCoord(1079f, 1080), 0.0001f)
+        assertEquals(1079f, clampGestureCoord(1080f, 1080), 0.0001f)
+        assertEquals(1079f, clampGestureCoord(1500f, 1080), 0.0001f)
+        // Degenerate screen size never yields negative bounds
+        assertEquals(0f, clampGestureCoord(10f, 1), 0.0001f)
+        assertEquals(0f, clampGestureCoord(10f, 0), 0.0001f)
+    }
+
+    @Test
+    fun planCustomSwipeInertialTargetNeverReachesScreenEdge() {
+        val screenW = 1080
+        val screenH = 2400
+        val planBottomRight = planCustomSwipe(
+            startX = 900f,
+            startY = 2200f,
+            endX = 1050f,
+            endY = 2380f,
+            velocityX = 8000f,
+            velocityY = 8000f,
+            minDistancePx = 24f,
+            density = 3f,
+            screenWidth = screenW,
+            screenHeight = screenH,
+        )
+        assertNotNull(planBottomRight)
+        assertTrue(planBottomRight!!.isInertial)
+        assertTrue("targetX must be <= screenW - 1, got ${planBottomRight.targetX}", planBottomRight.targetX <= screenW - 1f)
+        assertTrue("targetY must be <= screenH - 1, got ${planBottomRight.targetY}", planBottomRight.targetY <= screenH - 1f)
+        assertEquals(1079f, planBottomRight.targetX, 0.0001f)
+        assertEquals(2399f, planBottomRight.targetY, 0.0001f)
+
+        val planTopLeft = planCustomSwipe(
+            startX = 200f,
+            startY = 200f,
+            endX = 20f,
+            endY = 20f,
+            velocityX = -8000f,
+            velocityY = -8000f,
+            minDistancePx = 24f,
+            density = 3f,
+            screenWidth = screenW,
+            screenHeight = screenH,
+        )
+        assertNotNull(planTopLeft)
+        assertEquals(0f, planTopLeft!!.targetX, 0.0001f)
+        assertEquals(0f, planTopLeft.targetY, 0.0001f)
+    }
+
+    @Test
+    fun shouldReactToWindowsChangedFiltersNonImeWindowEvents() {
+        // Unspecified (API < 28 or zero mask) passes through safely
+        assertTrue(shouldReactToWindowsChanged(0))
+        // IME-relevant change flags: ADDED(1), REMOVED(2), BOUNDS(8), LAYER(16), ACTIVE(32)
+        assertTrue(shouldReactToWindowsChanged(1))
+        assertTrue(shouldReactToWindowsChanged(2))
+        assertTrue(shouldReactToWindowsChanged(8))
+        assertTrue(shouldReactToWindowsChanged(16))
+        assertTrue(shouldReactToWindowsChanged(32))
+        // Combined relevant + irrelevant still passes
+        assertTrue(shouldReactToWindowsChanged(4 or 8))
+        // Irrelevant flags: TITLE(4), FOCUSED(64), ACCESSIBILITY_FOCUSED(128), PARENT(256), CHILDREN(512), PIP(1024)
+        assertFalse(shouldReactToWindowsChanged(4))
+        assertFalse(shouldReactToWindowsChanged(64))
+        assertFalse(shouldReactToWindowsChanged(128))
+        assertFalse(shouldReactToWindowsChanged(256))
+        assertFalse(shouldReactToWindowsChanged(512))
+        assertFalse(shouldReactToWindowsChanged(1024))
+        assertFalse(shouldReactToWindowsChanged(4 or 64 or 128 or 512))
+    }
+
+    @Test
+    fun isEffectiveImeBoundsRejectsEmptyAndThinPlaceholderWindows() {
+        val minImeHeight = 144 // 48dp @ 3x
+        assertFalse(isEffectiveImeBounds(0, 0, 0, 0, minImeHeight))
+        assertFalse(isEffectiveImeBounds(0, 2360, 1080, 2400, minImeHeight))
+        assertFalse(isEffectiveImeBounds(500, 1500, 500, 2400, minImeHeight))
+        assertFalse(isEffectiveImeBounds(1080, 1500, 0, 2400, minImeHeight))
+        assertTrue(isEffectiveImeBounds(0, 2256, 1080, 2400, minImeHeight))
+        assertTrue(isEffectiveImeBounds(0, 1500, 1080, 2400, minImeHeight))
+    }
+
+    @Test
+    fun resolveScreenBoundsPreservesFoldableAndNearSquareOnApi30Plus() {
+        // Android 11+ (trustWindowMetrics = true): never swaps unfolded foldable / near-square displays
+        val foldableUnfolded = resolveScreenBounds(
+            metricsWidth = 2208,
+            metricsHeight = 1768,
+            isLandscapeConfig = false,
+            trustWindowMetrics = true,
+        )
+        assertEquals(PanelPosition(2208, 1768), foldableUnfolded)
+
+        val nearSquare = resolveScreenBounds(
+            metricsWidth = 1800,
+            metricsHeight = 2000,
+            isLandscapeConfig = true,
+            trustWindowMetrics = true,
+        )
+        assertEquals(PanelPosition(1800, 2000), nearSquare)
+
+        // Android 8–10 (trustWindowMetrics = false): retains orientation mismatch swap for non-square screens
+        val legacyLandscapeSwap = resolveScreenBounds(
+            metricsWidth = 1080,
+            metricsHeight = 2400,
+            isLandscapeConfig = true,
+            trustWindowMetrics = false,
+        )
+        assertEquals(PanelPosition(2400, 1080), legacyLandscapeSwap)
+
+        val legacySquare = resolveScreenBounds(
+            metricsWidth = 1800,
+            metricsHeight = 1800,
+            isLandscapeConfig = true,
+            trustWindowMetrics = false,
+        )
+        assertEquals(PanelPosition(1800, 1800), legacySquare)
+    }
+
+    @Test
+    fun shouldSkipPassThroughDelaySkipsOnlyWhenAlreadyNonTouchable() {
+        assertTrue(shouldSkipPassThroughDelay(alreadyNonTouchable = true))
+        assertFalse(shouldSkipPassThroughDelay(alreadyNonTouchable = false))
+    }
+
+    @Test
+    fun quantizeTiltChangedSuppressesMicroJitterAndAlwaysAllowsZeroReset() {
+        assertFalse(quantizeTiltChanged(0.5f, -0.3f, 1f, 0.502f, -0.299f, 1f))
+        assertTrue(quantizeTiltChanged(0.5f, -0.3f, 1f, 0.52f, -0.3f, 1f))
+        assertTrue(quantizeTiltChanged(0.5f, -0.3f, 1f, 0.5f, -0.32f, 1f))
+        assertTrue(quantizeTiltChanged(0.5f, -0.3f, 0.5f, 0.5f, -0.3f, 0.52f))
+        // Resetting to neutral (0, 0, 0) always triggers even when delta < threshold
+        assertTrue(quantizeTiltChanged(0.002f, 0f, 0.002f, 0f, 0f, 0f))
+        // Already neutral -> no redundant redraw
+        assertFalse(quantizeTiltChanged(0f, 0f, 0f, 0f, 0f, 0f))
+    }
+
+    @Test
+    fun isPanelSpringAtRestForTargetDetectsStationaryHoldAndActiveMotion() {
+        val heldStill = PanelSpringState(x = 0f, y = 0f, vx = 0f, vy = 0f, grab = 1f, grabVel = 0f)
+        assertTrue(isPanelSpringAtRestForTarget(heldStill, targetX = 0f, targetY = 0f, targetGrab = 1f))
+        assertFalse(isPanelSpringAtRestForTarget(heldStill, targetX = 0f, targetY = 0f, targetGrab = 0f))
+        assertFalse(isPanelSpringAtRestForTarget(heldStill, targetX = 0.2f, targetY = 0f, targetGrab = 1f))
+
+        val moving = PanelSpringState(x = 0f, y = 0f, vx = 0.25f, vy = 0f, grab = 1f, grabVel = 0f)
+        assertFalse(isPanelSpringAtRestForTarget(moving, targetX = 0f, targetY = 0f, targetGrab = 1f))
+    }
+
+    @Test
+    fun resolveExifRotationDegreesMapsStandardOrientations() {
+        assertEquals(90, resolveExifRotationDegrees(6))
+        assertEquals(180, resolveExifRotationDegrees(3))
+        assertEquals(270, resolveExifRotationDegrees(8))
+        assertEquals(0, resolveExifRotationDegrees(1))
+        assertEquals(0, resolveExifRotationDegrees(0))
+        assertEquals(0, resolveExifRotationDegrees(99))
+    }
 }
 

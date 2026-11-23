@@ -15,8 +15,8 @@ android {
         applicationId = "io.github.opentouchpad"
         minSdk = 26
         targetSdk = 35
-        versionCode = 105
-        versionName = "0.5.92"
+        versionCode = 106
+        versionName = "0.5.93"
     }
 
     // 仓库里绝不存密钥。CI 通过 GitHub Secrets 注入以下环境变量即可产出正式签名包：
@@ -37,7 +37,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             // 没配签名时就是"未签名 APK"，先保证能编译能装（debug 包）
             signingConfig = signingConfigs.findByName("release")
         }

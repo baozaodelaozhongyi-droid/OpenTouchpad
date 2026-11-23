@@ -197,6 +197,15 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("padY", -1)
         set(v) = sp.edit().putInt("padY", v).apply()
 
+    fun setPadPosition(landscape: Boolean, x: Int, y: Int) {
+        val keyX = panelPrefKey(landscape, isY = false)
+        val keyY = panelPrefKey(landscape, isY = true)
+        sp.edit()
+            .putInt(keyX, x).putInt("padX", x)
+            .putInt(keyY, y).putInt("padY", y)
+            .apply()
+    }
+
     fun getPadX(landscape: Boolean): Int {
         val key = panelPrefKey(landscape, isY = false)
         val v = sp.getInt(key, -1)
@@ -221,6 +230,14 @@ class Prefs(ctx: Context) {
         sp.edit().putInt(key, v).putInt("padY", v).apply()
     }
 
+    fun setPanelSize(widthDp: Int, widthPercent: Int, extraHeightDp: Int) {
+        sp.edit()
+            .putInt("panelWidthDp", widthDp)
+            .putInt("padWidthPercent", widthPercent)
+            .putInt("extraHeightDp", extraHeightDp)
+            .apply()
+    }
+
     /** Floating ball top-left coordinates; -1 means the default right-center position. */
     var ballX: Int
         get() = sp.getInt("ballX", -1)
@@ -229,6 +246,15 @@ class Prefs(ctx: Context) {
     var ballY: Int
         get() = sp.getInt("ballY", -1)
         set(v) = sp.edit().putInt("ballY", v).apply()
+
+    fun setBallPosition(landscape: Boolean, x: Int, y: Int) {
+        val keyX = floatingBallPrefKey(landscape, isY = false)
+        val keyY = floatingBallPrefKey(landscape, isY = true)
+        sp.edit()
+            .putInt(keyX, x).putInt("ballX", x)
+            .putInt(keyY, y).putInt("ballY", y)
+            .apply()
+    }
 
     fun getBallX(landscape: Boolean): Int {
         val key = floatingBallPrefKey(landscape, isY = false)
@@ -370,17 +396,25 @@ class Prefs(ctx: Context) {
 
     /** 自选键位模式：4, 8, 12, 16, 18 键位。默认 16 键。 */
     var buttonCount: Int
-        get() = sp.getInt("buttonCount", 16).let {
-            if (it in listOf(4, 8, 12, 16, 18)) it else 16
+        get() = when (val c = sp.getInt("buttonCount", 16)) {
+            4, 8, 12, 16, 18 -> c
+            else -> 16
         }
         set(v) {
-            val valid = if (v in listOf(4, 8, 12, 16, 18)) v else 16
+            val valid = when (v) {
+                4, 8, 12, 16, 18 -> v
+                else -> 16
+            }
             sp.edit().putInt("buttonCount", valid).apply()
         }
 
     var buttonLayoutMode: ButtonLayoutMode
         get() = ButtonLayoutMode.fromCount(buttonCount)
         set(v) { buttonCount = v.count }
+
+    private var cachedButtonsCount: Int = -1
+    private var cachedButtonsRaw: String? = null
+    private var cachedButtonsList: List<PadAction>? = null
 
     fun buttonsFor(count: Int): List<PadAction> {
         val key = "buttons_$count"
@@ -391,11 +425,22 @@ class Prefs(ctx: Context) {
         } else {
             null
         }
-        return decodeButtonSlots(raw, count)
+        val cached = cachedButtonsList
+        if (cached != null && cachedButtonsCount == count && cachedButtonsRaw == raw) {
+            return cached
+        }
+        val decoded = decodeButtonSlots(raw, count)
+        cachedButtonsCount = count
+        cachedButtonsRaw = raw
+        cachedButtonsList = decoded
+        return decoded
     }
 
     fun setButtonsFor(count: Int, list: List<PadAction>) {
         val encoded = list.take(count).joinToString(",") { it.id }
+        cachedButtonsCount = count
+        cachedButtonsRaw = encoded
+        cachedButtonsList = decodeButtonSlots(encoded, count)
         sp.edit().putString("buttons_$count", encoded).apply()
     }
 
@@ -435,5 +480,18 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("pressFeedback", true)
         set(v) = sp.edit().putBoolean("pressFeedback", v).apply()
 
-    fun resetAll() = sp.edit().clear().apply()
+    fun registerChangeListener(listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener) {
+        sp.registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    fun unregisterChangeListener(listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener) {
+        sp.unregisterOnSharedPreferenceChangeListener(listener)
+    }
+
+    fun resetAll() {
+        cachedButtonsCount = -1
+        cachedButtonsRaw = null
+        cachedButtonsList = null
+        sp.edit().clear().apply()
+    }
 }

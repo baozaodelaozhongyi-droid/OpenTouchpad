@@ -1,20 +1,26 @@
 package io.github.opentouchpad
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.CornerPathEffect
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.drawable.ColorDrawable
 import android.view.View
 import kotlin.math.min
 
 /**
  * 箭头光标：实心圆角三角箭头（尖端朝左上，底部有一个向内的缺口），
  * 外面一圈对比色描边 + 柔和投影。尖端固定在视图左上角，保证点击位置和尖端对齐。
+ *
+ * 采用按尺寸与颜色按需预渲染的小位图缓存：
+ * - 去除 View 级 LAYER_TYPE_SOFTWARE，消除软件图层合成开销；
+ * - 仅在光标尺寸或颜色变更时渲染一次（含圆角路径与柔和阴影，API 26–36 视觉完全一致）；
+ * - 日常绘制零对象分配，仅执行单次硬件 drawBitmap。
  */
 class CursorArrowView(context: Context) : View(context) {
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL_AND_STROKE
@@ -23,22 +29,37 @@ class CursorArrowView(context: Context) : View(context) {
     }
     private val pointer = Path()
 
+    private var cachedBitmap: Bitmap? = null
+    private var cachedWidth = 0
+    private var cachedHeight = 0
+    private var cachedColor = 0
+
     var pointerColor: Int = 0xFF141413.toInt()
         set(value) {
+            if (field == value) return
             field = value
             invalidate()
         }
 
     init {
-        background = ColorDrawable(Color.TRANSPARENT)
-        setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        background = null
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         contentDescription = context.getString(R.string.cursor_content_description)
     }
 
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val size = min(width, height).toFloat()
-        if (size <= 0f) return
+    private fun ensureCachedBitmap(w: Int, h: Int): Bitmap? {
+        val existing = cachedBitmap
+        if (existing != null && !existing.isRecycled &&
+            cachedWidth == w && cachedHeight == h && cachedColor == pointerColor
+        ) {
+            return existing
+        }
+        existing?.recycle()
+        cachedBitmap = null
+
+        val bmp = runCatching { Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888) }.getOrNull() ?: return null
+        val c = Canvas(bmp)
+        val size = min(w, h).toFloat()
         val ring = (size * 0.09f).coerceAtLeast(2f)
         val o = ring
         val u = (size - ring * 2.6f) / 24f
@@ -58,10 +79,33 @@ class CursorArrowView(context: Context) : View(context) {
         outline.strokeWidth = ring * 2f
         outline.color = if (lightFill) 0xF2141413.toInt() else 0xFFFAF9F5.toInt()
         outline.setShadowLayer(size * 0.06f, 0f, size * 0.03f, 0x59141413)
-        canvas.drawPath(pointer, outline)
+        c.drawPath(pointer, outline)
 
         fill.pathEffect = corner
         fill.color = pointerColor
-        canvas.drawPath(pointer, fill)
+        c.drawPath(pointer, fill)
+
+        cachedBitmap = bmp
+        cachedWidth = w
+        cachedHeight = h
+        cachedColor = pointerColor
+        return bmp
+    }
+
+    override fun onDetachedFromWindow() {
+        cachedBitmap?.recycle()
+        cachedBitmap = null
+        cachedWidth = 0
+        cachedHeight = 0
+        super.onDetachedFromWindow()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width
+        val h = height
+        if (w <= 0 || h <= 0) return
+        val bmp = ensureCachedBitmap(w, h) ?: return
+        canvas.drawBitmap(bmp, 0f, 0f, bitmapPaint)
     }
 }

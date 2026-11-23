@@ -14,7 +14,8 @@
   以便在键盘弹出时自动把触控板最小化。
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:accessibilityEventTypes="typeWindowsChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
     android:canPerformGestures="true"
@@ -23,4 +24,5 @@
     android:isAccessibilityTool="true"
     android:notificationTimeout="100"
     android:settingsActivity="io.github.opentouchpad.MainActivity"
-    android:summary="@string/service_description" />
+    android:summary="@string/service_description"
+    tools:ignore="UnusedAttribute" />
