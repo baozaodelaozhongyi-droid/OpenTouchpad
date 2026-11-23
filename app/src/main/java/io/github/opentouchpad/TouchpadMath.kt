@@ -1507,3 +1507,52 @@ internal fun resolveExifRotationDegrees(exifOrientation: Int): Int = when (exifO
     8 -> 270  // ExifInterface.ORIENTATION_ROTATE_270
     else -> 0
 }
+
+/**
+ * 液态玻璃 4-Shader 环境流光重建节流（适配 60/90/120/144/165Hz 多档位刷新率）：
+ * - 按下首帧（prevIntensity <= 0.01f）与抬手回零（newIntensity <= 0.01f）永不节流；
+ * - 默认阈值 13ms：60Hz 屏（16.67ms）抗 ±3ms 抖动稳跑 60Hz，120Hz 稳 60Hz（2:1），144Hz 稳 72Hz（2:1），
+ *   彻底避免 16ms 阈值在 60Hz 屏误掉到 30Hz 或 144Hz 退化到 48Hz 的拍频卡顿；
+ * - 仅用于节流高开销液态玻璃环境着色器，光标与主 3D 倾斜仍保持满刷原生刷新率。
+ */
+internal fun shouldUpdateAmbientGlassShaders(
+    nowMs: Long,
+    lastUpdateMs: Long,
+    prevIntensity: Float,
+    newIntensity: Float,
+    minIntervalMs: Long = 13L,
+): Boolean {
+    if (minIntervalMs <= 0L) return true
+    val isEdgeTransition = (prevIntensity <= 0.01f && newIntensity > 0.01f) ||
+        (newIntensity <= 0.01f && prevIntensity > 0.01f)
+    if (isEdgeTransition) return true
+    val elapsed = nowMs - lastUpdateMs
+    return elapsed < 0L || elapsed >= minIntervalMs
+}
+
+/**
+ * 刷新率 / 触控采样率无关的指数平滑系数：alpha = 1 - exp(-dtSec / tauSec)。
+ * 严格满足数学极限：dtSec <= 0 时返回 0（时间未流逝保持旧值），tauSec <= 0 时返回 1（瞬时跟踪）。
+ */
+internal fun computeVrrEmaAlpha(dtSec: Float, tauSec: Float): Float {
+    if (dtSec <= 0f) return 0f
+    if (tauSec <= 0f) return 1f
+    return (1.0 - kotlin.math.exp((-dtSec / tauSec).toDouble())).toFloat().coerceIn(0f, 1f)
+}
+
+/**
+ * 整板拖动形变单步速度采样 dt：覆盖 240Hz 超高刷屏（~4.17ms）到 20Hz 低刷帧（~50ms）。
+ */
+internal fun resolveDeformSampleDt(sampleGapNs: Long, frameDt: Float): Float =
+    if (sampleGapNs in 3_500_000L..55_000_000L) {
+        sampleGapNs / 1_000_000_000f
+    } else {
+        frameDt.coerceIn(0.004f, 0.040f)
+    }
+
+/**
+ * 整板拖动速度自然衰减的静默判定窗口（ms）：
+ * 低刷（如 30Hz，帧间隔 33.3ms）下自动拉宽至 1.6×帧间隔，避免相邻两帧间误衰减。
+ */
+internal fun resolveDeformDecayDelayMs(frameDt: Float): Long =
+    maxOf(32L, (frameDt * 1000f * 1.6f).toLong())

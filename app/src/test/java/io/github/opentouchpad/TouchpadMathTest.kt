@@ -1612,5 +1612,61 @@ class TouchpadMathTest {
         assertEquals(0, resolveExifRotationDegrees(0))
         assertEquals(0, resolveExifRotationDegrees(99))
     }
+
+    @Test
+    fun shouldUpdateAmbientGlassShadersHandlesEdgesAndAllRefreshRates() {
+        // First press and release-to-zero never throttle, even 1ms later
+        assertTrue(shouldUpdateAmbientGlassShaders(nowMs = 101L, lastUpdateMs = 100L, prevIntensity = 0f, newIntensity = 1f))
+        assertTrue(shouldUpdateAmbientGlassShaders(nowMs = 101L, lastUpdateMs = 100L, prevIntensity = 1f, newIntensity = 0f))
+
+        // 120Hz single frame (8ms < 13ms) throttles -> clean 2:1 = 60Hz
+        assertFalse(shouldUpdateAmbientGlassShaders(nowMs = 108L, lastUpdateMs = 100L, prevIntensity = 1f, newIntensity = 1f))
+        // 144Hz 2 frames (~14ms) and 60Hz with jitter (~14ms) both pass -> 72Hz on 144Hz, steady 60Hz on 60Hz
+        assertTrue(shouldUpdateAmbientGlassShaders(nowMs = 113L, lastUpdateMs = 100L, prevIntensity = 1f, newIntensity = 1f))
+        assertTrue(shouldUpdateAmbientGlassShaders(nowMs = 116L, lastUpdateMs = 100L, prevIntensity = 1f, newIntensity = 1f))
+
+        // Clock reset / negative elapsed passes safely
+        assertTrue(shouldUpdateAmbientGlassShaders(nowMs = 50L, lastUpdateMs = 100L, prevIntensity = 1f, newIntensity = 1f))
+    }
+
+    @Test
+    fun computeVrrEmaAlphaMatchesMathematicalLimitsAndTimeConsistency() {
+        // Strict limit as dt -> 0+ is 0f (keep previous value), NOT 1f
+        assertEquals(0f, computeVrrEmaAlpha(0f, 0.032f), 0.0001f)
+        assertEquals(0f, computeVrrEmaAlpha(-0.01f, 0.032f), 0.0001f)
+        // Zero time constant tracks instantaneously
+        assertEquals(1f, computeVrrEmaAlpha(0.016f, 0f), 0.0001f)
+
+        // Sampling-rate invariance: 4 steps at 240Hz equals 1 step at 60Hz
+        val tau = 0.032f
+        val alpha60 = computeVrrEmaAlpha(1f / 60f, tau)
+        val alpha240 = computeVrrEmaAlpha(1f / 240f, tau)
+        val remain60 = 1f - alpha60
+        var remain240 = 1f
+        repeat(4) { remain240 *= (1f - alpha240) }
+        assertEquals(remain60, remain240, 0.0001f)
+    }
+
+    @Test
+    fun resolveDeformSampleDtCovers20HzTo240Hz() {
+        // 240Hz display (~4.17ms) uses real gap without 8ms truncation
+        assertEquals(0.004167f, resolveDeformSampleDt(4_167_000L, 1f / 240f), 0.0001f)
+        // 165Hz display (~6.06ms) uses real gap
+        assertEquals(0.00606f, resolveDeformSampleDt(6_060_000L, 1f / 165f), 0.0001f)
+        // 20Hz LTPO frame (50ms) uses real gap
+        assertEquals(0.050f, resolveDeformSampleDt(50_000_000L, 0.040f), 0.0001f)
+        // Too-short burst (<3.5ms) falls back to clamped frameDt
+        assertEquals(0.00833f, resolveDeformSampleDt(1_000_000L, 1f / 120f), 0.0001f)
+        assertEquals(0.004f, resolveDeformSampleDt(0L, 0.001f), 0.0001f)
+    }
+
+    @Test
+    fun resolveDeformDecayDelayMsAdaptsToLowRefreshRates() {
+        assertEquals(32L, resolveDeformDecayDelayMs(1f / 120f))
+        assertEquals(32L, resolveDeformDecayDelayMs(1f / 60f))
+        val at30Hz = resolveDeformDecayDelayMs(1f / 30f)
+        assertTrue("30Hz decay delay must exceed 33.3ms frame period, got $at30Hz", at30Hz >= 50L)
+        assertEquals(64L, resolveDeformDecayDelayMs(0.040f))
+    }
 }
 

@@ -1,5 +1,7 @@
 package io.github.opentouchpad
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.TimeInterpolator
 import android.animation.ValueAnimator
 import android.content.Context
@@ -13,6 +15,7 @@ import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
+import android.os.SystemClock
 import android.view.View
 import kotlin.math.roundToInt
 
@@ -163,27 +166,64 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         private set
 
     private var tiltAnimator: ValueAnimator? = null
+    private var lastGlassSurfaceUpdateMs: Long = -1000L
+    private var pendingGlassSurfaceSync = false
+    private var trailingGlassScheduled = false
+
+    private val trailingGlassFlushRunnable = Runnable {
+        trailingGlassScheduled = false
+        if (!pendingGlassSurfaceSync) return@Runnable
+        pendingGlassSurfaceSync = false
+        lastGlassSurfaceUpdateMs = SystemClock.uptimeMillis()
+        if (computeLiquidGlassFactor(opacityPercent.coerceIn(20, 100)) > 0.01f) {
+            surfaceShadersDirty = true
+            invalidate()
+        }
+    }
 
     init {
         setWillNotDraw(false)
     }
 
+    private fun markGlassSurfaceDirtyThrottled(prevIntensity: Float, newIntensity: Float) {
+        if (computeLiquidGlassFactor(opacityPercent.coerceIn(20, 100)) <= 0.01f) {
+            pendingGlassSurfaceSync = false
+            return
+        }
+        val nowMs = SystemClock.uptimeMillis()
+        if (shouldUpdateAmbientGlassShaders(nowMs, lastGlassSurfaceUpdateMs, prevIntensity, newIntensity, 13L)) {
+            if (trailingGlassScheduled) {
+                removeCallbacks(trailingGlassFlushRunnable)
+                trailingGlassScheduled = false
+            }
+            pendingGlassSurfaceSync = false
+            lastGlassSurfaceUpdateMs = nowMs
+            surfaceShadersDirty = true
+        } else {
+            pendingGlassSurfaceSync = true
+            if (!trailingGlassScheduled) {
+                val delayMs = (13L - (nowMs - lastGlassSurfaceUpdateMs)).coerceIn(1L, 13L)
+                trailingGlassScheduled = true
+                postDelayed(trailingGlassFlushRunnable, delayMs)
+            }
+        }
+    }
+
     fun setTilt(normX: Float, normY: Float, intensity: Float) {
-        tiltAnimator?.cancel()
-        tiltAnimator = null
         val nx = normX.coerceIn(-1f, 1f)
         val ny = normY.coerceIn(-1f, 1f)
         val ni = intensity.coerceIn(0f, 1f)
         if (!quantizeTiltChanged(tiltNormX, tiltNormY, tiltIntensity, nx, ny, ni)) {
             return
         }
+        tiltAnimator?.cancel()
+        tiltAnimator = null
+        val prevIntensity = tiltIntensity
         tiltNormX = nx
         tiltNormY = ny
         tiltIntensity = ni
         tiltShaderDirty = true
-        if (computeLiquidGlassFactor(opacityPercent.coerceIn(20, 100)) > 0.01f) {
-            surfaceShadersDirty = true
-        }
+        markGlassSurfaceDirtyThrottled(prevIntensity, ni)
         invalidate()
     }
 
@@ -198,27 +238,54 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         val startX = tiltNormX
         val startY = tiltNormY
         val startI = tiltIntensity
-        val isGlass = computeLiquidGlassFactor(opacityPercent.coerceIn(20, 100)) > 0.01f
         val anim = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = durationMs
             this.interpolator = interpolator
             addUpdateListener { va ->
                 val f = va.animatedFraction
-                val nx = startX + (targetNormX - startX) * f
-                val ny = startY + (targetNormY - startY) * f
-                val ni = startI + (targetIntensity - startI) * f
+                val nx = (startX + (targetNormX - startX) * f).coerceIn(-1f, 1f)
+                val ny = (startY + (targetNormY - startY) * f).coerceIn(-1f, 1f)
+                val ni = (startI + (targetIntensity - startI) * f).coerceIn(0f, 1f)
                 if (f < 1f && !quantizeTiltChanged(tiltNormX, tiltNormY, tiltIntensity, nx, ny, ni, 0.005f)) {
                     return@addUpdateListener
                 }
+                val prevIntensity = tiltIntensity
                 tiltNormX = nx
                 tiltNormY = ny
                 tiltIntensity = ni
                 tiltShaderDirty = true
-                if (isGlass) {
-                    surfaceShadersDirty = true
-                }
+                markGlassSurfaceDirtyThrottled(prevIntensity, ni)
                 invalidate()
             }
+            addListener(object : AnimatorListenerAdapter() {
+                private var canceled = false
+                override fun onAnimationCancel(animation: Animator) {
+                    canceled = true
+                }
+                override fun onAnimationEnd(animation: Animator) {
+                    if (canceled) return
+                    val finalX = targetNormX.coerceIn(-1f, 1f)
+                    val finalY = targetNormY.coerceIn(-1f, 1f)
+                    val finalI = targetIntensity.coerceIn(0f, 1f)
+                    val changed = tiltNormX != finalX || tiltNormY != finalY || tiltIntensity != finalI
+                    if (changed || pendingGlassSurfaceSync) {
+                        if (trailingGlassScheduled) {
+                            removeCallbacks(trailingGlassFlushRunnable)
+                            trailingGlassScheduled = false
+                        }
+                        pendingGlassSurfaceSync = false
+                        lastGlassSurfaceUpdateMs = SystemClock.uptimeMillis()
+                        tiltNormX = finalX
+                        tiltNormY = finalY
+                        tiltIntensity = finalI
+                        tiltShaderDirty = true
+                        if (computeLiquidGlassFactor(opacityPercent.coerceIn(20, 100)) > 0.01f) {
+                            surfaceShadersDirty = true
+                        }
+                        invalidate()
+                    }
+                }
+            })
         }
         tiltAnimator = anim
         anim.start()
@@ -236,6 +303,11 @@ class TouchpadSurfaceView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         tiltAnimator?.cancel()
         tiltAnimator = null
+        if (trailingGlassScheduled) {
+            removeCallbacks(trailingGlassFlushRunnable)
+            trailingGlassScheduled = false
+        }
+        pendingGlassSurfaceSync = false
         super.onDetachedFromWindow()
     }
 

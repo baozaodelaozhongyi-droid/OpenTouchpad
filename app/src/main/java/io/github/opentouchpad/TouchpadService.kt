@@ -27,7 +27,6 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
-import android.hardware.display.DisplayManager
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -35,7 +34,6 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Choreographer
-import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -110,32 +108,54 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
-    private var screenOffReceiverRegistered = false
-    private val screenOffReceiver = object : BroadcastReceiver() {
+    private var screenStateReceiverRegistered = false
+    private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                onScreenTurnedOff()
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> onScreenTurnedOff()
+                Intent.ACTION_SCREEN_ON -> syncScreenBoundsIfChanged(rebuildNow = true)
             }
         }
     }
 
-    private var displayManager: DisplayManager? = null
-    private var displayListenerRegistered = false
-    private val displayListener = object : DisplayManager.DisplayListener {
-        override fun onDisplayAdded(displayId: Int) = Unit
-        override fun onDisplayRemoved(displayId: Int) = Unit
-        override fun onDisplayChanged(displayId: Int) {
-            if (displayId != Display.DEFAULT_DISPLAY || !::wm.isInitialized || !::prefs.isInitialized) return
-            val oldW = screenW
-            val oldH = screenH
-            refreshScreenMetrics()
-            if (screenW != oldW || screenH != oldH) {
-                cursorX = clampGestureCoord(cursorX, screenW)
-                cursorY = clampGestureCoord(cursorY, screenH)
+    private var pendingBoundsRebuild = false
+    private val deferredBoundsCheckRunnable = Runnable {
+        if (!hasActiveTouch()) {
+            syncScreenBoundsIfChanged(rebuildNow = true)
+        }
+    }
+
+    private fun hasActiveTouch(): Boolean =
+        padFingerDown || movingPanel || resizingPanel || isDraggingBall
+
+    /**
+     * 惰性同步屏幕尺寸：替代常驻 DisplayListener，彻底消除 LTPO 屏幕每次 120↔90↔60↔30↔10↔1Hz
+     * 自动换档时唤醒服务主线程；在 ACTION_DOWN 传 rebuildNow = false 仅更新边界不毁窗，
+     * 待手势结束（ACTION_UP/CANCEL）再安全重建，杜绝手势中途撕毁接收触摸的窗口。
+     */
+    private fun syncScreenBoundsIfChanged(rebuildNow: Boolean) {
+        if (!::wm.isInitialized || !::prefs.isInitialized) return
+        val oldW = screenW
+        val oldH = screenH
+        refreshScreenMetrics()
+        if (screenW != oldW || screenH != oldH) {
+            cursorX = clampGestureCoord(cursorX, screenW)
+            cursorY = clampGestureCoord(cursorY, screenH)
+            if (rebuildNow) {
+                pendingBoundsRebuild = false
                 buildPanel()
                 updateCursor(immediate = true)
+            } else {
+                pendingBoundsRebuild = true
             }
         }
+    }
+
+    private fun flushPendingBoundsRebuild() {
+        if (!pendingBoundsRebuild || hasActiveTouch()) return
+        pendingBoundsRebuild = false
+        buildPanel()
+        updateCursor(immediate = true)
     }
 
     private var activeDialog: AlertDialog? = null
@@ -307,13 +327,21 @@ class TouchpadService : AccessibilityService() {
     private var ballSwipeTracker = BallSwipeTracker(0f, 0f)
     private var ballBgView: View? = null
     private var ballIconView: ImageView? = null
+    private var lastMoveHandleTiltMs = -1000L
     private var lastDragRawX = 0f
     private var lastDragRawY = 0f
-    private var ballDragLastTimeMs = 0L
+    private var ballDragLastTimeNs = 0L
     private var ballDragVelocityX = 0f
     private var ballDragVelocityY = 0f
     private var ballDragCurrentRotation = 0f
     private var ballDragHoverSettled = true
+
+    private fun motionEventTimeNs(e: MotionEvent): Long =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            e.eventTimeNanos
+        } else {
+            e.eventTime * 1_000_000L
+        }
 
     private val ballSingleTapRunnable = Runnable {
         if (isWaitingForBallDoubleTap) {
@@ -336,7 +364,7 @@ class TouchpadService : AccessibilityService() {
             ballDragVelocityX = 0f
             ballDragVelocityY = 0f
             ballDragCurrentRotation = 0f
-            ballDragLastTimeMs = SystemClock.uptimeMillis()
+            ballDragLastTimeNs = 0L
             lastDragRawX = ballFromX
             lastDragRawY = ballFromY
             ballBgView?.animate()?.cancel()
@@ -489,6 +517,8 @@ class TouchpadService : AccessibilityService() {
         cancelPendingLayouts()
         pendingPassThroughDispatchRunnable?.let { main.removeCallbacks(it) }
         pendingPassThroughDispatchRunnable = null
+        main.removeCallbacks(deferredBoundsCheckRunnable)
+        pendingBoundsRebuild = false
         main.removeCallbacksAndMessages(null)
         gestureQueue.clear()
         isDispatching = false
@@ -510,38 +540,26 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun registerSystemListeners() {
-        if (!screenOffReceiverRegistered) {
+        if (!screenStateReceiverRegistered) {
             runCatching {
-                val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+                val filter = IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_OFF)
+                    addAction(Intent.ACTION_SCREEN_ON)
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    registerReceiver(screenOffReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    registerReceiver(screenStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
                 } else {
-                    registerReceiver(screenOffReceiver, filter)
+                    registerReceiver(screenStateReceiver, filter)
                 }
-                screenOffReceiverRegistered = true
-            }
-        }
-        if (!displayListenerRegistered) {
-            runCatching {
-                val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
-                if (dm != null) {
-                    displayManager = dm
-                    dm.registerDisplayListener(displayListener, main)
-                    displayListenerRegistered = true
-                }
+                screenStateReceiverRegistered = true
             }
         }
     }
 
     private fun unregisterSystemListeners() {
-        if (screenOffReceiverRegistered) {
-            runCatching { unregisterReceiver(screenOffReceiver) }
-            screenOffReceiverRegistered = false
-        }
-        if (displayListenerRegistered) {
-            runCatching { displayManager?.unregisterDisplayListener(displayListener) }
-            displayListenerRegistered = false
-            displayManager = null
+        if (screenStateReceiverRegistered) {
+            runCatching { unregisterReceiver(screenStateReceiver) }
+            screenStateReceiverRegistered = false
         }
     }
 
@@ -549,6 +567,8 @@ class TouchpadService : AccessibilityService() {
         main.removeCallbacks(longPressRunnable)
         main.removeCallbacks(ballLongPressRunnable)
         main.removeCallbacks(ballSingleTapRunnable)
+        main.removeCallbacks(deferredBoundsCheckRunnable)
+        pendingBoundsRebuild = false
         cancelPendingLayouts()
         padFingerDown = false
         movingPanel = false
@@ -598,6 +618,8 @@ class TouchpadService : AccessibilityService() {
         cancelPendingLayouts()
         pendingPassThroughDispatchRunnable?.let { main.removeCallbacks(it) }
         pendingPassThroughDispatchRunnable = null
+        main.removeCallbacks(deferredBoundsCheckRunnable)
+        pendingBoundsRebuild = false
         main.removeCallbacksAndMessages(null)
         padFingerDown = false
         stopPanelDeformation(resetVisuals = true)
@@ -648,11 +670,15 @@ class TouchpadService : AccessibilityService() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        main.removeCallbacks(deferredBoundsCheckRunnable)
+        pendingBoundsRebuild = false
         refreshScreenMetrics(newConfig)
         cursorX = clampGestureCoord(cursorX, screenW)
         cursorY = clampGestureCoord(cursorY, screenH)
         buildPanel()
         updateCursor(immediate = true)
+        // 部分定制系统在 onConfigurationChanged 瞬间 maximumWindowMetrics 滞后 1 帧，120ms 后静默兜底校验一次
+        main.postDelayed(deferredBoundsCheckRunnable, 120L)
     }
 
     /** 设置界面改完之后调用：重建所有视图。 */
@@ -940,6 +966,7 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun buildPanel(animate: Boolean = false) {
+        pendingBoundsRebuild = false
         // 用户主动展开/收起时做过渡动画：旧窗口先摘下来单独播放退场，再建新窗口播放入场。
         val outgoing = if (animate) detachPanelForTransition() else null
         removePanel()
@@ -1612,6 +1639,7 @@ class TouchpadService : AccessibilityService() {
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    syncScreenBoundsIfChanged(rebuildNow = false)
                     isDown = true
                     longPressFired = false
                     downX = event.x
@@ -1666,6 +1694,7 @@ class TouchpadService : AccessibilityService() {
                     }
                     if (longPressFired) {
                         longPressFired = false
+                        flushPendingBoundsRebuild()
                         return@setOnTouchListener true
                     }
                     if (wasDown) {
@@ -1675,6 +1704,7 @@ class TouchpadService : AccessibilityService() {
                             performAction(action)
                         }
                     }
+                    flushPendingBoundsRebuild()
                     true
                 }
 
@@ -1686,6 +1716,7 @@ class TouchpadService : AccessibilityService() {
                     if (cachedPressFeedback) {
                         PressFeedback.applyButtonRelease(v)
                     }
+                    flushPendingBoundsRebuild()
                     true
                 }
 
@@ -1730,11 +1761,13 @@ class TouchpadService : AccessibilityService() {
         if (isPassThroughActive) {
             if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
                 padFingerDown = false
+                flushPendingBoundsRebuild()
             }
             return
         }
         val slop = dp(6).toFloat()
         if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+            syncScreenBoundsIfChanged(rebuildNow = false)
             val pad = padArea
             padTouchIgnored = pad != null && !insideTouchArea(
                 e.x, e.y, pad.width.toFloat(), pad.height.toFloat(), padCornerRadius,
@@ -1743,7 +1776,10 @@ class TouchpadService : AccessibilityService() {
             refreshPanelScreenLocation()
         }
         if (padTouchIgnored) {
-            if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) padTouchIgnored = false
+            if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
+                padTouchIgnored = false
+                flushPendingBoundsRebuild()
+            }
             return
         }
         val panelX = panelLocationOnScreen[0]
@@ -1832,6 +1868,7 @@ class TouchpadService : AccessibilityService() {
                 if (dragging) {
                     // 拖拽锁定期间圆环继续跟着光标，等第二次按拖拽锁定再收缩
                     customSwipeArmed = false
+                    flushPendingBoundsRebuild()
                     return
                 }
                 val minSwipeDist = dp(CUSTOM_SWIPE_MIN_DISTANCE_DP).toFloat()
@@ -1852,6 +1889,7 @@ class TouchpadService : AccessibilityService() {
                     PadTouchOutcome.MOVE_ONLY -> Unit
                 }
                 customSwipeArmed = false
+                flushPendingBoundsRebuild()
             }
 
             MotionEvent.ACTION_CANCEL -> {
@@ -1865,6 +1903,7 @@ class TouchpadService : AccessibilityService() {
                 swipeVelocityTracker.reset()
                 if (customSwipeArmed) touchRing?.release()
                 customSwipeArmed = false
+                flushPendingBoundsRebuild()
             }
         }
     }
@@ -1921,21 +1960,17 @@ class TouchpadService : AccessibilityService() {
             if (movingPanel) {
                 if (hasPendingMove) {
                     val sampleGapNs = if (moveLastSampleNs > 0L) frameTimeNanos - moveLastSampleNs else 0L
-                    val sampleDt = if (sampleGapNs in 6_000_000L..50_000_000L) {
-                        sampleGapNs / 1_000_000_000f
-                    } else {
-                        frameDt.coerceIn(0.008f, 0.033f)
-                    }
+                    val sampleDt = resolveDeformSampleDt(sampleGapNs, frameDt)
                     val rawVx = movePendingDx / sampleDt
                     val rawVy = movePendingDy / sampleDt
                     movePendingDx = 0f
                     movePendingDy = 0f
                     moveLastSampleNs = frameTimeNanos
 
-                    val alpha = 1f - kotlin.math.exp(-sampleDt / 0.032f)
+                    val alpha = computeVrrEmaAlpha(sampleDt, 0.032f)
                     moveSmoothedVx += (rawVx - moveSmoothedVx) * alpha
                     moveSmoothedVy += (rawVy - moveSmoothedVy) * alpha
-                } else if (nowMs - moveLastEventTimeMs >= 32L) {
+                } else if (nowMs - moveLastEventTimeMs >= resolveDeformDecayDelayMs(frameDt)) {
                     val decay = kotlin.math.exp(-frameDt / 0.045f)
                     moveSmoothedVx *= decay
                     moveSmoothedVy *= decay
@@ -1988,17 +2023,20 @@ class TouchpadService : AccessibilityService() {
             if (!padFingerDown) {
                 (padArea as? TouchpadSurfaceView)?.setTilt(tiltX, tiltY, (mag * 0.65f).coerceIn(0f, 0.8f))
             }
-            movingHandleView?.let { setBubbleViewTilt(it, tiltX, tiltY) }
+            val shouldPause = movingPanel && !hasPendingMove &&
+                abs(moveSmoothedVx) < 0.5f && abs(moveSmoothedVy) < 0.5f &&
+                isPanelSpringAtRestForTarget(panelSpringState, target.x, target.y, targetGrab)
+            if (shouldPause || shouldUpdateAmbientGlassShaders(nowMs, lastMoveHandleTiltMs, 1f, 1f, 13L)) {
+                lastMoveHandleTiltMs = nowMs
+                movingHandleView?.let { setBubbleViewTilt(it, tiltX, tiltY) }
+            }
 
             if (!movingPanel && panelSpringState.isSettled) {
                 stopPanelDeformation(resetVisuals = true)
                 return
             }
             // 按住移动把手但手指完全停顿且弹簧已收敛时，暂停 Choreographer 空转，等待下次移动或松手再唤醒
-            if (movingPanel && !hasPendingMove &&
-                abs(moveSmoothedVx) < 0.5f && abs(moveSmoothedVy) < 0.5f &&
-                isPanelSpringAtRestForTarget(panelSpringState, target.x, target.y, targetGrab)
-            ) {
+            if (shouldPause) {
                 panelDeformRunning = false
                 panelDeformLastFrameNs = 0L
                 return
@@ -2020,6 +2058,7 @@ class TouchpadService : AccessibilityService() {
             runCatching { Choreographer.getInstance().removeFrameCallback(panelDeformFrameCallback) }
         }
         panelDeformLastFrameNs = 0L
+        lastMoveHandleTiltMs = -1000L
         movePendingDx = 0f
         movePendingDy = 0f
         moveLastSampleNs = 0L
@@ -2039,6 +2078,7 @@ class TouchpadService : AccessibilityService() {
     private fun handleMoveTouch(v: View, e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                syncScreenBoundsIfChanged(rebuildNow = false)
                 movingPanel = true
                 if (movingHandleView !== v) {
                     movingHandleView?.let { setBubbleViewTilt(it, 0f, 0f) }
@@ -2114,6 +2154,7 @@ class TouchpadService : AccessibilityService() {
                     prefs.setPadPosition(isLandscape(), lp.x, lp.y)
                 }
                 startPanelDeformationLoop()
+                flushPendingBoundsRebuild()
             }
         }
         return true
@@ -2122,6 +2163,7 @@ class TouchpadService : AccessibilityService() {
     private fun handleResizeTouch(v: View, e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                syncScreenBoundsIfChanged(rebuildNow = false)
                 stopPanelDeformation(resetVisuals = true)
                 resizingPanel = true
                 resizingFromX = e.rawX
@@ -2182,6 +2224,7 @@ class TouchpadService : AccessibilityService() {
                     panel?.post { keepPanelInBounds() }
                     onPanelResized?.invoke(resizingCurrentWidthDp, resizingCurrentExtraHeightDp)
                 }
+                flushPendingBoundsRebuild()
             }
         }
         return true
@@ -2291,10 +2334,12 @@ class TouchpadService : AccessibilityService() {
                 } else {
                     keepBallInBounds()
                 }
+                flushPendingBoundsRebuild()
             }
             MotionEvent.ACTION_CANCEL -> {
                 flushPendingLayoutsNow()
                 keepBallInBounds()
+                flushPendingBoundsRebuild()
             }
         }
         return true
@@ -2302,6 +2347,9 @@ class TouchpadService : AccessibilityService() {
 
     private fun handleBallTouch(v: View, e: MotionEvent): Boolean {
         if (isPassThroughActive) return false
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+            syncScreenBoundsIfChanged(rebuildNow = false)
+        }
         if (!prefs.ballGesturesEnabled) {
             return handleSimpleBallTouch(v, e)
         }
@@ -2337,7 +2385,7 @@ class TouchpadService : AccessibilityService() {
                 ballFromY = e.rawY
                 lastDragRawX = e.rawX
                 lastDragRawY = e.rawY
-                ballDragLastTimeMs = SystemClock.uptimeMillis()
+                ballDragLastTimeNs = 0L
                 ballDragVelocityX = 0f
                 ballDragVelocityY = 0f
                 ballDragCurrentRotation = 0f
@@ -2379,52 +2427,64 @@ class TouchpadService : AccessibilityService() {
                         }
                     }
 
-                    // 长按移动动效：速度感应果冻形变、跟手倾斜与内核图标视差动效
-                    val now = SystemClock.uptimeMillis()
-                    val dt = (now - ballDragLastTimeMs).coerceIn(8L, 100L) / 1000f
-                    val stepDx = e.rawX - lastDragRawX
-                    val stepDy = e.rawY - lastDragRawY
-                    lastDragRawX = e.rawX
-                    lastDragRawY = e.rawY
-                    ballDragLastTimeMs = now
+                    // 长按移动动效：使用硬件事件时间戳 + 首包播种 + <1.5ms 粘包位移累积 + 时间常数 EMA，
+                    // 保证 60/90/120/144/165/240Hz 显示刷新与高触控采样率下手感完全一致、无首帧跳变尖峰
+                    val eventTimeNs = motionEventTimeNs(e)
+                    if (ballDragLastTimeNs == 0L) {
+                        ballDragLastTimeNs = eventTimeNs
+                        lastDragRawX = e.rawX
+                        lastDragRawY = e.rawY
+                    } else {
+                        val rawDtNs = eventTimeNs - ballDragLastTimeNs
+                        if (rawDtNs >= 1_500_000L) {
+                            val dt = (rawDtNs / 1_000_000_000f).coerceIn(0.0015f, 0.100f)
+                            val stepDx = e.rawX - lastDragRawX
+                            val stepDy = e.rawY - lastDragRawY
+                            lastDragRawX = e.rawX
+                            lastDragRawY = e.rawY
+                            ballDragLastTimeNs = eventTimeNs
 
-                    val rawVx = stepDx / dt
-                    val rawVy = stepDy / dt
-                    ballDragVelocityX = ballDragVelocityX * 0.60f + rawVx * 0.40f
-                    ballDragVelocityY = ballDragVelocityY * 0.60f + rawVy * 0.40f
+                            val rawVx = stepDx / dt
+                            val rawVy = stepDy / dt
+                            val velAlpha = computeVrrEmaAlpha(dt, 0.032f)
+                            ballDragVelocityX += (rawVx - ballDragVelocityX) * velAlpha
+                            ballDragVelocityY += (rawVy - ballDragVelocityY) * velAlpha
 
-                    val speed = kotlin.math.hypot(ballDragVelocityX, ballDragVelocityY)
-                    if (speed > dp(30)) {
-                        if (ballDragHoverSettled) {
-                            ballDragHoverSettled = false
-                            ballBgView?.animate()?.cancel()
-                            ballIconView?.animate()?.cancel()
+                            val speed = kotlin.math.hypot(ballDragVelocityX, ballDragVelocityY)
+                            if (speed > dp(30)) {
+                                if (ballDragHoverSettled) {
+                                    ballDragHoverSettled = false
+                                    ballBgView?.animate()?.cancel()
+                                    ballIconView?.animate()?.cancel()
+                                }
+                                val dirX = ballDragVelocityX / speed
+                                val dirY = ballDragVelocityY / speed
+                                val motionState = computeDragMotionState(
+                                    speedPxPerSec = speed,
+                                    dirX = dirX,
+                                    dirY = dirY,
+                                    baseScale = 1.16f,
+                                    refSpeedPxPerSec = dp(500).toFloat(),
+                                    maxExtraStretch = 0.22f,
+                                    maxSquash = 0.18f,
+                                    maxParallaxPx = dp(5).toFloat(),
+                                )
+                                val rotAlpha = computeVrrEmaAlpha(dt, 0.028f)
+                                ballDragCurrentRotation = lerpAngleDeg(ballDragCurrentRotation, motionState.rotationDeg, rotAlpha)
+                                ballBgView?.rotation = ballDragCurrentRotation
+                                ballBgView?.scaleX = motionState.stretch
+                                ballBgView?.scaleY = motionState.squash
+                                ballIconView?.translationX = motionState.iconTranslationX
+                                ballIconView?.translationY = motionState.iconTranslationY
+                            } else if (!ballDragHoverSettled) {
+                                // 速度降至悬停或微动时仅触发一次平滑回弹至饱满圆形，避免每帧打断重启
+                                ballDragHoverSettled = true
+                                ballBgView?.animate()?.cancel()
+                                ballBgView?.animate()?.rotation(0f)?.scaleX(1.16f)?.scaleY(1.16f)?.setDuration(120)?.start()
+                                ballIconView?.animate()?.cancel()
+                                ballIconView?.animate()?.translationX(0f)?.translationY(0f)?.setDuration(120)?.start()
+                            }
                         }
-                        val dirX = ballDragVelocityX / speed
-                        val dirY = ballDragVelocityY / speed
-                        val motionState = computeDragMotionState(
-                            speedPxPerSec = speed,
-                            dirX = dirX,
-                            dirY = dirY,
-                            baseScale = 1.16f,
-                            refSpeedPxPerSec = dp(500).toFloat(),
-                            maxExtraStretch = 0.22f,
-                            maxSquash = 0.18f,
-                            maxParallaxPx = dp(5).toFloat(),
-                        )
-                        ballDragCurrentRotation = lerpAngleDeg(ballDragCurrentRotation, motionState.rotationDeg, 0.45f)
-                        ballBgView?.rotation = ballDragCurrentRotation
-                        ballBgView?.scaleX = motionState.stretch
-                        ballBgView?.scaleY = motionState.squash
-                        ballIconView?.translationX = motionState.iconTranslationX
-                        ballIconView?.translationY = motionState.iconTranslationY
-                    } else if (!ballDragHoverSettled) {
-                        // 速度降至悬停或微动时仅触发一次平滑回弹至饱满圆形，避免每帧打断重启
-                        ballDragHoverSettled = true
-                        ballBgView?.animate()?.cancel()
-                        ballBgView?.animate()?.rotation(0f)?.scaleX(1.16f)?.scaleY(1.16f)?.setDuration(120)?.start()
-                        ballIconView?.animate()?.cancel()
-                        ballIconView?.animate()?.translationX(0f)?.translationY(0f)?.setDuration(120)?.start()
                     }
                 } else {
                     if (ballSwipeTracker.onMove(dist)) {
@@ -2461,6 +2521,7 @@ class TouchpadService : AccessibilityService() {
 
                 if (isDraggingBall) {
                     isDraggingBall = false
+                    ballDragLastTimeNs = 0L
                     ballDragHoverSettled = true
                     ballBgView?.animate()?.cancel()
                     ballIconView?.animate()?.cancel()
@@ -2538,6 +2599,7 @@ class TouchpadService : AccessibilityService() {
                     isWaitingForBallDoubleTap = false
                     snapBallBackToAnchor()
                 }
+                flushPendingBoundsRebuild()
             }
             MotionEvent.ACTION_CANCEL -> {
                 main.removeCallbacks(ballLongPressRunnable)
@@ -2548,6 +2610,7 @@ class TouchpadService : AccessibilityService() {
                 resetBallDeformation(animated = true, duration = 180L)
                 if (isDraggingBall) {
                     isDraggingBall = false
+                    ballDragLastTimeNs = 0L
                     ballDragHoverSettled = true
                     ballBgView?.animate()?.cancel()
                     ballIconView?.animate()?.cancel()
@@ -2559,6 +2622,7 @@ class TouchpadService : AccessibilityService() {
                 }
                 ballLongPressTriggered = false
                 ballMoved = false
+                flushPendingBoundsRebuild()
             }
         }
         return true
