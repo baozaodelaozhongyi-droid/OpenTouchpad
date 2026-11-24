@@ -7,17 +7,20 @@ import android.graphics.Color
 import android.graphics.CornerPathEffect
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.view.View
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * 箭头光标：实心圆角三角箭头（尖端朝左上，底部有一个向内的缺口），
  * 外面一圈对比色描边 + 柔和投影。尖端固定在视图左上角，保证点击位置和尖端对齐。
  *
- * 采用按尺寸与颜色按需预渲染的小位图缓存：
+ * 采用按尺寸与颜色按需预渲染的 2× 超采样位图缓存：
  * - 去除 View 级 LAYER_TYPE_SOFTWARE，消除软件图层合成开销；
- * - 仅在光标尺寸或颜色变更时渲染一次（含圆角路径与柔和阴影，API 26–36 视觉完全一致）；
- * - 日常绘制零对象分配，仅执行单次硬件 drawBitmap。
+ * - 仅在光标尺寸或颜色变更时以 2× 超采样渲染一次（含圆角路径与柔和阴影，API 26–36 视觉完全一致）；
+ * - 显式指定 DENSITY_NONE 与目标矩形绘制，杜绝密度变更时的二次缩放模糊；
+ * - 日常绘制零对象分配，仅执行单次硬件 drawBitmap 下采样。
  */
 class CursorArrowView(context: Context) : View(context) {
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
@@ -28,6 +31,7 @@ class CursorArrowView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
     }
     private val pointer = Path()
+    private val dstRect = Rect()
 
     private var cachedBitmap: Bitmap? = null
     private var cachedWidth = 0
@@ -54,13 +58,22 @@ class CursorArrowView(context: Context) : View(context) {
         ) {
             return existing
         }
-        existing?.recycle()
+        // View 仍附着窗口时不调用 recycle()，避免硬件加速下 RenderThread 回放上一帧 DisplayList 产生竞态
         cachedBitmap = null
 
-        val bmp = runCatching { Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888) }.getOrNull() ?: return null
+        val targetScale = cursorSupersampleScale(w, h)
+        val bw = (w * targetScale).roundToInt().coerceAtLeast(w)
+        val bh = (h * targetScale).roundToInt().coerceAtLeast(h)
+        val bmp = runCatching { Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888) }.getOrNull()
+            ?: (if (bw != w || bh != h) runCatching { Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888) }.getOrNull() else null)
+            ?: return null
+        bmp.density = Bitmap.DENSITY_NONE
+
+        val scale = min(bmp.width.toFloat() / w, bmp.height.toFloat() / h)
         val c = Canvas(bmp)
-        val size = min(w, h).toFloat()
-        val ring = (size * 0.09f).coerceAtLeast(2f)
+        val viewSize = min(w, h).toFloat()
+        val size = viewSize * scale
+        val ring = cursorHotspotOffset(viewSize) * scale
         val o = ring
         val u = (size - ring * 2.6f) / 24f
 
@@ -117,6 +130,7 @@ class CursorArrowView(context: Context) : View(context) {
         val h = height
         if (w <= 0 || h <= 0) return
         val bmp = ensureCachedBitmap(w, h) ?: return
-        canvas.drawBitmap(bmp, 0f, 0f, bitmapPaint)
+        dstRect.set(0, 0, w, h)
+        canvas.drawBitmap(bmp, null, dstRect, bitmapPaint)
     }
 }

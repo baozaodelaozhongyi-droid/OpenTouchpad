@@ -155,6 +155,7 @@ class TouchpadService : AccessibilityService() {
             pendingBoundsRebuild = false
             pendingKeyboardMinimizeSync = false
             buildPanel()
+            syncCursorSizeForCurrentDensity()
             updateCursor(immediate = true)
             syncKeyboardMinimize()
         } else if (pendingKeyboardMinimizeSync) {
@@ -192,6 +193,7 @@ class TouchpadService : AccessibilityService() {
                 pendingBoundsRebuild = false
                 main.removeCallbacks(flushBoundsRebuildRunnable)
                 buildPanel()
+                syncCursorSizeForCurrentDensity()
                 updateCursor(immediate = true)
             } else {
                 pendingBoundsRebuild = true
@@ -927,6 +929,7 @@ class TouchpadService : AccessibilityService() {
                 main.removeCallbacks(flushBoundsRebuildRunnable)
                 buildPanel()
             }
+            syncCursorSizeForCurrentDensity()
             updateCursor(immediate = true)
         }
         // 部分定制系统在 onConfigurationChanged 瞬间 maximumWindowMetrics 滞后 1 帧，120ms 后静默兜底校验一次
@@ -1179,10 +1182,25 @@ class TouchpadService : AccessibilityService() {
         if (cp.width != size || cp.height != size) {
             cp.width = size
             cp.height = size
+            val sizePx = size.toFloat()
+            cp.x = cursorViewOriginCoord(cursorX, sizePx)
+            cp.y = cursorViewOriginCoord(cursorY, sizePx)
             pendingCursorLayout = true
             scheduleLayoutFlush()
         }
         cv.invalidate()
+    }
+
+    /** 屏幕密度或显示尺寸变化时同步光标窗口像素尺寸，供紧随其后的 updateCursor(immediate = true) 提交。 */
+    private fun syncCursorSizeForCurrentDensity() {
+        if (!this::prefs.isInitialized) return
+        val cp = cursorParams ?: return
+        val size = dp(prefs.cursorSizeDp.coerceIn(CURSOR_MIN_DP, CURSOR_MAX_DP))
+        if (cp.width != size || cp.height != size) {
+            cp.width = size
+            cp.height = size
+            cursorView?.invalidate()
+        }
     }
 
     /** 实时平滑更新点击特效颜色与开关（零闪烁），关闭时彻底移除悬浮窗释放显存，不在设置切换时触发屏幕预览。 */
@@ -1266,7 +1284,8 @@ class TouchpadService : AccessibilityService() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START

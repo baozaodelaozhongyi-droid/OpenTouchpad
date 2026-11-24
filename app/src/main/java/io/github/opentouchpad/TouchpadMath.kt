@@ -11,6 +11,8 @@ internal const val FLOATING_BALL_MIN_DP = 16
 internal const val FLOATING_BALL_MAX_DP = 140
 internal const val CURSOR_MIN_DP = 8
 internal const val CURSOR_MAX_DP = 160
+internal const val CURSOR_SUPERSAMPLE_FACTOR = 2
+internal const val CURSOR_MAX_BITMAP_DIM_PX = 1024
 internal const val BUTTON_SPACING_MAX_DP = 24
 internal const val DEFAULT_PANEL_WIDTH_DP = 168
 internal const val CONTROL_EXTRA_HEIGHT_MAX_DP = 400
@@ -206,6 +208,20 @@ internal fun customSwipeFrom(
 
 internal fun cursorHotspotOffset(sizePx: Float): Float =
     if (sizePx > 0f) (sizePx * 0.09f).coerceAtLeast(2f) else 0f
+
+/** 计算光标离屏缓存的超采样倍率：常规尺寸固定 2×，极端超大尺寸按上限封顶防止显存暴涨，且永不低于 1×。 */
+internal fun cursorSupersampleScale(
+    viewWidthPx: Int,
+    viewHeightPx: Int,
+    targetFactor: Int = CURSOR_SUPERSAMPLE_FACTOR,
+    maxBitmapDimPx: Int = CURSOR_MAX_BITMAP_DIM_PX,
+): Float {
+    val maxDim = maxOf(viewWidthPx, viewHeightPx)
+    if (maxDim <= 0) return 1f
+    val target = targetFactor.coerceAtLeast(1).toFloat()
+    if (maxBitmapDimPx <= 0) return target
+    return minOf(target, (maxBitmapDimPx.toFloat() / maxDim).coerceAtLeast(1f))
+}
 
 internal fun cursorViewOrigin(cursorX: Float, cursorY: Float, sizePx: Float = 0f): PanelPosition {
     val o = cursorHotspotOffset(sizePx)

@@ -2198,5 +2198,31 @@ class TouchpadMathTest {
         assertEquals(1f, computeSparkParticleBlurStrength(9f, ref), 0.0001f)
         assertEquals(0f, computeSparkParticleBlurStrength(5f, 0f), 0.0001f)
     }
+
+    @Test
+    fun cursorSupersampleScaleUses2xAndCapsExtremeDimensions() {
+        // Default 36dp at 440dpi (~99px) and 2K 4x (~144px) -> full 2x
+        assertEquals(2f, cursorSupersampleScale(99, 99), 0.0001f)
+        assertEquals(2f, cursorSupersampleScale(144, 144), 0.0001f)
+        // Exact boundary 512px -> still full 2x (1024px)
+        assertEquals(2f, cursorSupersampleScale(512, 512), 0.0001f)
+        // Large cursor 160dp @ 4x (640px) -> capped at 1024 / 640 = 1.6x
+        assertEquals(1.6f, cursorSupersampleScale(640, 640), 0.0001f)
+        // Never downscales below 1x even if view exceeds max cap
+        assertEquals(1f, cursorSupersampleScale(1280, 1280), 0.0001f)
+        // Non-positive dimensions safely return 1x
+        assertEquals(1f, cursorSupersampleScale(0, 0), 0.0001f)
+        assertEquals(1f, cursorSupersampleScale(-10, -10), 0.0001f)
+    }
+
+    @Test
+    fun cursorSupersampledHotspotMatchesViewHotspotAtAllSizes() {
+        for (viewSize in listOf(16, 20, 72, 99, 144, 640)) {
+            val scale = cursorSupersampleScale(viewSize, viewSize)
+            val viewHotspot = cursorHotspotOffset(viewSize.toFloat())
+            val supersampledRing = viewHotspot * scale
+            assertEquals(viewHotspot, supersampledRing / scale, 0.0001f)
+        }
+    }
 }
 
