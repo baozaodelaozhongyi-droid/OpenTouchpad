@@ -3262,7 +3262,7 @@ class MainActivity : Activity() {
         )
         /** 0 = 跟随主题默认色；COLOR_DYNAMIC = 跟随壁纸动态取色。 */
         val RING_COLORS = listOf(
-            0, COLOR_DYNAMIC, 0xFFFAF9F5.toInt(), 0xFFE8E6DC.toInt(), 0xFF87867F.toInt(), 0xFF30302E.toInt(), 0xFF141413.toInt(),
+            0, COLOR_DYNAMIC, 0xFF2DAFFF.toInt(), 0xFFFAF9F5.toInt(), 0xFFE8E6DC.toInt(), 0xFF87867F.toInt(), 0xFF30302E.toInt(), 0xFF141413.toInt(),
             0xFFD97757.toInt(), 0xFFB53333.toInt(), 0xFFD4A27F.toInt(), 0xFF7A9A5B.toInt(), 0xFF6A9BCC.toInt(), 0xFF8E7CC3.toInt(),
         )
         /** 0 = 跟随主题默认色；COLOR_DYNAMIC = 跟随壁纸动态取色。 */

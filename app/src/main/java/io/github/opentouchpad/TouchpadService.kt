@@ -61,8 +61,8 @@ import kotlin.math.roundToInt
 class TouchpadService : AccessibilityService() {
 
     companion object {
-        /** 反馈圆环最大半径（dp）：规格要求直径约 22dp，所以半径 11dp。 */
-        private const val TOUCH_RING_RADIUS_DP = 11
+        /** 反馈光环最大扩散半径（dp）：适配旋转光弧与四散三角粒子比例。 */
+        private const val TOUCH_RING_RADIUS_DP = 16
         /** 穿透点击前等待 FLAG_NOT_TOUCHABLE 真正同步到系统 InputDispatcher 的安全延时（毫秒）。 */
         private const val OVERLAY_PASS_THROUGH_DELAY_MS = 50L
         /** 待派发非续接手势队列上限，防止极端连点造成积压。 */
@@ -3747,11 +3747,11 @@ class TouchpadService : AccessibilityService() {
                 return v
             }
         }
+        val density = resources.displayMetrics.density
         val radius = dp(TOUCH_RING_RADIUS_DP).toFloat()
-        val stroke = (2.5f * resources.displayMetrics.density)
-        // 预留充分 padding 容纳高斯动态模糊光晕，确保光晕在窗口内完全自然羽化衰减至 0，绝不发生窗口边缘裁切
-        val blurPadding = dp(16)
-        val size = ((radius + stroke) * 2).roundToInt() + blurPadding * 2
+        val stroke = 2.6f * density
+        // 预留充分空间容纳旋转光弧外扩光晕与四散三角粒子火花，确保不发生窗口边缘裁切
+        val size = computeSparkWindowSizePx(radius, stroke, density)
         val v = TouchRingView(this).apply {
             accent = resolveTouchRingColor()
             maxRadius = radius
@@ -3784,8 +3784,11 @@ class TouchpadService : AccessibilityService() {
         val nx = (x - lp.width / 2f).roundToInt()
         val ny = (y - lp.height / 2f).roundToInt()
         if (lp.x == nx && lp.y == ny) return
+        val oldX = lp.x
+        val oldY = lp.y
         lp.x = nx
         lp.y = ny
+        v.offsetParticles((oldX - nx).toFloat(), (oldY - ny).toFloat())
         if (immediate) {
             pendingRingLayout = false
             runCatching { wm.updateViewLayout(v, lp) }

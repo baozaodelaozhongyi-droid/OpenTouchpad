@@ -168,9 +168,9 @@
     <string name="slot_bottom_indexed">Bottom %d</string>
     <string name="slot_left_indexed">Left %d</string>
     <string name="slot_right_indexed">Right %d</string>
-    <string name="switch_touch_ring">Cursor Click Halo Effect</string>
-    <string name="switch_touch_ring_hint">Displays an animated ripple halo at cursor coordinates during clicks, long presses, and drags.</string>
-    <string name="set_touch_ring_color">Halo Ripple Color</string>
+    <string name="switch_touch_ring">Cursor Click Spark Effect</string>
+    <string name="switch_touch_ring_hint">Displays rotating luminous arcs and triangle sparks at cursor coordinates during clicks, long presses, and drags.</string>
+    <string name="set_touch_ring_color">Click Effect Color</string>
     <string name="set_button_customize_hold">Button Long-Press Trigger Duration</string>
     <string name="button_customize_hold_hint">Hold duration required on a panel button to trigger the action assignment menu (200ms to 3000ms to prevent accidental triggers).</string>
     <string name="set_touchpad_color">Touchpad Surface Color</string>

@@ -168,9 +168,9 @@
     <string name="slot_bottom_indexed">下 %d</string>
     <string name="slot_left_indexed">左 %d</string>
     <string name="slot_right_indexed">右 %d</string>
-    <string name="switch_touch_ring">光标点击波纹光圈</string>
-    <string name="switch_touch_ring_hint">在光标执行点击、长按或拖拽手势时，在屏幕落点显示动画波纹光圈反馈。</string>
-    <string name="set_touch_ring_color">波纹光圈颜色</string>
+    <string name="switch_touch_ring">光标点击光弧特效</string>
+    <string name="switch_touch_ring_hint">在光标执行点击、长按或拖拽手势时，在屏幕落点显示旋转渐变光弧与三角火花反馈。</string>
+    <string name="set_touch_ring_color">点击特效颜色</string>
     <string name="set_button_customize_hold">长按按键触发菜单时长</string>
     <string name="button_customize_hold_hint">长按面板按键达到设定时长后触发动作选择菜单，支持设置 200ms 至 3000ms 以避免误触。</string>
     <string name="set_touchpad_color">触控板表面颜色</string>

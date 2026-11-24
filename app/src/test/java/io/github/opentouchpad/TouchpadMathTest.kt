@@ -2087,4 +2087,95 @@ class TouchpadMathTest {
         assertTrue(shouldDeferPanelRebuild(false, false, false, false, false, false, 0, true, false))
         assertTrue(shouldDeferPanelRebuild(false, false, false, false, false, false, 0, false, true))
     }
+
+    @Test
+    fun sparkRingEndColorBlendsAccentTowardWhiteLikeBaSpark() {
+        // BASpark default blue (45, 175, 255) -> ((45+510)/3, (175+510)/3, (255+510)/3) = (185, 228, 255)
+        val end = computeSparkRingEndColor(0xFF2DAFFF.toInt())
+        assertEquals(0xFF, (end ushr 24) and 0xFF)
+        assertEquals(185, (end ushr 16) and 0xFF)
+        assertEquals(228, (end ushr 8) and 0xFF)
+        assertEquals(255, end and 0xFF)
+    }
+
+    @Test
+    fun sparkRingColorAtTransitionsFromNearWhiteToEndColor() {
+        val accent = 0xFF2DAFFF.toInt()
+        val start = computeSparkRingColorAt(accent, 0f)
+        assertEquals(250, (start ushr 16) and 0xFF)
+        assertEquals(252, (start ushr 8) and 0xFF)
+        assertEquals(252, start and 0xFF)
+
+        val end = computeSparkRingColorAt(accent, 1f)
+        assertEquals(computeSparkRingEndColor(accent), end)
+    }
+
+    @Test
+    fun sparkFilledCircleRadiusUsesCubicEaseOut() {
+        assertEquals(0f, computeSparkFilledCircleRadius(48f, 0f), 0.0001f)
+        // At p=0.5: 1 - 0.5^3 = 0.875 -> 48 * 0.875 = 42
+        assertEquals(42f, computeSparkFilledCircleRadius(48f, 0.5f), 0.001f)
+        assertEquals(48f, computeSparkFilledCircleRadius(48f, 1f), 0.0001f)
+        assertEquals(0f, computeSparkFilledCircleRadius(-10f, 0.5f), 0.0001f)
+    }
+
+    @Test
+    fun sparkArcTaperWeightIsSymmetricTrapezoid() {
+        assertEquals(0f, computeSparkArcTaperWeight(0f), 0.0001f)
+        assertEquals(0.5f, computeSparkArcTaperWeight(0.125f), 0.0001f)
+        assertEquals(1f, computeSparkArcTaperWeight(0.25f), 0.0001f)
+        assertEquals(1f, computeSparkArcTaperWeight(0.5f), 0.0001f)
+        assertEquals(1f, computeSparkArcTaperWeight(0.75f), 0.0001f)
+        assertEquals(0.5f, computeSparkArcTaperWeight(0.875f), 0.0001f)
+        assertEquals(0f, computeSparkArcTaperWeight(1f), 0.0001f)
+    }
+
+    @Test
+    fun sparkArcSpanGrowsHoldsAndRetractsCleanly() {
+        val fullLen = 3.45f
+        val base = 1.0f
+
+        // Grow phase (0..0.1): half grown at 0.05, anchored at leading edge (base + fullLen)
+        val grow = computeSparkArcSpan(base, fullLen, 0.05f)
+        assertEquals(fullLen * 0.5f, grow.sweepRad, 0.001f)
+        assertEquals(base + fullLen, grow.startRad + grow.sweepRad, 0.001f)
+
+        // Hold phase (0.1..0.4): full span starting at base
+        val hold = computeSparkArcSpan(base, fullLen, 0.25f)
+        assertEquals(base, hold.startRad, 0.001f)
+        assertEquals(fullLen, hold.sweepRad, 0.001f)
+
+        // Retract phase (0.4..1.0): halfway retracted at 0.7, anchored at base
+        val retract = computeSparkArcSpan(base, fullLen, 0.7f)
+        assertEquals(base, retract.startRad, 0.001f)
+        assertEquals(fullLen * 0.5f, retract.sweepRad, 0.001f)
+
+        // End of life: zero sweep
+        val end = computeSparkArcSpan(base, fullLen, 1f)
+        assertEquals(0f, end.sweepRad, 0.0001f)
+    }
+
+    @Test
+    fun sparkArcWidthMulAndAlphaDecaySmoothlyToZero() {
+        assertEquals(1f, computeSparkArcWidthMul(0.5f), 0.0001f)
+        assertEquals(1f, computeSparkArcWidthMul(0.8f), 0.0001f)
+        assertEquals(0.84f, computeSparkArcWidthMul(1f), 0.001f)
+
+        assertEquals(1f, computeSparkArcAlpha(0f), 0.0001f)
+        assertTrue(computeSparkArcAlpha(0.5f) in 0.9f..1f)
+        assertTrue(computeSparkArcAlpha(0.94f) < computeSparkArcAlpha(0.88f))
+        assertEquals(0f, computeSparkArcAlpha(1f), 0.0001f)
+    }
+
+    @Test
+    fun sparkWindowSizeFitsMaxSparkTravelAndGlowWithoutClipping() {
+        val density = 3f
+        val maxRadius = 16f * density // 48px
+        val stroke = 2.6f * density
+        val size = computeSparkWindowSizePx(maxRadius, stroke, density)
+        // Half window must exceed max spark reach (~2.06 * maxRadius) plus glow stroke
+        assertTrue(size / 2f >= maxRadius * 2.25f + stroke * 2f)
+        assertEquals(0, size % 2)
+    }
 }
+

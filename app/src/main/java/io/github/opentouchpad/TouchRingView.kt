@@ -1,56 +1,139 @@
 package io.github.opentouchpad
 
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.view.Choreographer
 import android.view.View
-import android.view.animation.DecelerateInterpolator
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.random.Random
 
 /**
- * 点击 / 长按反馈圆环，整个圆环用 Canvas 画：
- * - 视图不设背景，窗口用半透明格式，空闲时什么都不画（完全透明），所以不会出现方形图块；
- * - 半径永远不超过视图短边的一半，描边画在半径内侧，不会被窗口边界裁切；
- * - 窗口由服务常驻，只移动位置，不随每次点击 add/remove；
- * - 展开与缩放过程中采用硬件加速多重采样径向动态模糊（Motion Blur），无额外图层暗斑与方形底衬，静止时保持清晰凝聚。
- *
- * 动画：
- * - [tap]：从内向外展开 [EXPAND_MS] → 停留 [TAP_HOLD_MS] → 从外向内收缩并淡出 [COLLAPSE_MS]
- * - [press]：按住的这段时间里向外展开，按住结束后向内收缩消失
- * - [pressUntilRelease]：展开后一直保持，直到 [release]（自定义滑动、拖拽锁定）
+ * 光标点击 / 长按反馈动效视图（灵感源自 BASpark / Blue Archive UI 风格，纯 Android 硬件加速 Canvas 实现）：
+ * - 点击 [tap]：
+ *   1. 中心实心圆按三次缓出迅速扩散并线性淡出（附带瞬态高光内核）；
+ *   2. 双层错位旋转渐变粗细光弧（两端尖细、中段饱满）快速拉长、旋转扫过并从尾部收束，
+ *      颜色从极浅高光白过渡至强调色柔光，辅以强调色外发光层以兼顾浅色/深色屏幕可读性；
+ *   3. 4 枚旋转三角粒子火花沿随机四象限向外爆裂飞散，按指数摩擦减速并自旋消散；
+ * - 长按 [press] / [pressUntilRelease]：
+ *   触发初段火花爆发并展开一对持续旋转的渐变光弧光环，松手 [release] 时从尾部平滑收束淡出；
+ * - 性能与 VRR/LTPO 友好：
+ *   固定对象池 + 复用 Paint/Path/RectF，绘制热路径零对象分配；所有粒子与光弧结束后立即停帧并隐藏窗口。
  */
 class TouchRingView(context: Context) : View(context) {
-    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    // 纯硬件加速高斯动态模糊采样画笔（仅描边模式，无离屏软件图层，无额外圆盘与背景）
-    private val blurPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val arcGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val arcCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val sparkGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL_AND_STROKE
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val sparkCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val arcRect = RectF()
+    private val triPath = Path()
+
+    private var accentEndColor: Int = computeSparkRingEndColor(0xFFC96442.toInt())
 
     var accent: Int = 0xFFC96442.toInt()
         set(value) {
             if (field == value) return
             field = value
-            if (phase != Phase.IDLE) invalidate()
+            accentEndColor = computeSparkRingEndColor(value)
+            if (!isIdle) invalidate()
         }
 
-    /** 完全展开时的外半径（px）。 */
+    /** 中心扩散圆的最大半径（px），所有光弧半径、粒子速度与尺寸均按此自适应缩放。 */
     var maxRadius = 0f
+
+    /** 光弧基准线宽（px）。 */
     var strokeWidthPx = 0f
 
-    private enum class Phase { IDLE, EXPANDING, HOLDING, COLLAPSING }
+    private class WaveSlot {
+        var active = false
+        var ox = 0f
+        var oy = 0f
+        var life = 0f
+        var r = 0f
+        var ang = 0f
+        var rs = 0f
+        var seg0Off = 0f
+        var seg0RoundRate = 0f
+        var seg1Off = 0f
+        var seg1RoundRate = 0f
+    }
 
-    private var phase = Phase.IDLE
-    /** 当前圆环是否处于完全静止态（无展开/保持/收缩动画），用于安全判定空闲窗口回收。 */
-    val isIdle: Boolean get() = phase == Phase.IDLE
-    /** 0 = 不可见，1 = 完全展开。 */
-    private var progress = 0f
-    private var collapseFromProgress = 1f
-    private var collapseFromAlpha = 1f
-    private var animator: ValueAnimator? = null
-    /** 每次换动画都递增，过期的结束回调直接丢弃。 */
-    private var token = 0
-    private val autoCollapse = Runnable { collapse() }
+    private class SparkSlot {
+        var active = false
+        var x = 0f
+        var y = 0f
+        var vx = 0f
+        var vy = 0f
+        var rot = 0f
+        var rs = 0f
+        var size = 0f
+        var alpha = 0f
+    }
+
+    private enum class HoldState { IDLE, EXPANDING, HOLDING, RETRACTING }
+
+    private val waves = Array(MAX_WAVES) { WaveSlot() }
+    private val sparks = Array(MAX_SPARKS) { SparkSlot() }
+    private var activeWaveCount = 0
+    private var activeSparkCount = 0
+
+    private var holdState = HoldState.IDLE
+    private var holdExpandProg = 0f
+    private var holdRetractProg = 0f
+    private var holdAngle = 0f
+    private val autoRelease = Runnable { release() }
+
+    private var frameLoopActive = false
+    private var lastFrameNanos = 0L
+
+    private val frameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!frameLoopActive) return
+            val deltaMs = if (lastFrameNanos == 0L) {
+                BASE_FRAME_MS
+            } else {
+                ((frameTimeNanos - lastFrameNanos) / 1_000_000f).coerceIn(0f, MAX_DELTA_MS)
+            }
+            lastFrameNanos = frameTimeNanos
+            stepSimulation(deltaMs)
+            if (isIdle) {
+                frameLoopActive = false
+                lastFrameNanos = 0L
+                hideWhenIdle()
+                invalidate()
+            } else {
+                invalidate()
+                Choreographer.getInstance().postFrameCallback(this)
+            }
+        }
+    }
+
+    /** 当前是否完全静止（无波纹、无粒子、无长按光环），供服务安全回收空闲窗口。 */
+    val isIdle: Boolean
+        get() = holdState == HoldState.IDLE && activeWaveCount == 0 && activeSparkCount == 0
 
     init {
         background = null
@@ -70,240 +153,532 @@ class TouchRingView(context: Context) : View(context) {
         }
     }
 
-    /** 点击：展开 → 停留 → 收缩淡出。 */
-    fun tap() {
-        restartFromZero()
+    private fun startFrameLoop() {
         ensureVisible()
-        expand(EXPAND_MS, thenHoldMs = TAP_HOLD_MS)
+        if (!frameLoopActive) {
+            frameLoopActive = true
+            lastFrameNanos = 0L
+            Choreographer.getInstance().postFrameCallback(frameCallback)
+        }
+        invalidate()
+    }
+
+    private fun stopFrameLoop() {
+        if (frameLoopActive) {
+            frameLoopActive = false
+            Choreographer.getInstance().removeFrameCallback(frameCallback)
+        }
+        lastFrameNanos = 0L
+    }
+
+    /** 点击：触发中心扩散圆 + 双旋转渐变光弧 + 4 枚旋转三角粒子火花。 */
+    fun tap() {
+        spawnClickBurst(includeWave = true)
+        startFrameLoop()
     }
 
     /**
-     * 长按 [holdMs] 毫秒：按住期间向外展开，结束时向内收缩。
-     * 如果圆环已经在展开 / 保持（触控板上原地长按松手），从当前大小接着走，不会先消失再长出来。
+     * 长按 [holdMs] 毫秒：若尚未处于按住态，先释放初段粒子爆发并展开持续旋转光弧，
+     * 到达 [holdMs] 后自动从尾部收束淡出。
      */
     fun press(holdMs: Long) {
-        val from = if (phase == Phase.EXPANDING || phase == Phase.HOLDING) progress else 0f
-        stopAnimation()
-        progress = from
-        ensureVisible()
-        val hold = holdMs.coerceAtLeast(EXPAND_MS)
-        val expandMs = (hold * (1f - from)).toLong()
-        expand(expandMs, thenHoldMs = hold - expandMs)
+        removeCallbacks(autoRelease)
+        val alreadyHolding = holdState == HoldState.EXPANDING || holdState == HoldState.HOLDING
+        if (!alreadyHolding) {
+            spawnClickBurst(includeWave = false)
+            holdState = HoldState.EXPANDING
+            holdExpandProg = 0.08f
+            holdRetractProg = 0f
+            holdAngle = Random.nextFloat() * TWO_PI
+        }
+        val duration = holdMs.coerceAtLeast(HOLD_MIN_MS)
+        postDelayed(autoRelease, duration)
+        startFrameLoop()
     }
 
-    /** 展开后保持，直到调用 [release]。 */
+    /** 展开旋转光弧并保持，直到调用 [release]（用于触控板长按滑动、拖拽锁定等）。 */
     fun pressUntilRelease() {
-        restartFromZero()
-        ensureVisible()
-        expand(EXPAND_MS, thenHoldMs = -1L)
+        removeCallbacks(autoRelease)
+        spawnClickBurst(includeWave = false)
+        holdState = HoldState.EXPANDING
+        holdExpandProg = 0.08f
+        holdRetractProg = 0f
+        holdAngle = Random.nextFloat() * TWO_PI
+        startFrameLoop()
     }
 
-    /** 松开：从当前大小向内收缩并淡出。 */
+    /** 松开：长按旋转光弧从尾部平滑收束并淡出。 */
     fun release() {
-        if (phase == Phase.EXPANDING || phase == Phase.HOLDING) collapse()
+        removeCallbacks(autoRelease)
+        if (holdState == HoldState.EXPANDING || holdState == HoldState.HOLDING) {
+            holdState = HoldState.RETRACTING
+            holdRetractProg = 0f
+            startFrameLoop()
+        }
     }
 
-    /** 立即隐藏，不播动画。 */
+    /**
+     * 当悬浮窗整体平移 `(dx, dy)` 时调用（传入相反偏移 `-dx, -dy`），
+     * 使已发射的点击波纹与飞散火花留在原屏幕落点，不会随光标突兀瞬移。
+     * 长按旋转光环始终居中跟随光标。
+     */
+    fun offsetParticles(dx: Float, dy: Float) {
+        if (activeWaveCount == 0 && activeSparkCount == 0) return
+        if (dx == 0f && dy == 0f) return
+        for (w in waves) {
+            if (w.active) {
+                w.ox += dx
+                w.oy += dy
+            }
+        }
+        for (s in sparks) {
+            if (s.active) {
+                s.x += dx
+                s.y += dy
+            }
+        }
+    }
+
+    /** 立即清空所有粒子与状态，停帧隐藏。 */
     fun clear() {
-        stopAnimation()
-        phase = Phase.IDLE
-        progress = 0f
+        removeCallbacks(autoRelease)
+        stopFrameLoop()
+        holdState = HoldState.IDLE
+        holdExpandProg = 0f
+        holdRetractProg = 0f
+        for (w in waves) w.active = false
+        for (s in sparks) s.active = false
+        activeWaveCount = 0
+        activeSparkCount = 0
         hideWhenIdle()
         invalidate()
     }
 
-    private fun stopAnimation() {
-        token++
-        removeCallbacks(autoCollapse)
-        animator?.let {
-            it.removeAllListeners()
-            it.removeAllUpdateListeners()
-            it.cancel()
+    private fun spawnClickBurst(includeWave: Boolean) {
+        val rMax = maxRadius.coerceAtLeast(1f)
+        val unitScale = rMax / 26f
+        val speedAdjust = rMax / 39f
+
+        if (includeWave) {
+            val slot = acquireWaveSlot()
+            slot.active = true
+            slot.ox = 0f
+            slot.oy = 0f
+            // 给予半帧初值，保证首帧即刻呈现清晰的高光爆发，无 1 帧空窗
+            slot.life = 0.5f
+            slot.r = computeSparkFilledCircleRadius(rMax, slot.life / SPARK_FILLED_MAX_LIFE)
+            slot.ang = Random.nextFloat() * TWO_PI
+            slot.rs = RING_SPEED_CHOICES[Random.nextInt(RING_SPEED_CHOICES.size)]
+            slot.seg0Off = 0f
+            slot.seg0RoundRate = RING_RADIUS_OFFSET_CHOICES[Random.nextInt(RING_RADIUS_OFFSET_CHOICES.size)]
+            slot.seg1Off = (Random.nextFloat() * 3f - 1.5f) * PI_F
+            slot.seg1RoundRate = RING_RADIUS_OFFSET_CHOICES[Random.nextInt(RING_RADIUS_OFFSET_CHOICES.size)]
         }
-        animator = null
+
+        // 4 枚三角粒子按随机扰动的四象限分布，既保留自然随机感又保证每次点击四向均衡通透
+        val baseQuadAngle = Random.nextFloat() * TWO_PI
+        for (i in 0 until SPARKS_PER_CLICK) {
+            val slot = acquireSparkSlot()
+            val angle = baseQuadAngle + i * HALF_PI + (Random.nextFloat() - 0.5f) * 0.9f
+            val speed = (4.8f + Random.nextFloat() * 2.0f) * speedAdjust
+            slot.active = true
+            slot.x = cos(angle) * (rMax * 0.12f)
+            slot.y = sin(angle) * (rMax * 0.12f)
+            slot.vx = cos(angle) * speed
+            slot.vy = sin(angle) * speed
+            slot.rot = Random.nextFloat() * TWO_PI
+            slot.rs = (Random.nextFloat() - 0.5f) * 0.28f
+            slot.size = (4.0f + Random.nextFloat() * 3.0f) * unitScale
+            slot.alpha = 1f
+        }
     }
 
-    private fun restartFromZero() {
-        stopAnimation()
-        progress = 0f
+    private fun acquireWaveSlot(): WaveSlot {
+        var oldest = waves[0]
+        for (w in waves) {
+            if (!w.active) {
+                activeWaveCount++
+                return w
+            }
+            if (w.life > oldest.life) oldest = w
+        }
+        return oldest
     }
 
-    private fun expand(durationMs: Long, thenHoldMs: Long) {
-        val from = progress
-        val t = token
-        phase = Phase.EXPANDING
-        if (durationMs <= 0L || from >= 1f) {
-            progress = 1f
-            invalidate()
-            hold(thenHoldMs)
-            return
+    private fun acquireSparkSlot(): SparkSlot {
+        var faintest = sparks[0]
+        for (s in sparks) {
+            if (!s.active) {
+                activeSparkCount++
+                return s
+            }
+            if (s.alpha < faintest.alpha) faintest = s
         }
-        animator = ValueAnimator.ofFloat(from, 1f).apply {
-            duration = durationMs
-            interpolator = DECELERATE_INTERPOLATOR
-            addUpdateListener { progress = it.animatedValue as Float; invalidate() }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    if (t == token) hold(thenHoldMs)
+        return faintest
+    }
+
+    private fun stepSimulation(deltaMs: Float) {
+        val frameScale = deltaMs / BASE_FRAME_MS
+        val rMax = maxRadius.coerceAtLeast(1f)
+
+        // 1. 更新点击波纹与双光弧
+        var wCount = 0
+        for (w in waves) {
+            if (!w.active) continue
+            w.life += frameScale
+            w.ang -= w.rs * frameScale
+            val waveProg = (w.life / SPARK_FILLED_MAX_LIFE).coerceIn(0f, 1f)
+            val ringProg = (w.life / SPARK_RING_MAX_LIFE).coerceIn(0f, 1f)
+            w.r = computeSparkFilledCircleRadius(rMax, waveProg)
+            if (ringProg >= 1f && waveProg >= 1f) {
+                w.active = false
+            } else {
+                wCount++
+            }
+        }
+        activeWaveCount = wCount
+
+        // 2. 更新飞散旋转三角火花
+        val friction = SPARK_FRICTION.pow(frameScale)
+        var sCount = 0
+        for (s in sparks) {
+            if (!s.active) continue
+            s.x += s.vx * frameScale
+            s.y += s.vy * frameScale
+            s.vx *= friction
+            s.vy *= friction
+            s.rot += s.rs * frameScale
+            s.alpha -= SPARK_ALPHA_DECAY * frameScale
+            if (s.alpha <= 0.005f) {
+                s.active = false
+            } else {
+                sCount++
+            }
+        }
+        activeSparkCount = sCount
+
+        // 3. 更新长按持续旋转光环
+        when (holdState) {
+            HoldState.IDLE -> Unit
+            HoldState.EXPANDING -> {
+                holdAngle -= HOLD_ORBIT_SPEED * frameScale
+                holdExpandProg += deltaMs / HOLD_EXPAND_MS
+                if (holdExpandProg >= 1f) {
+                    holdExpandProg = 1f
+                    holdState = HoldState.HOLDING
                 }
-            })
-            start()
-        }
-    }
-
-    /** [ms] <= 0：松手即收缩，立即向内收缩淡出；[ms] < 0：一直保持到 [release]。 */
-    private fun hold(ms: Long) {
-        phase = Phase.HOLDING
-        animator = null
-        if (ms == 0L) {
-            collapse()
-        } else if (ms > 0L) {
-            postDelayed(autoCollapse, ms)
-        }
-    }
-
-    private fun collapse() {
-        if (phase == Phase.IDLE || phase == Phase.COLLAPSING) return
-        val from = progress.coerceIn(0.01f, 1f)
-        collapseFromProgress = from
-        collapseFromAlpha = expandAlpha(from)
-        stopAnimation()
-        val t = token
-        phase = Phase.COLLAPSING
-        animator = ValueAnimator.ofFloat(from, 0f).apply {
-            duration = (COLLAPSE_MS * from).toLong().coerceAtLeast(MIN_COLLAPSE_MS)
-            // 先快后慢：一开始就明显缩小，不会在原地停着不动
-            interpolator = DECELERATE_INTERPOLATOR
-            addUpdateListener { progress = it.animatedValue as Float; invalidate() }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    if (t != token) return
-                    phase = Phase.IDLE
-                    progress = 0f
-                    animator = null
-                    hideWhenIdle()
-                    invalidate()
+            }
+            HoldState.HOLDING -> {
+                holdAngle -= HOLD_ORBIT_SPEED * frameScale
+            }
+            HoldState.RETRACTING -> {
+                holdAngle -= HOLD_ORBIT_SPEED * 1.25f * frameScale
+                holdRetractProg += deltaMs / HOLD_RETRACT_MS
+                if (holdRetractProg >= 1f) {
+                    holdRetractProg = 1f
+                    holdState = HoldState.IDLE
                 }
-            })
-            start()
+            }
         }
     }
-
-    private fun expandAlpha(p: Float) = 0.4f + 0.6f * p
 
     override fun onDetachedFromWindow() {
-        // 窗口被系统摘掉时不留悬空的动画；服务重新 add 后从空闲状态开始
         clear()
         super.onDetachedFromWindow()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (phase == Phase.IDLE || progress <= 0.001f || maxRadius <= 0f) return
-        // 再保险一次：外缘不超过视图短边的一半，任何配置下都不会被窗口裁成方块
-        val limit = minOf(width, height) / 2f - 1f
+        if (isIdle || maxRadius <= 0f) return
+        val w = width
+        val h = height
+        if (w <= 0 || h <= 0) return
+
+        val cx = w / 2f
+        val cy = h / 2f
+        val limit = minOf(w, h) / 2f - 2f
         if (limit <= 0f) return
-        val r = minOf(maxRadius, limit) * progress
-        val collapsing = phase == Phase.COLLAPSING
-        val expanding = phase == Phase.EXPANDING
-        val shrink = if (collapsing) 1f - progress / collapseFromProgress else 0f
-        val alpha = if (collapsing) collapseFromAlpha * (1f - shrink) else expandAlpha(progress)
-        // 收缩时线条略微变粗，像向内收拢；描边画在 r 内侧，外缘正好等于 r
-        val sw = minOf(strokeWidthPx * (1f + 0.4f * shrink), r)
-        val cx = width / 2f
-        val cy = height / 2f
 
-        // ── 动态模糊计算（与 calculateTouchRingMotionBlur 公式严格一致，热路径零对象分配）──
-        var blurSpeed = 0f
-        var blurAlpha = 0f
-        var lag = 0f
-        var sigma = 0f
-        if (expanding || collapsing) {
-            val safeProgress = progress.coerceIn(0f, 1f)
-            val rawSpeed = if (expanding) {
-                Math.pow((1f - safeProgress).toDouble(), 0.7).toFloat().coerceIn(0f, 1f)
-            } else {
-                val safeCollapseFrom = collapseFromProgress.coerceIn(0.01f, 1f)
-                val s = (1f - safeProgress / safeCollapseFrom).coerceIn(0f, 1f)
-                Math.pow((1f - s).toDouble(), 0.7).toFloat().coerceIn(0f, 1f)
-            }
-            if (rawSpeed > 0.02f) {
-                blurSpeed = rawSpeed
-                val safeDensity = resources.displayMetrics.density.coerceAtLeast(1f)
-                sigma = (strokeWidthPx * 1.5f + 2f * safeDensity) * rawSpeed
-                lag = (strokeWidthPx * 0.8f + maxRadius * 0.12f) * rawSpeed
-                blurAlpha = (alpha * rawSpeed * 0.72f).coerceIn(0f, 1f)
-            }
-        }
+        val density = resources.displayMetrics.density.coerceAtLeast(1f)
+        val unitScale = maxRadius / 26f
+        val baseStroke = if (strokeWidthPx > 0f) strokeWidthPx else 2.6f * density
+        val arcMinW = (baseStroke * 0.14f).coerceAtLeast(0.6f)
+        val arcMaxW = (baseStroke * 1.18f).coerceAtLeast(2f)
 
-        // ── 硬件加速高斯动态模糊与径向拖尾层 (Gaussian Motion Blur Layer) ──
-        if (blurSpeed > 0.02f && blurAlpha > 0.01f) {
-            // 1. 径向运动拖影：沿运动轨迹绘制 2 级半透明渐变微步拖影
-            if (lag > 0.5f) {
-                val lagSteps = 2
-                for (step in 1..lagSteps) {
-                    val frac = step / (lagSteps + 1f) // 0.33f, 0.67f
-                    val sampleR = if (expanding) {
-                        (r - lag * (1f - frac)).coerceAtLeast(0f)
-                    } else {
-                        minOf(r + lag * (1f - frac), limit)
-                    }
-                    if (sampleR > 0f) {
-                        val lagSw = sw + 0.8f * sigma * frac
-                        val lagAlpha = blurAlpha * (0.16f + 0.18f * frac)
-                        blurPaint.strokeWidth = lagSw
-                        blurPaint.color = withAlpha(accent, lagAlpha)
-                        canvas.drawCircle(cx, cy, (sampleR - lagSw / 2f).coerceAtLeast(0f), blurPaint)
+        // 1. 绘制点击波纹：中心扩散圆 + 双旋转渐变光弧
+        if (activeWaveCount > 0) {
+            val waveMargin = maxRadius + arcMaxW * 3f
+            for (wave in waves) {
+                if (!wave.active) continue
+                val wx = cx + wave.ox
+                val wy = cy + wave.oy
+                if (wx < -waveMargin || wx > w + waveMargin || wy < -waveMargin || wy > h + waveMargin) continue
+                val waveProg = (wave.life / SPARK_FILLED_MAX_LIFE).coerceIn(0f, 1f)
+                val ringProg = (wave.life / SPARK_RING_MAX_LIFE).coerceIn(0f, 1f)
+
+                // 1a. 中心扩散实心圆 + 瞬态高光内核
+                val fillAlpha = (1f - waveProg).coerceIn(0f, 1f)
+                val fillR = minOf(wave.r, limit)
+                if (fillAlpha > 0.01f && fillR > 0.5f) {
+                    fillPaint.color = withAlpha(accent, fillAlpha * FILL_CIRCLE_ALPHA)
+                    canvas.drawCircle(wx, wy, fillR, fillPaint)
+
+                    val coreFlash = fillAlpha * fillAlpha * CORE_FLASH_ALPHA
+                    if (coreFlash > 0.01f) {
+                        fillPaint.color = withAlpha(0xFFFFFFFF.toInt(), coreFlash)
+                        canvas.drawCircle(wx, wy, fillR * 0.56f, fillPaint)
                     }
                 }
+
+                // 1b. 双旋转渐变粗细光弧（分段绘制：先铺外发光底，再覆高亮主弧，消除段间遮挡）
+                val arcAlpha = computeSparkArcAlpha(ringProg)
+                if (arcAlpha > 0.01f) {
+                    val widthMul = computeSparkArcWidthMul(ringProg)
+                    val coreRgb = ringColorFast(ringProg)
+
+                    drawClickArc(
+                        canvas = canvas,
+                        wx = wx,
+                        wy = wy,
+                        radius = minOf(wave.r + wave.seg0RoundRate * unitScale, limit - arcMaxW),
+                        baseRad = wave.ang + wave.seg0Off,
+                        ringProg = ringProg,
+                        minW = arcMinW,
+                        maxW = arcMaxW,
+                        widthMul = widthMul,
+                        coreRgb = coreRgb,
+                        alpha = arcAlpha,
+                    )
+                    drawClickArc(
+                        canvas = canvas,
+                        wx = wx,
+                        wy = wy,
+                        radius = minOf(wave.r + wave.seg1RoundRate * unitScale, limit - arcMaxW),
+                        baseRad = wave.ang + wave.seg1Off,
+                        ringProg = ringProg,
+                        minW = arcMinW,
+                        maxW = arcMaxW,
+                        widthMul = widthMul,
+                        coreRgb = coreRgb,
+                        alpha = arcAlpha,
+                    )
+                }
             }
-
-            // 2. 多级高斯羽化柔光晕染：4 级向外平滑递减的高斯卷积描边，产生饱满的高级光学模糊
-            val sw1 = sw + 2.6f * sigma
-            blurPaint.strokeWidth = sw1
-            blurPaint.color = withAlpha(accent, blurAlpha * 0.10f)
-            canvas.drawCircle(cx, cy, (r - sw1 / 2f).coerceAtLeast(0f), blurPaint)
-
-            val sw2 = sw + 1.8f * sigma
-            blurPaint.strokeWidth = sw2
-            blurPaint.color = withAlpha(accent, blurAlpha * 0.18f)
-            canvas.drawCircle(cx, cy, (r - sw2 / 2f).coerceAtLeast(0f), blurPaint)
-
-            val sw3 = sw + 1.0f * sigma
-            blurPaint.strokeWidth = sw3
-            blurPaint.color = withAlpha(accent, blurAlpha * 0.30f)
-            canvas.drawCircle(cx, cy, (r - sw3 / 2f).coerceAtLeast(0f), blurPaint)
-
-            val sw4 = sw + 0.4f * sigma
-            blurPaint.strokeWidth = sw4
-            blurPaint.color = withAlpha(accent, blurAlpha * 0.42f)
-            canvas.drawCircle(cx, cy, (r - sw4 / 2f).coerceAtLeast(0f), blurPaint)
         }
 
-        // ── 清晰主体层 (Sharp Core Ring & Fill) ──
-        val coreAlpha = if (blurSpeed > 0f) {
-            alpha * (1f - 0.15f * blurSpeed)
-        } else {
-            alpha
+        // 2. 绘制长按 / 拖拽持续旋转光环（始终居中跟随光标）
+        if (holdState != HoldState.IDLE) {
+            drawHoldHalo(canvas, cx, cy, limit, unitScale, arcMinW, arcMaxW)
         }
 
-        fillPaint.color = withAlpha(accent, coreAlpha * FILL_ALPHA)
-        canvas.drawCircle(cx, cy, r, fillPaint)
+        // 3. 绘制飞散旋转三角火花粒子
+        if (activeSparkCount > 0) {
+            for (s in sparks) {
+                if (!s.active || s.alpha <= 0.01f || s.size <= 0.5f) continue
+                val sx = cx + s.x
+                val sy = cy + s.y
+                val margin = s.size * 2f
+                if (sx < -margin || sx > w + margin || sy < -margin || sy > h + margin) continue
 
-        ringPaint.strokeWidth = sw
-        ringPaint.color = withAlpha(accent, coreAlpha)
-        canvas.drawCircle(cx, cy, (r - sw / 2f).coerceAtLeast(0f), ringPaint)
+                val sz = s.size
+                triPath.reset()
+                triPath.moveTo(0f, -sz)
+                triPath.lineTo(sz * 0.6f, sz * 0.6f)
+                triPath.lineTo(-sz * 0.6f, sz * 0.6f)
+                triPath.close()
+
+                canvas.save()
+                canvas.translate(sx, sy)
+                canvas.rotate(s.rot * RAD_TO_DEG)
+
+                // 外层强调色辉光描边，确保在纯白与深色页面上都锐利发光
+                sparkGlowPaint.strokeWidth = maxOf(1.6f * density, sz * 0.34f)
+                sparkGlowPaint.color = withAlpha(accent, s.alpha * SPARK_GLOW_ALPHA)
+                canvas.drawPath(triPath, sparkGlowPaint)
+
+                // 中心纯白高亮碎晶核心
+                sparkCorePaint.color = withAlpha(0xFFFFFFFF.toInt(), s.alpha * SPARK_CORE_ALPHA)
+                canvas.drawPath(triPath, sparkCorePaint)
+
+                canvas.restore()
+            }
+        }
     }
 
-    private fun withAlpha(c: Int, a: Float) =
-        (c and 0x00FFFFFF) or ((a * 255f).toInt().coerceIn(0, 255) shl 24)
+    private fun drawClickArc(
+        canvas: Canvas,
+        wx: Float,
+        wy: Float,
+        radius: Float,
+        baseRad: Float,
+        ringProg: Float,
+        minW: Float,
+        maxW: Float,
+        widthMul: Float,
+        coreRgb: Int,
+        alpha: Float,
+    ) {
+        val startRad: Float
+        val sweepRad: Float
+        when {
+            ringProg <= SPARK_ARC_LEN_STOP_ADD -> {
+                val len = CLICK_ARC_LEN_RAD * (ringProg / SPARK_ARC_LEN_STOP_ADD)
+                startRad = baseRad + CLICK_ARC_LEN_RAD - len
+                sweepRad = len
+            }
+            ringProg <= SPARK_ARC_LEN_START_DIM -> {
+                startRad = baseRad
+                sweepRad = CLICK_ARC_LEN_RAD
+            }
+            else -> {
+                val len = CLICK_ARC_LEN_RAD * (1f - (ringProg - SPARK_ARC_LEN_START_DIM) / (1f - SPARK_ARC_LEN_START_DIM))
+                startRad = baseRad
+                sweepRad = len.coerceAtLeast(0f)
+            }
+        }
+        drawTaperedArc(canvas, wx, wy, radius, startRad, sweepRad, minW, maxW, widthMul, coreRgb, alpha)
+    }
+
+    private fun drawHoldHalo(
+        canvas: Canvas,
+        cx: Float,
+        cy: Float,
+        limit: Float,
+        unitScale: Float,
+        arcMinW: Float,
+        arcMaxW: Float,
+    ) {
+        val easeExpand = 1f - (1f - holdExpandProg).let { it * it * it }
+        val retractInv = if (holdState == HoldState.RETRACTING) (1f - holdRetractProg).coerceIn(0f, 1f) else 1f
+        val radiusBase = minOf(maxRadius * 0.86f * easeExpand, limit - arcMaxW)
+        if (radiusBase <= 0.5f) return
+
+        val fillAlpha = 0.15f * easeExpand * retractInv
+        if (fillAlpha > 0.01f) {
+            fillPaint.color = withAlpha(accent, fillAlpha)
+            canvas.drawCircle(cx, cy, radiusBase, fillPaint)
+        }
+
+        val sweepRad = HOLD_ARC_LEN_RAD * easeExpand * retractInv
+        val alpha = (0.92f * easeExpand * retractInv).coerceIn(0f, 1f)
+        val coreRgb = ringColorFast(0.55f)
+        drawTaperedArc(
+            canvas = canvas,
+            wx = cx,
+            wy = cy,
+            radius = radiusBase,
+            baseStartRad = holdAngle,
+            sweepRad = sweepRad,
+            minW = arcMinW,
+            maxW = arcMaxW * 0.92f,
+            widthMul = 1f,
+            coreRgb = coreRgb,
+            alpha = alpha,
+        )
+        drawTaperedArc(
+            canvas = canvas,
+            wx = cx,
+            wy = cy,
+            radius = minOf(radiusBase + 1.5f * unitScale, limit - arcMaxW),
+            baseStartRad = holdAngle + PI_F,
+            sweepRad = sweepRad,
+            minW = arcMinW,
+            maxW = arcMaxW * 0.92f,
+            widthMul = 1f,
+            coreRgb = coreRgb,
+            alpha = alpha,
+        )
+    }
+
+    private fun drawTaperedArc(
+        canvas: Canvas,
+        wx: Float,
+        wy: Float,
+        radius: Float,
+        baseStartRad: Float,
+        sweepRad: Float,
+        minW: Float,
+        maxW: Float,
+        widthMul: Float,
+        coreRgb: Int,
+        alpha: Float,
+    ) {
+        if (radius <= 0.5f || sweepRad < 0.02f || alpha <= 0.01f) return
+        arcRect.set(wx - radius, wy - radius, wx + radius, wy + radius)
+        val segStep = 1f / ARC_SEG_NUM
+        val segSweepDeg = (sweepRad * segStep) * RAD_TO_DEG
+        val glowColor = withAlpha(accent, alpha * ARC_GLOW_ALPHA)
+        val coreColor = withAlpha(coreRgb, alpha)
+
+        // Pass 1: 强调色柔和外发光底轨
+        arcGlowPaint.color = glowColor
+        for (k in 0 until ARC_SEG_NUM) {
+            val tm = (k + 0.5f) * segStep
+            val wT = (2f - abs(4f * (tm - 0.5f))).coerceIn(0f, 1f)
+            val lw = (minW + (maxW - minW) * wT) * widthMul
+            val a0Deg = (baseStartRad + sweepRad * (k * segStep)) * RAD_TO_DEG
+            arcGlowPaint.strokeWidth = lw * ARC_GLOW_WIDTH_MUL
+            canvas.drawArc(arcRect, a0Deg, segSweepDeg, false, arcGlowPaint)
+        }
+
+        // Pass 2: 极浅高光白 → 柔光尾色核心弧线
+        arcCorePaint.color = coreColor
+        for (k in 0 until ARC_SEG_NUM) {
+            val tm = (k + 0.5f) * segStep
+            val wT = (2f - abs(4f * (tm - 0.5f))).coerceIn(0f, 1f)
+            val lw = (minW + (maxW - minW) * wT) * widthMul
+            val a0Deg = (baseStartRad + sweepRad * (k * segStep)) * RAD_TO_DEG
+            arcCorePaint.strokeWidth = lw
+            canvas.drawArc(arcRect, a0Deg, segSweepDeg, false, arcCorePaint)
+        }
+    }
+
+    private fun ringColorFast(ringProg: Float): Int {
+        val t = (1.2f * ringProg).coerceIn(0f, 1f)
+        val er = (accentEndColor ushr 16) and 0xFF
+        val eg = (accentEndColor ushr 8) and 0xFF
+        val eb = accentEndColor and 0xFF
+        val r = (250f * (1f - t) + er * t + 0.5f).toInt().coerceIn(0, 255)
+        val g = (252f * (1f - t) + eg * t + 0.5f).toInt().coerceIn(0, 255)
+        val b = (252f * (1f - t) + eb * t + 0.5f).toInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    private fun withAlpha(c: Int, a: Float): Int =
+        (c and 0x00FFFFFF) or ((a * 255f + 0.5f).toInt().coerceIn(0, 255) shl 24)
 
     companion object {
-        const val EXPAND_MS = 220L
-        const val TAP_HOLD_MS = 0L
-        const val COLLAPSE_MS = 180L
-        private const val MIN_COLLAPSE_MS = 80L
-        private const val FILL_ALPHA = 0.18f
-        private val DECELERATE_INTERPOLATOR = DecelerateInterpolator(1.5f)
+        private const val BASE_FRAME_MS = 1000f / 60f
+        private const val MAX_DELTA_MS = 100f
+
+        private const val MAX_WAVES = 4
+        private const val MAX_SPARKS = 16
+        private const val SPARKS_PER_CLICK = 4
+        private const val ARC_SEG_NUM = 10
+
+        private const val PI_F = PI.toFloat()
+        private const val TWO_PI = (PI * 2.0).toFloat()
+        private const val HALF_PI = (PI * 0.5).toFloat()
+        private const val RAD_TO_DEG = (180.0 / PI).toFloat()
+
+        private const val CLICK_ARC_LEN_RAD = 1.1f * PI_F
+        private const val HOLD_ARC_LEN_RAD = 0.85f * PI_F
+        private const val HOLD_ORBIT_SPEED = 0.055f
+        private const val HOLD_EXPAND_MS = 140f
+        private const val HOLD_RETRACT_MS = 170f
+        private const val HOLD_MIN_MS = 220L
+
+        private const val SPARK_FRICTION = 0.9f
+        private const val SPARK_ALPHA_DECAY = 0.032f
+
+        private const val FILL_CIRCLE_ALPHA = 0.72f
+        private const val CORE_FLASH_ALPHA = 0.42f
+        private const val ARC_GLOW_ALPHA = 0.36f
+        private const val ARC_GLOW_WIDTH_MUL = 2.15f
+        private const val SPARK_GLOW_ALPHA = 0.52f
+        private const val SPARK_CORE_ALPHA = 0.95f
+
+        private val RING_SPEED_CHOICES = floatArrayOf(0.015f, 0.04f, 0.07f)
+        private val RING_RADIUS_OFFSET_CHOICES = floatArrayOf(0f, 1f, 1.5f, 2f)
     }
 }

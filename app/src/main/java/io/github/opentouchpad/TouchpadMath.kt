@@ -1033,6 +1033,126 @@ internal fun calculateTouchRingMotionBlur(
     )
 }
 
+internal const val SPARK_FILLED_MAX_LIFE = 16f
+internal const val SPARK_RING_MAX_LIFE = 23f
+internal const val SPARK_ARC_LEN_STOP_ADD = 0.1f
+internal const val SPARK_ARC_LEN_START_DIM = 0.4f
+
+/**
+ * 计算光弧尾色：将强调色与纯白按 1:2 混合，还原 BASpark / Blue Archive 风格的清透高光感。
+ */
+internal fun computeSparkRingEndColor(accentColor: Int): Int {
+    val r = (((accentColor ushr 16) and 0xFF) + 510) / 3
+    val g = (((accentColor ushr 8) and 0xFF) + 510) / 3
+    val b = ((accentColor and 0xFF) + 510) / 3
+    return (0xFF shl 24) or (r.coerceIn(0, 255) shl 16) or (g.coerceIn(0, 255) shl 8) or b.coerceIn(0, 255)
+}
+
+/**
+ * 计算光弧在生命周期 [ringProgress] (0..1) 处的颜色：
+ * 从极浅高光白 (250, 252, 252) 平滑过渡至强调色柔光尾色。
+ */
+internal fun computeSparkRingColorAt(accentColor: Int, ringProgress: Float): Int {
+    val t = (1.2f * ringProgress).coerceIn(0f, 1f)
+    val end = computeSparkRingEndColor(accentColor)
+    val er = (end ushr 16) and 0xFF
+    val eg = (end ushr 8) and 0xFF
+    val eb = end and 0xFF
+    val r = (250f * (1f - t) + er * t).roundToInt().coerceIn(0, 255)
+    val g = (252f * (1f - t) + eg * t).roundToInt().coerceIn(0, 255)
+    val b = (252f * (1f - t) + eb * t).roundToInt().coerceIn(0, 255)
+    return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+}
+
+/**
+ * 计算中心扩散实心圆半径：三次缓出 (1 - (1 - p)^3)。
+ */
+internal fun computeSparkFilledCircleRadius(maxRadius: Float, waveProgress: Float): Float {
+    val rMax = maxRadius.coerceAtLeast(0f)
+    val p = waveProgress.coerceIn(0f, 1f)
+    val inv = 1f - p
+    val ease = 1f - inv * inv * inv
+    return rMax * ease
+}
+
+/**
+ * 计算光弧分段粗细权重：两端尖细 (0)、中段饱满 (1) 的梯形轮廓。
+ */
+internal fun computeSparkArcTaperWeight(t: Float): Float {
+    val clamped = t.coerceIn(0f, 1f)
+    return (2f - kotlin.math.abs(4f * (clamped - 0.5f))).coerceIn(0f, 1f)
+}
+
+internal data class SparkArcSpan(
+    val startRad: Float,
+    val sweepRad: Float,
+)
+
+/**
+ * 计算光弧三段式弧长演变：
+ * - [0, 0.1]：从前端快速拉长至满弧长；
+ * - (0.1, 0.4]：保持满弧长旋转扫过；
+ * - (0.4, 1.0]：从尾部平滑收束至 0。
+ */
+internal fun computeSparkArcSpan(
+    baseRad: Float,
+    segLenRad: Float,
+    ringProgress: Float,
+): SparkArcSpan {
+    val p = ringProgress.coerceIn(0f, 1f)
+    val full = segLenRad.coerceAtLeast(0f)
+    return when {
+        p <= SPARK_ARC_LEN_STOP_ADD -> {
+            val len = full * (p / SPARK_ARC_LEN_STOP_ADD)
+            val end = baseRad + full
+            SparkArcSpan(startRad = end - len, sweepRad = len)
+        }
+        p <= SPARK_ARC_LEN_START_DIM -> {
+            SparkArcSpan(startRad = baseRad, sweepRad = full)
+        }
+        else -> {
+            val len = full * (1f - (p - SPARK_ARC_LEN_START_DIM) / (1f - SPARK_ARC_LEN_START_DIM))
+            SparkArcSpan(startRad = baseRad, sweepRad = len.coerceAtLeast(0f))
+        }
+    }
+}
+
+/**
+ * 光弧生命周期末段的线宽衰减系数（0.8 之后平滑略微收细）。
+ */
+internal fun computeSparkArcWidthMul(ringProgress: Float): Float {
+    val p = ringProgress.coerceIn(0f, 1f)
+    return (-0.8f * (p - 0.8f) + 1f).coerceIn(0f, 1f)
+}
+
+/**
+ * 光弧生命周期不透明度：保持前期高对比通透感，并在最后 12% 平滑淡出至 0 避免残点跳变。
+ */
+internal fun computeSparkArcAlpha(ringProgress: Float): Float {
+    val p = ringProgress.coerceIn(0f, 1f)
+    val base = (1.1f - 0.3f * p).coerceIn(0f, 1f)
+    if (p <= 0.88f) return base
+    val tail = ((1f - p) / 0.12f).coerceIn(0f, 1f)
+    return base * tail
+}
+
+/**
+ * 计算足以容纳旋转光弧外扩光晕与四散三角火花的悬浮窗安全边长（px），确保任何屏幕密度下均不裁切。
+ */
+internal fun computeSparkWindowSizePx(
+    maxRadius: Float,
+    strokeWidthPx: Float,
+    density: Float,
+): Int {
+    val r = maxRadius.coerceAtLeast(1f)
+    val sw = strokeWidthPx.coerceAtLeast(1f)
+    val d = density.coerceAtLeast(1f)
+    // 三角粒子最大飞行半径约 1.68 * maxRadius，加上粒子半尺寸 (0.27 * maxRadius) 与外发光描边，半窗预留 2.25 * r + 2 * sw + 4dp
+    val halfSize = kotlin.math.ceil(r * 2.25f + sw * 2f + 4f * d).toInt()
+    return (halfSize * 2).coerceAtLeast(16)
+}
+
+
 /**
  * 计算背景图片在容器中按 Center-Crop 配合焦点百分比对齐时的平移偏移量。
  * @param containerSize 容器大小 (例如 width 或 height)
