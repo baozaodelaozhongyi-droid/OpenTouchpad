@@ -1156,7 +1156,7 @@ class MainActivity : Activity() {
                         hint = getString(R.string.switch_touch_ring_hint),
                         onChange = { enabled ->
                             prefs.touchRingEnabled = enabled
-                            TouchpadService.instance?.updateTouchRingAppearance(preview = enabled)
+                            TouchpadService.instance?.updateTouchRingAppearance()
                             ringColorRow?.let { setCardRowVisibility(it, enabled) }
                         },
                     ),
@@ -1165,7 +1165,7 @@ class MainActivity : Activity() {
                         RING_COLORS,
                         { prefs.touchRingColor },
                         { prefs.touchRingColor = it },
-                        onServiceUpdate = { TouchpadService.instance?.updateTouchRingAppearance(preview = true) },
+                        onServiceUpdate = { TouchpadService.instance?.updateTouchRingAppearance() },
                         allowCustomHex = true,
                         recreateOnChange = false,
                     ).also { ringColorRow = it }.apply {

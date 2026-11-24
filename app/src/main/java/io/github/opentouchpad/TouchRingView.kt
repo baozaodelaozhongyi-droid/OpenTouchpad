@@ -10,6 +10,7 @@ import android.view.View
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.random.Random
@@ -17,12 +18,13 @@ import kotlin.random.Random
 /**
  * 光标点击 / 长按反馈动效视图（灵感源自 BASpark / Blue Archive UI 风格，纯 Android 硬件加速 Canvas 实现）：
  * - 点击 [tap]：
- *   1. 中心实心圆按三次缓出迅速扩散并线性淡出（附带瞬态高光内核）；
+ *   1. 中心实心圆按三次缓出迅速扩散并线性淡出（附带瞬态高光内核与初段径向动态模糊羽化）；
  *   2. 双层错位旋转渐变粗细光弧（两端尖细、中段饱满）快速拉长、旋转扫过并从尾部收束，
- *      颜色从极浅高光白过渡至强调色柔光，辅以强调色外发光层以兼顾浅色/深色屏幕可读性；
- *   3. 4 枚旋转三角粒子火花沿随机四象限向外爆裂飞散，按指数摩擦减速并自旋消散；
+ *      颜色从极浅高光白过渡至强调色柔光，辅以强调色外发光层及径向/旋转速度动态模糊残影；
+ *   3. 4 枚旋转三角粒子火花沿随机四象限向外爆裂飞散，按指数摩擦减速并自旋消散，
+ *      高速初段沿反速度方向拖出 3 级快门曝光动态模糊残影，减速后自动收拢锐利；
  * - 长按 [press] / [pressUntilRelease]：
- *   触发初段火花爆发并展开一对持续旋转的渐变光弧光环，松手 [release] 时从尾部平滑收束淡出；
+ *   触发初段火花爆发并展开一对持续旋转的渐变光弧光环（带柔和旋转尾迹动态模糊），松手 [release] 时从尾部平滑收束淡出；
  * - 性能与 VRR/LTPO 友好：
  *   固定对象池 + 复用 Paint/Path/RectF，绘制热路径零对象分配；所有粒子与光弧结束后立即停帧并隐藏窗口。
  */
@@ -31,6 +33,10 @@ class TouchRingView(context: Context) : View(context) {
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
+    private val blurStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
     private val arcGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -38,6 +44,9 @@ class TouchRingView(context: Context) : View(context) {
     private val arcCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
+    }
+    private val sparkBlurPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
     }
     private val sparkGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL_AND_STROKE
@@ -405,7 +414,7 @@ class TouchRingView(context: Context) : View(context) {
         val arcMinW = (baseStroke * 0.14f).coerceAtLeast(0.6f)
         val arcMaxW = (baseStroke * 1.18f).coerceAtLeast(2f)
 
-        // 1. 绘制点击波纹：中心扩散圆 + 双旋转渐变光弧
+        // 1. 绘制点击波纹：中心扩散圆 + 双旋转渐变光弧（含径向与旋转动态模糊）
         if (activeWaveCount > 0) {
             val waveMargin = maxRadius + arcMaxW * 3f
             for (wave in waves) {
@@ -415,12 +424,27 @@ class TouchRingView(context: Context) : View(context) {
                 if (wx < -waveMargin || wx > w + waveMargin || wy < -waveMargin || wy > h + waveMargin) continue
                 val waveProg = (wave.life / SPARK_FILLED_MAX_LIFE).coerceIn(0f, 1f)
                 val ringProg = (wave.life / SPARK_RING_MAX_LIFE).coerceIn(0f, 1f)
+                val radialBlur = computeSparkRadialBlurFactor(waveProg)
 
-                // 1a. 中心扩散实心圆 + 瞬态高光内核
+                // 1a. 中心扩散实心圆 + 初段径向动态模糊羽化 + 瞬态高光内核
                 val fillAlpha = (1f - waveProg).coerceIn(0f, 1f)
                 val fillR = minOf(wave.r, limit)
                 if (fillAlpha > 0.01f && fillR > 0.5f) {
-                    fillPaint.color = withAlpha(accent, fillAlpha * FILL_CIRCLE_ALPHA)
+                    if (radialBlur > 0f) {
+                        val outerSw = (maxRadius * 0.24f + baseStroke) * radialBlur
+                        val outerR = minOf(fillR + outerSw * 0.12f, limit - outerSw * 0.5f).coerceAtLeast(0.5f)
+                        blurStrokePaint.strokeWidth = outerSw
+                        blurStrokePaint.color = withAlpha(accent, fillAlpha * radialBlur * 0.16f)
+                        canvas.drawCircle(wx, wy, outerR, blurStrokePaint)
+
+                        val innerSw = (maxRadius * 0.16f + baseStroke * 0.8f) * radialBlur
+                        val innerR = (fillR - maxRadius * 0.10f * radialBlur).coerceAtLeast(0.5f)
+                        blurStrokePaint.strokeWidth = innerSw
+                        blurStrokePaint.color = withAlpha(accentEndColor, fillAlpha * radialBlur * 0.22f)
+                        canvas.drawCircle(wx, wy, innerR, blurStrokePaint)
+                    }
+
+                    fillPaint.color = withAlpha(accent, fillAlpha * FILL_CIRCLE_ALPHA * (1f - 0.15f * radialBlur))
                     canvas.drawCircle(wx, wy, fillR, fillPaint)
 
                     val coreFlash = fillAlpha * fillAlpha * CORE_FLASH_ALPHA
@@ -430,7 +454,7 @@ class TouchRingView(context: Context) : View(context) {
                     }
                 }
 
-                // 1b. 双旋转渐变粗细光弧（分段绘制：先铺外发光底，再覆高亮主弧，消除段间遮挡）
+                // 1b. 双旋转渐变粗细光弧（动态模糊拖影 → 外发光底轨 → 高亮主弧）
                 val arcAlpha = computeSparkArcAlpha(ringProg)
                 if (arcAlpha > 0.01f) {
                     val widthMul = computeSparkArcWidthMul(ringProg)
@@ -443,6 +467,8 @@ class TouchRingView(context: Context) : View(context) {
                         radius = minOf(wave.r + wave.seg0RoundRate * unitScale, limit - arcMaxW),
                         baseRad = wave.ang + wave.seg0Off,
                         ringProg = ringProg,
+                        radialBlur = radialBlur,
+                        angularSpeed = wave.rs,
                         minW = arcMinW,
                         maxW = arcMaxW,
                         widthMul = widthMul,
@@ -456,6 +482,8 @@ class TouchRingView(context: Context) : View(context) {
                         radius = minOf(wave.r + wave.seg1RoundRate * unitScale, limit - arcMaxW),
                         baseRad = wave.ang + wave.seg1Off,
                         ringProg = ringProg,
+                        radialBlur = radialBlur,
+                        angularSpeed = wave.rs,
                         minW = arcMinW,
                         maxW = arcMaxW,
                         widthMul = widthMul,
@@ -466,13 +494,14 @@ class TouchRingView(context: Context) : View(context) {
             }
         }
 
-        // 2. 绘制长按 / 拖拽持续旋转光环（始终居中跟随光标）
+        // 2. 绘制长按 / 拖拽持续旋转光环（始终居中跟随光标，带旋转尾迹动态模糊）
         if (holdState != HoldState.IDLE) {
             drawHoldHalo(canvas, cx, cy, limit, unitScale, arcMinW, arcMaxW)
         }
 
-        // 3. 绘制飞散旋转三角火花粒子
+        // 3. 绘制飞散旋转三角火花粒子（高速初段附带 3 级方向性速度动态模糊残影）
         if (activeSparkCount > 0) {
+            val refSparkSpeed = 5.5f * (maxRadius / 39f)
             for (s in sparks) {
                 if (!s.active || s.alpha <= 0.01f || s.size <= 0.5f) continue
                 val sx = cx + s.x
@@ -487,17 +516,42 @@ class TouchRingView(context: Context) : View(context) {
                 triPath.lineTo(-sz * 0.6f, sz * 0.6f)
                 triPath.close()
 
+                val speed = hypot(s.vx, s.vy)
+                val blur = computeSparkParticleBlurStrength(speed, refSparkSpeed)
+
+                // 3a. 方向性快门曝光动态模糊：沿反速度与反自旋方向绘制 3 级渐隐残影，减速后自动归零
+                if (blur > 0.02f) {
+                    val stepScale = 0.62f * (0.65f + 0.55f * blur)
+                    for (step in 3 downTo 1) {
+                        val lagFrames = step * stepScale
+                        val gx = sx - s.vx * lagFrames
+                        val gy = sy - s.vy * lagFrames
+                        val gRot = s.rot - s.rs * lagFrames
+                        val weight = (4 - step) * 0.25f
+                        val ghostScale = 1f + 0.11f * step * blur
+                        val ghostTint = if (step == 1) accentEndColor else accent
+
+                        canvas.save()
+                        canvas.translate(gx, gy)
+                        canvas.rotate(gRot * RAD_TO_DEG)
+                        canvas.scale(ghostScale, ghostScale)
+                        sparkBlurPaint.color = withAlpha(ghostTint, s.alpha * blur * SPARK_BLUR_ALPHA * weight)
+                        canvas.drawPath(triPath, sparkBlurPaint)
+                        canvas.restore()
+                    }
+                }
+
+                // 3b. 主体高亮三角碎晶（外层强调色辉光 + 白色高亮内核）
                 canvas.save()
                 canvas.translate(sx, sy)
                 canvas.rotate(s.rot * RAD_TO_DEG)
 
-                // 外层强调色辉光描边，确保在纯白与深色页面上都锐利发光
                 sparkGlowPaint.strokeWidth = maxOf(1.6f * density, sz * 0.34f)
                 sparkGlowPaint.color = withAlpha(accent, s.alpha * SPARK_GLOW_ALPHA)
                 canvas.drawPath(triPath, sparkGlowPaint)
 
-                // 中心纯白高亮碎晶核心
-                sparkCorePaint.color = withAlpha(0xFFFFFFFF.toInt(), s.alpha * SPARK_CORE_ALPHA)
+                val coreAlpha = s.alpha * SPARK_CORE_ALPHA * (1f - 0.14f * blur)
+                sparkCorePaint.color = withAlpha(0xFFFFFFFF.toInt(), coreAlpha)
                 canvas.drawPath(triPath, sparkCorePaint)
 
                 canvas.restore()
@@ -512,6 +566,8 @@ class TouchRingView(context: Context) : View(context) {
         radius: Float,
         baseRad: Float,
         ringProg: Float,
+        radialBlur: Float,
+        angularSpeed: Float,
         minW: Float,
         maxW: Float,
         widthMul: Float,
@@ -536,6 +592,20 @@ class TouchRingView(context: Context) : View(context) {
                 sweepRad = len.coerceAtLeast(0f)
             }
         }
+        drawArcMotionBlur(
+            canvas = canvas,
+            wx = wx,
+            wy = wy,
+            radius = radius,
+            startRad = startRad,
+            sweepRad = sweepRad,
+            maxW = maxW,
+            widthMul = widthMul,
+            alpha = alpha,
+            radialBlur = radialBlur,
+            radialLag = maxRadius * 0.15f * radialBlur,
+            angularLag = angularSpeed * 3.2f,
+        )
         drawTaperedArc(canvas, wx, wy, radius, startRad, sweepRad, minW, maxW, widthMul, coreRgb, alpha)
     }
 
@@ -562,6 +632,33 @@ class TouchRingView(context: Context) : View(context) {
         val sweepRad = HOLD_ARC_LEN_RAD * easeExpand * retractInv
         val alpha = (0.92f * easeExpand * retractInv).coerceIn(0f, 1f)
         val coreRgb = ringColorFast(0.55f)
+        val holdRadialBlur = when (holdState) {
+            HoldState.EXPANDING -> computeSparkRadialBlurFactor(holdExpandProg)
+            HoldState.RETRACTING -> computeSparkRadialBlurFactor(holdRetractProg)
+            else -> 0f
+        }
+        val holdRadialLag = when (holdState) {
+            HoldState.EXPANDING -> maxRadius * 0.12f * holdRadialBlur
+            HoldState.RETRACTING -> -maxRadius * 0.10f * holdRadialBlur
+            else -> 0f
+        }
+        val holdAngularLag = HOLD_ORBIT_SPEED * (if (holdState == HoldState.RETRACTING) 4.0f else 3.2f)
+        val outerR = minOf(radiusBase + 1.5f * unitScale, limit - arcMaxW)
+
+        drawArcMotionBlur(
+            canvas = canvas,
+            wx = cx,
+            wy = cy,
+            radius = radiusBase,
+            startRad = holdAngle,
+            sweepRad = sweepRad,
+            maxW = arcMaxW * 0.92f,
+            widthMul = 1f,
+            alpha = alpha,
+            radialBlur = holdRadialBlur,
+            radialLag = holdRadialLag,
+            angularLag = holdAngularLag,
+        )
         drawTaperedArc(
             canvas = canvas,
             wx = cx,
@@ -575,11 +672,25 @@ class TouchRingView(context: Context) : View(context) {
             coreRgb = coreRgb,
             alpha = alpha,
         )
+        drawArcMotionBlur(
+            canvas = canvas,
+            wx = cx,
+            wy = cy,
+            radius = outerR,
+            startRad = holdAngle + PI_F,
+            sweepRad = sweepRad,
+            maxW = arcMaxW * 0.92f,
+            widthMul = 1f,
+            alpha = alpha,
+            radialBlur = holdRadialBlur,
+            radialLag = holdRadialLag,
+            angularLag = holdAngularLag,
+        )
         drawTaperedArc(
             canvas = canvas,
             wx = cx,
             wy = cy,
-            radius = minOf(radiusBase + 1.5f * unitScale, limit - arcMaxW),
+            radius = outerR,
             baseStartRad = holdAngle + PI_F,
             sweepRad = sweepRad,
             minW = arcMinW,
@@ -588,6 +699,52 @@ class TouchRingView(context: Context) : View(context) {
             coreRgb = coreRgb,
             alpha = alpha,
         )
+    }
+
+    /**
+     * 硬件加速光弧动态模糊：按径向膨胀滞后与旋转角速度滞后绘制 2 级轻量 5 分段拖影，
+     * 静止时直接跳过，运动时呈现丝滑快门拖尾感且无额外离屏图层开销。
+     */
+    private fun drawArcMotionBlur(
+        canvas: Canvas,
+        wx: Float,
+        wy: Float,
+        radius: Float,
+        startRad: Float,
+        sweepRad: Float,
+        maxW: Float,
+        widthMul: Float,
+        alpha: Float,
+        radialBlur: Float,
+        radialLag: Float,
+        angularLag: Float,
+    ) {
+        if (radius <= 0.5f || sweepRad < 0.04f || alpha <= 0.01f) return
+        if (radialBlur <= 0.01f && abs(angularLag) <= 0.005f) return
+
+        val segStep = 1f / ARC_BLUR_SEG_NUM
+        val segSweepDeg = (sweepRad * segStep) * RAD_TO_DEG
+        val baseGhostW = maxW * widthMul * (1.35f + 1.35f * radialBlur)
+        val baseGhostAlpha = alpha * (0.11f + 0.15f * radialBlur)
+
+        for (step in 2 downTo 1) {
+            val lagFrac = step * 0.5f
+            val ghostR = (radius - radialLag * lagFrac).coerceAtLeast(1f)
+            val ghostStart = startRad + angularLag * lagFrac
+            val stepAlpha = baseGhostAlpha * (if (step == 1) 1.0f else 0.52f)
+            if (stepAlpha <= 0.008f) continue
+
+            val stepW = baseGhostW * (if (step == 1) 1.0f else 1.28f)
+            arcRect.set(wx - ghostR, wy - ghostR, wx + ghostR, wy + ghostR)
+            blurStrokePaint.color = withAlpha(accent, stepAlpha)
+            for (k in 0 until ARC_BLUR_SEG_NUM) {
+                val tm = (k + 0.5f) * segStep
+                val wT = (2f - abs(4f * (tm - 0.5f))).coerceIn(0f, 1f)
+                blurStrokePaint.strokeWidth = stepW * (0.25f + 0.75f * wT)
+                val a0Deg = (ghostStart + sweepRad * (k * segStep)) * RAD_TO_DEG
+                canvas.drawArc(arcRect, a0Deg, segSweepDeg, false, blurStrokePaint)
+            }
+        }
     }
 
     private fun drawTaperedArc(
@@ -655,6 +812,7 @@ class TouchRingView(context: Context) : View(context) {
         private const val MAX_SPARKS = 16
         private const val SPARKS_PER_CLICK = 4
         private const val ARC_SEG_NUM = 10
+        private const val ARC_BLUR_SEG_NUM = 5
 
         private const val PI_F = PI.toFloat()
         private const val TWO_PI = (PI * 2.0).toFloat()
@@ -675,6 +833,7 @@ class TouchRingView(context: Context) : View(context) {
         private const val CORE_FLASH_ALPHA = 0.42f
         private const val ARC_GLOW_ALPHA = 0.36f
         private const val ARC_GLOW_WIDTH_MUL = 2.15f
+        private const val SPARK_BLUR_ALPHA = 0.42f
         private const val SPARK_GLOW_ALPHA = 0.52f
         private const val SPARK_CORE_ALPHA = 0.95f
 

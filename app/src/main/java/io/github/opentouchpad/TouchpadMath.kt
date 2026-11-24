@@ -1152,6 +1152,31 @@ internal fun computeSparkWindowSizePx(
     return (halfSize * 2).coerceAtLeast(16)
 }
 
+/**
+ * 计算 BASpark 中心圆与光弧的径向动态模糊强度（基于三次缓出导数 (1 - p)^2）：
+ * 初段极速膨胀时为 1.0，随减速平滑衰减至 0（静止/尾段保持锐利）。
+ */
+internal fun computeSparkRadialBlurFactor(waveProgress: Float): Float {
+    val p = waveProgress.coerceIn(0f, 1f)
+    val inv = 1f - p
+    val speed = inv * inv
+    return if (speed <= 0.02f) 0f else speed
+}
+
+/**
+ * 计算三角火花粒子的方向性速度动态模糊强度：
+ * 当瞬时飞行速度低于参考速度的 12% 时返回 0（完全锐利），高速爆裂初段平滑升至 1.0。
+ */
+internal fun computeSparkParticleBlurStrength(
+    speedPxPerFrame: Float,
+    refSpeedPxPerFrame: Float,
+): Float {
+    if (refSpeedPxPerFrame <= 0f || speedPxPerFrame <= 0f) return 0f
+    val norm = (speedPxPerFrame / refSpeedPxPerFrame).coerceIn(0f, 1.35f)
+    if (norm <= 0.12f) return 0f
+    return ((norm - 0.12f) / 0.88f).coerceIn(0f, 1f)
+}
+
 
 /**
  * 计算背景图片在容器中按 Center-Crop 配合焦点百分比对齐时的平移偏移量。

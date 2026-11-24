@@ -1185,8 +1185,8 @@ class TouchpadService : AccessibilityService() {
         cv.invalidate()
     }
 
-    /** 实时平滑更新光圈样式与开关（零闪烁），关闭时彻底移除悬浮窗释放显存，开启可选播放预览动画。 */
-    fun updateTouchRingAppearance(preview: Boolean = false) {
+    /** 实时平滑更新点击特效颜色与开关（零闪烁），关闭时彻底移除悬浮窗释放显存，不在设置切换时触发屏幕预览。 */
+    fun updateTouchRingAppearance() {
         if (!this::prefs.isInitialized) return
         refreshHotPrefs()
         val enabled = cachedTouchRingEnabled
@@ -1194,11 +1194,7 @@ class TouchpadService : AccessibilityService() {
             removeTouchRing()
             return
         }
-        val color = resolveTouchRingColor()
-        touchRing?.accent = color
-        if (preview) {
-            showTouchRing(cursorX, cursorY, 0L)
-        }
+        touchRing?.accent = resolveTouchRingColor()
     }
 
     fun toggleMinimize() {

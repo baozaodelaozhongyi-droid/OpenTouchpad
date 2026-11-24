@@ -2177,5 +2177,26 @@ class TouchpadMathTest {
         assertTrue(size / 2f >= maxRadius * 2.25f + stroke * 2f)
         assertEquals(0, size % 2)
     }
+
+    @Test
+    fun sparkRadialBlurStartsAtOneAndSettlesToZero() {
+        assertEquals(1f, computeSparkRadialBlurFactor(0f), 0.0001f)
+        assertEquals(0.25f, computeSparkRadialBlurFactor(0.5f), 0.0001f)
+        // Below cutoff (1 - 0.9)^2 = 0.01 <= 0.02 -> 0
+        assertEquals(0f, computeSparkRadialBlurFactor(0.9f), 0.0001f)
+        assertEquals(0f, computeSparkRadialBlurFactor(1f), 0.0001f)
+    }
+
+    @Test
+    fun sparkParticleBlurStrengthScalesWithSpeedAndDropsToZeroWhenSlow() {
+        val ref = 6f
+        assertEquals(0f, computeSparkParticleBlurStrength(0f, ref), 0.0001f)
+        assertEquals(0f, computeSparkParticleBlurStrength(0.6f, ref), 0.0001f) // 10% < 12% cutoff
+        val mid = computeSparkParticleBlurStrength(3.36f, ref) // 56% -> (0.56 - 0.12) / 0.88 = 0.5
+        assertEquals(0.5f, mid, 0.001f)
+        assertEquals(1f, computeSparkParticleBlurStrength(6f, ref), 0.0001f)
+        assertEquals(1f, computeSparkParticleBlurStrength(9f, ref), 0.0001f)
+        assertEquals(0f, computeSparkParticleBlurStrength(5f, 0f), 0.0001f)
+    }
 }
 
