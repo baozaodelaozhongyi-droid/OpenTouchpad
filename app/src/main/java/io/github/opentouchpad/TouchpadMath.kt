@@ -2238,3 +2238,304 @@ internal fun shouldDeferPanelRebuild(
         actionButtonDownCount > 0 ||
         isDispatchingGesture ||
         isPassThroughActive
+
+// ───────────────────────── 零延迟光标穿孔与快速连击恢复纯逻辑 ─────────────────────────
+
+internal const val TAP_STROKE_DURATION_MS = 22L
+internal const val TAP_COALESCE_GAP_MS = 45L // >= 40ms ViewConfiguration.DOUBLE_TAP_MIN_TIME
+internal const val CANCELLED_TAP_EXPIRE_MS = 300L
+internal const val MAX_COALESCED_TAPS = 3
+internal const val CURSOR_PINHOLE_RADIUS_PX = 3
+internal const val PINHOLE_SYNC_SETTLE_MS = 32L
+
+private fun appendPinholeRect(
+    outRects: IntArray,
+    currentCount: Int,
+    px: Float,
+    py: Float,
+    ox: Int,
+    oy: Int,
+    panelW: Int,
+    panelH: Int,
+    r: Int,
+    m: Float,
+): Int {
+    if (px < ox - m || px > ox + panelW + m || py < oy - m || py > oy + panelH + m) {
+        return currentCount
+    }
+    val cx = (px - ox).roundToInt()
+    val cy = (py - oy).roundToInt()
+    val left = (cx - r).coerceIn(0, panelW)
+    val top = (cy - r).coerceIn(0, panelH)
+    val right = (cx + r + 1).coerceIn(0, panelW)
+    val bottom = (cy + r + 1).coerceIn(0, panelH)
+    if (right <= left || bottom <= top) return currentCount
+
+    for (j in 0 until currentCount) {
+        val base = j * 4
+        if (outRects[base] == left &&
+            outRects[base + 1] == top &&
+            outRects[base + 2] == right &&
+            outRects[base + 3] == bottom
+        ) {
+            return currentCount
+        }
+    }
+
+    val writeBase = currentCount * 4
+    if (writeBase + 3 >= outRects.size) return currentCount
+    outRects[writeBase] = left
+    outRects[writeBase + 1] = top
+    outRects[writeBase + 2] = right
+    outRects[writeBase + 3] = bottom
+    return currentCount + 1
+}
+
+/**
+ * Computes panel-local cursor pinhole rectangles `[left, top, right, bottom]` into [outRects]
+ * for up to [pointCount] `(x, y)` pairs in [screenPoints], deduplicating identical rects with
+ * zero heap allocations.
+ */
+internal fun computePanelPinholeRectsInto(
+    outRects: IntArray,
+    screenPoints: FloatArray,
+    pointCount: Int,
+    screenX: Int,
+    screenY: Int,
+    paramX: Int,
+    paramY: Int,
+    panelW: Int,
+    panelH: Int,
+    radiusPx: Int = CURSOR_PINHOLE_RADIUS_PX,
+    marginPx: Float = 2f,
+): Int {
+    if (panelW <= 0 || panelH <= 0 || pointCount <= 0) return 0
+    val r = radiusPx.coerceAtLeast(1)
+    val m = if (marginPx.isNaN()) 0f else marginPx.coerceAtLeast(0f)
+    val maxPoints = minOf(pointCount, screenPoints.size / 2)
+    val hasDualOrigin = screenX != paramX || screenY != paramY
+    var count = 0
+    for (i in 0 until maxPoints) {
+        val px = screenPoints[2 * i]
+        val py = screenPoints[2 * i + 1]
+        if (!px.isFinite() || !py.isFinite()) continue
+        count = appendPinholeRect(outRects, count, px, py, paramX, paramY, panelW, panelH, r, m)
+        if (hasDualOrigin) {
+            count = appendPinholeRect(outRects, count, px, py, screenX, screenY, panelW, panelH, r, m)
+        }
+    }
+    return count
+}
+
+/**
+ * Compares two packed pinhole rectangle buffers `[left, top, right, bottom, ...]` without
+ * allocating.
+ */
+internal fun arePinholeRectsEqual(
+    a: IntArray,
+    aCount: Int,
+    b: IntArray,
+    bCount: Int,
+): Boolean {
+    if (aCount != bCount || aCount < 0) return false
+    if (aCount > a.size / 4 || bCount > b.size / 4) return false
+    val totalInts = aCount * 4
+    for (idx in 0 until totalInts) {
+        if (a[idx] != b[idx]) return false
+    }
+    return true
+}
+
+private fun isPointCoveredForOrigin(
+    startX: Float,
+    startY: Float,
+    committedRects: IntArray,
+    committedRectCount: Int,
+    ox: Int,
+    oy: Int,
+    panelW: Int,
+    panelH: Int,
+    m: Float,
+): Boolean {
+    if (startX < ox - m || startX > ox + panelW + m || startY < oy - m || startY > oy + panelH + m) {
+        return true
+    }
+    if (committedRectCount <= 0) return false
+    val rx = (startX - ox).roundToInt().coerceIn(0, panelW - 1)
+    val ry = (startY - oy).roundToInt().coerceIn(0, panelH - 1)
+    val fx = kotlin.math.floor((startX - ox).toDouble()).toInt().coerceIn(0, panelW - 1)
+    val fy = kotlin.math.floor((startY - oy).toDouble()).toInt().coerceIn(0, panelH - 1)
+
+    val limit = minOf(committedRectCount, committedRects.size / 4)
+    var roundCovered = false
+    var floorCovered = false
+    for (i in 0 until limit) {
+        val base = i * 4
+        val left = committedRects[base]
+        val top = committedRects[base + 1]
+        val right = committedRects[base + 2]
+        val bottom = committedRects[base + 3]
+        if (!roundCovered && rx in left until right && ry in top until bottom) {
+            roundCovered = true
+        }
+        if (!floorCovered && fx in left until right && fy in top until bottom) {
+            floorCovered = true
+        }
+        if (roundCovered && floorCovered) return true
+    }
+    return false
+}
+
+/**
+ * Returns true if `(startX, startY)` is safely outside the panel or fully covered (under both
+ * round and floor quantization) by [committedRects] for both `(paramX, paramY)` and
+ * `(screenX, screenY)`.
+ */
+internal fun isScreenPointCoveredByPinholeRects(
+    startX: Float,
+    startY: Float,
+    committedRects: IntArray,
+    committedRectCount: Int,
+    screenX: Int,
+    screenY: Int,
+    paramX: Int,
+    paramY: Int,
+    panelW: Int,
+    panelH: Int,
+    marginPx: Float = 2f,
+): Boolean {
+    if (!startX.isFinite() || !startY.isFinite()) return false
+    if (panelW <= 0 || panelH <= 0) return true
+    val m = if (marginPx.isNaN()) 0f else marginPx.coerceAtLeast(0f)
+    if (!isPointCoveredForOrigin(startX, startY, committedRects, committedRectCount, paramX, paramY, panelW, panelH, m)) {
+        return false
+    }
+    if ((screenX != paramX || screenY != paramY) &&
+        !isPointCoveredForOrigin(startX, startY, committedRects, committedRectCount, screenX, screenY, panelW, panelH, m)
+    ) {
+        return false
+    }
+    return true
+}
+
+/**
+ * Computes remaining settle delay (ms) after the last pinhole region commit before dispatching an
+ * injected gesture without full-window pass-through.
+ */
+internal fun resolvePinholeSettleDelayMs(
+    lastPinholeCommitUptimeMs: Long,
+    nowUptimeMs: Long,
+    settleMs: Long = PINHOLE_SYNC_SETTLE_MS,
+): Long {
+    val safeSettleMs = settleMs.coerceAtLeast(0L)
+    if (lastPinholeCommitUptimeMs <= 0L) return safeSettleMs
+    val elapsed = (nowUptimeMs - lastPinholeCommitUptimeMs).coerceAtLeast(0L)
+    return (safeSettleMs - elapsed).coerceAtLeast(0L)
+}
+
+/**
+ * Returns the stroke start offset (ms) for tap [tapIndex] within a coalesced multi-tap gesture.
+ */
+internal fun computeCoalescedTapStartTimeMs(
+    tapIndex: Int,
+    strokeDurationMs: Long = TAP_STROKE_DURATION_MS,
+    gapMs: Long = TAP_COALESCE_GAP_MS,
+): Long {
+    if (tapIndex <= 0) return 0L
+    val safeStroke = strokeDurationMs.coerceAtLeast(1L)
+    val safeGap = gapMs.coerceAtLeast(0L)
+    return tapIndex.toLong() * (safeStroke + safeGap)
+}
+
+/**
+ * Returns the total gesture duration (ms) for [tapCount] coalesced taps separated by [gapMs].
+ */
+internal fun computeCoalescedTapTotalDurationMs(
+    tapCount: Int,
+    strokeDurationMs: Long = TAP_STROKE_DURATION_MS,
+    gapMs: Long = TAP_COALESCE_GAP_MS,
+): Long {
+    if (tapCount <= 0) return 0L
+    val safeStroke = strokeDurationMs.coerceAtLeast(1L)
+    val safeGap = gapMs.coerceAtLeast(0L)
+    return (tapCount - 1).toLong() * (safeStroke + safeGap) + safeStroke
+}
+
+/**
+ * Fixed-capacity FIFO buffer of recently cancelled tap coordinates for rapid-click recovery,
+ * using pre-allocated primitive arrays so hot paths perform zero heap allocations.
+ */
+internal class CancelledTapTracker(
+    private val maxTaps: Int = MAX_COALESCED_TAPS - 1,
+    private val expireMs: Long = CANCELLED_TAP_EXPIRE_MS,
+) {
+    private val capacity = maxTaps.coerceAtLeast(1)
+    private val safeExpireMs = expireMs.coerceAtLeast(0L)
+    private val xs = FloatArray(capacity)
+    private val ys = FloatArray(capacity)
+    private val times = LongArray(capacity)
+
+    var size: Int = 0
+        private set
+
+    fun clear() {
+        size = 0
+    }
+
+    fun pruneExpired(nowUptimeMs: Long) {
+        var writeIdx = 0
+        for (i in 0 until size) {
+            val t = times[i]
+            if (nowUptimeMs >= t && (nowUptimeMs - t) <= safeExpireMs) {
+                if (writeIdx != i) {
+                    xs[writeIdx] = xs[i]
+                    ys[writeIdx] = ys[i]
+                    times[writeIdx] = t
+                }
+                writeIdx++
+            }
+        }
+        size = writeIdx
+    }
+
+    fun recordCancelledTap(x: Float, y: Float, nowUptimeMs: Long) {
+        pruneExpired(nowUptimeMs)
+        if (!x.isFinite() || !y.isFinite()) return
+        if (size == capacity) {
+            for (i in 1 until capacity) {
+                xs[i - 1] = xs[i]
+                ys[i - 1] = ys[i]
+                times[i - 1] = times[i]
+            }
+            size = capacity - 1
+        }
+        xs[size] = x
+        ys[size] = y
+        times[size] = nowUptimeMs
+        size++
+    }
+
+    fun drainForCoalescedTapInto(
+        outCoords: FloatArray,
+        nowUptimeMs: Long,
+        includeNewTap: Boolean,
+        newX: Float = 0f,
+        newY: Float = 0f,
+    ): Int {
+        pruneExpired(nowUptimeMs)
+        var written = 0
+        for (i in 0 until size) {
+            if (outCoords.size < (written + 1) * 2) break
+            outCoords[written * 2] = xs[i]
+            outCoords[written * 2 + 1] = ys[i]
+            written++
+        }
+        if (includeNewTap && newX.isFinite() && newY.isFinite() && outCoords.size >= (written + 1) * 2) {
+            outCoords[written * 2] = newX
+            outCoords[written * 2 + 1] = newY
+            written++
+        }
+        clear()
+        return written
+    }
+}
