@@ -1,19 +1,22 @@
 # OpenTouchpad Agent Guidelines
 
-## Local Build & Test
-- For local verification after code changes, run **only** debug unit tests:
+## Local Build & Test — HARD RULE
+- **NEVER run Gradle / any JVM build or test locally on this machine.** It has 1 vCPU and ~1 GB RAM shared with other services. Starting Gradle (even `testDebugUnitTest`, even with `--no-daemon`) forks JVMs, drives the box into swap, and gets java OOM-killed — which takes the whole host (and the Telegram bot) down with it.
+  - Incident 2026-11-25 16:23: `java` OOM-killed during `gradle test`, host swap-thrashed for minutes, bot couldn't poll Telegram.
+- **Build and test only in GitHub Actions**:
   ```bash
-  gradle --no-daemon testDebugUnitTest
+  gh workflow run build.yml            # compile + unit tests
+  gh run watch <run-id> --exit-status  # wait for the result
   ```
-- **Avoid running `gradle test assembleRelease` locally** unless explicitly requested:
-  - Local environments may be memory-constrained (causing slow swap/OOM or task interruptions).
-  - Local release APKs are unsigned without CI keystore secrets; signed release APKs are built in GitHub Actions.
-- Keep project `gradle.properties` untouched for CI; machine-specific low-memory overrides (`org.gradle.jvmargs=-Xmx768m`, `org.gradle.workers.max=1`, `kotlin.compiler.execution.strategy=in-process`) belong in `~/.gradle/gradle.properties`.
+  Push to `main` / a tag also triggers CI automatically.
+- Allowed locally: reading/editing code, `git`, `grep`, `diff`, plain Python/shell that does not start a JVM.
+- If a local JVM run is truly unavoidable, **ask the user first**, run one at a time, with `GRADLE_OPTS="-Xmx256m" --no-daemon`.
+- Keep project `gradle.properties` untouched for CI; machine-specific overrides belong in `~/.gradle/gradle.properties`.
 
 ## Release Workflow
 1. Update `versionCode` and `versionName` in `app/build.gradle.kts`.
 2. Add `CHANGELOG-v<version>.md` at the repository root.
-3. Run `gradle --no-daemon testDebugUnitTest` and confirm all unit tests pass.
+3. Do **not** run tests locally: push `main` (or the tag) and let CI run `gradle --no-daemon test`; wait for it to go green with `gh run watch <id> --exit-status` before/while tagging.
 4. Commit changes, create tag `v<version>`, and push both `main` and the tag:
    ```bash
    git push origin main v<version>
