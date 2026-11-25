@@ -37,7 +37,10 @@
     ```bash
     agy --remote-agent --project "baozaodelaozhongyi-droid/OpenTouchpad" --model <model-id> -i "<prompt>"
     ```
-  - Pass `--model <model-id>` to pick any supported model from `agy models` (e.g. `gemini-4-hydrogen-high`, `gemini-4-carbon-high`, `gemini-4-neon-high`, `claude-opus-5-5-high`; `Orchestrator` models are not supported on remote agents).
+  - **Difficulty-based model allocation (`--model <model-id>`):** Unless the user specifies a model, allocate by task difficulty (do **not** use `Orchestrator` models on remote agents):
+    - **Light / Routine** (quick compile/test fix, mechanical batch edits): `gemini-3.8-flash-high` or `gemini-4-hydrogen-medium` (subagents: `inherit` / `flash_lite`).
+    - **Standard Engineering** (multi-file feature, UI/shader/animation work, unit test suites): `gemini-4-hydrogen-high` or `gemini-4-carbon-medium` (core/verifier subagents: `inherit`; search subagents: `flash`).
+    - **Hard / Complex Bugs & Architecture** (concurrency/deadlocks, intricate gesture/physics math, deep VRR/memory optimization): `gemini-4-carbon-high` or `gemini-4-neon-high` — or fallback to `claude-opus-5-5-high` / `claude-sonnet-5-5-high` when Gemini quota is tight (core/verifier subagents: `inherit` / `pro`; helper subagents: `flash`).
   - **Multi-agent note (verified):** Remote Agents do **not** support the `/swarm` message-board slash command yet, **but DO support parallel `invoke_subagent` / `manage_subagents` subagents** inside the 7.8 GiB `devbox`.
   - Cloud agents work on the GitHub remote repo (not uncommitted files on `ser331458405279`), so sync via `git push` / `git pull`, and always kill/clean up the local PTY thin-client process group (`\x04\x04` + `SIGTERM`) in `finally`.
 
