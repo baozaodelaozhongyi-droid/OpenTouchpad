@@ -36,13 +36,13 @@ jobs:
           printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/ks/release.jks"
           echo "keystore written: $(stat -c%s "$RUNNER_TEMP/ks/release.jks") bytes"
 
-      - name: Build release APK
+      - name: Run unit tests & build release APK
         env:
           RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/ks/release.jks
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: gradle --no-daemon assembleRelease
+        run: gradle --no-daemon test assembleRelease
 
       - uses: actions/upload-artifact@v4
         with:
