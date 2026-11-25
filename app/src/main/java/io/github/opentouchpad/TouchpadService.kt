@@ -7,6 +7,7 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.app.AlertDialog
 import android.app.Notification
 import android.app.NotificationChannel
@@ -24,6 +25,7 @@ import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.Region
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
@@ -49,6 +51,15 @@ import android.widget.ImageView
 import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+@TargetApi(Build.VERSION_CODES.TIRAMISU)
+private object Api33TouchableRegion {
+    fun apply(view: View, region: Region?): Boolean = runCatching {
+        val sc = view.rootSurfaceControl ?: return false
+        sc.setTouchableRegion(region)
+        true
+    }.getOrDefault(false)
+}
 
 /**
  * OpenTouchpad 的无障碍服务：在屏幕上放一块触控板 + 一枚光标 + 一排可自定义的大按钮，
@@ -108,6 +119,7 @@ class TouchpadService : AccessibilityService() {
     private var pendingCursorLayout = false
     private var pendingRingLayout = false
     private var pendingPanelLayout = false
+    private var pendingTouchableRegionUpdate = false
     private var layoutFlushScheduled = false
 
     private val layoutFlushCallback = Choreographer.FrameCallback {
@@ -233,6 +245,16 @@ class TouchpadService : AccessibilityService() {
         cachedHaptics = prefs.haptics
     }
 
+    private val panelTouchableRegion = Region()
+    private val pinholePointsScratch = FloatArray(24)
+    private val pinholeRectsScratch = IntArray(64)
+    private val committedPinholeRects = IntArray(64)
+    private var committedPinholeRectCount = 0
+    private var committedPinholePanelW = 0
+    private var committedPinholePanelH = 0
+    private var hasCustomTouchableRegionApplied = false
+    private var lastPinholeCommitUptimeMs = 0L
+
     private fun scheduleLayoutFlush() {
         if (layoutFlushScheduled) return
         layoutFlushScheduled = true
@@ -240,6 +262,7 @@ class TouchpadService : AccessibilityService() {
     }
 
     private fun flushPendingLayoutsNow() {
+        var panelMovedOrResized = false
         if (pendingCursorLayout) {
             pendingCursorLayout = false
             val p = cursorParams
@@ -262,7 +285,11 @@ class TouchpadService : AccessibilityService() {
             val v = panel
             if (p != null && v != null) {
                 runCatching { wm.updateViewLayout(v, p) }
+                panelMovedOrResized = true
             }
+        }
+        if (pendingTouchableRegionUpdate || (panelMovedOrResized && isFullPanelVisible())) {
+            flushPanelTouchableRegionNow()
         }
     }
 
@@ -274,6 +301,178 @@ class TouchpadService : AccessibilityService() {
         pendingCursorLayout = false
         pendingRingLayout = false
         pendingPanelLayout = false
+        pendingTouchableRegionUpdate = false
+    }
+
+    private fun resetPinholeRegionState() {
+        committedPinholeRectCount = 0
+        committedPinholePanelW = 0
+        committedPinholePanelH = 0
+        hasCustomTouchableRegionApplied = false
+        lastPinholeCommitUptimeMs = 0L
+        pendingTouchableRegionUpdate = false
+    }
+
+    private fun scheduleTouchableRegionUpdate() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || !isFullPanelVisible()) return
+        pendingTouchableRegionUpdate = true
+        scheduleLayoutFlush()
+    }
+
+    private fun appendPinholePoint(index: Int, x: Float, y: Float): Int {
+        if (index * 2 + 1 >= pinholePointsScratch.size) return index
+        pinholePointsScratch[index * 2] = x
+        pinholePointsScratch[index * 2 + 1] = y
+        return index + 1
+    }
+
+    private fun appendPinholePoints(startIndex: Int, points: FloatArray): Int {
+        var count = startIndex
+        var i = 0
+        while (i + 1 < points.size && count * 2 + 1 < pinholePointsScratch.size) {
+            pinholePointsScratch[count * 2] = points[i]
+            pinholePointsScratch[count * 2 + 1] = points[i + 1]
+            count++
+            i += 2
+        }
+        return count
+    }
+
+    private fun collectPinholeCandidatePoints(): Int {
+        var count = appendPinholePoint(0, cursorX, cursorY)
+        if (customSwipeArmed) {
+            count = appendPinholePoint(count, customSwipeStartX, customSwipeStartY)
+        }
+        if (dragging && dragTrail.isNotEmpty()) {
+            count = appendPinholePoint(count, dragTrail[0].x, dragTrail[0].y)
+        }
+        activeGestureItem?.let { active ->
+            count = appendPinholePoints(count, active.startPoints)
+        }
+        for (queued in gestureQueue) {
+            if (count * 2 + 1 >= pinholePointsScratch.size) break
+            count = appendPinholePoints(count, queued.startPoints)
+        }
+        return count
+    }
+
+    private fun flushPanelTouchableRegionNow() {
+        pendingTouchableRegionUpdate = false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (!isFullPanelVisible()) return
+        val p = panel ?: return
+        val lp = panelParams ?: return
+        if (!p.isAttachedToWindow) return
+        val w = if (p.width > 0) p.width else lp.width
+        val h = if (p.height > 0) p.height else lp.height
+        if (w <= 0 || h <= 0) return
+
+        val pointCount = collectPinholeCandidatePoints()
+        refreshPanelScreenLocation()
+        val newCount = computePanelPinholeRectsInto(
+            outRects = pinholeRectsScratch,
+            screenPoints = pinholePointsScratch,
+            pointCount = pointCount,
+            screenX = panelLocationOnScreen[0],
+            screenY = panelLocationOnScreen[1],
+            paramX = lp.x,
+            paramY = lp.y,
+            panelW = w,
+            panelH = h,
+        )
+        if (newCount == 0) {
+            if (hasCustomTouchableRegionApplied && Api33TouchableRegion.apply(p, null)) {
+                hasCustomTouchableRegionApplied = false
+                committedPinholeRectCount = 0
+                committedPinholePanelW = 0
+                committedPinholePanelH = 0
+                lastPinholeCommitUptimeMs = 0L
+            }
+            return
+        }
+        if (hasCustomTouchableRegionApplied &&
+            committedPinholePanelW == w &&
+            committedPinholePanelH == h &&
+            arePinholeRectsEqual(committedPinholeRects, committedPinholeRectCount, pinholeRectsScratch, newCount)
+        ) {
+            return
+        }
+        var anyPointUncoveredBeforeCommit = !hasCustomTouchableRegionApplied ||
+            committedPinholePanelW != w ||
+            committedPinholePanelH != h
+        if (!anyPointUncoveredBeforeCommit) {
+            for (i in 0 until pointCount) {
+                val px = pinholePointsScratch[2 * i]
+                val py = pinholePointsScratch[2 * i + 1]
+                if (!isScreenPointCoveredByPinholeRects(
+                        startX = px,
+                        startY = py,
+                        committedRects = committedPinholeRects,
+                        committedRectCount = committedPinholeRectCount,
+                        screenX = panelLocationOnScreen[0],
+                        screenY = panelLocationOnScreen[1],
+                        paramX = lp.x,
+                        paramY = lp.y,
+                        panelW = w,
+                        panelH = h,
+                    )
+                ) {
+                    anyPointUncoveredBeforeCommit = true
+                    break
+                }
+            }
+        }
+        panelTouchableRegion.set(0, 0, w, h)
+        for (i in 0 until newCount) {
+            val base = i * 4
+            panelTouchableRegion.op(
+                pinholeRectsScratch[base],
+                pinholeRectsScratch[base + 1],
+                pinholeRectsScratch[base + 2],
+                pinholeRectsScratch[base + 3],
+                Region.Op.DIFFERENCE,
+            )
+        }
+        if (Api33TouchableRegion.apply(p, panelTouchableRegion)) {
+            if (anyPointUncoveredBeforeCommit || lastPinholeCommitUptimeMs <= 0L) {
+                lastPinholeCommitUptimeMs = SystemClock.uptimeMillis()
+            }
+            System.arraycopy(pinholeRectsScratch, 0, committedPinholeRects, 0, newCount * 4)
+            committedPinholeRectCount = newCount
+            committedPinholePanelW = w
+            committedPinholePanelH = h
+            hasCustomTouchableRegionApplied = true
+        }
+    }
+
+    private fun areItemStartPointsCoveredByPinhole(item: QueuedGesture): Boolean {
+        val p = panel ?: return false
+        val lp = panelParams ?: return false
+        val w = if (p.width > 0) p.width else lp.width
+        val h = if (p.height > 0) p.height else lp.height
+        if (w <= 0 || h <= 0) return false
+        refreshPanelScreenLocation()
+        val points = item.startPoints
+        var i = 0
+        while (i + 1 < points.size) {
+            if (!isScreenPointCoveredByPinholeRects(
+                    startX = points[i],
+                    startY = points[i + 1],
+                    committedRects = committedPinholeRects,
+                    committedRectCount = committedPinholeRectCount,
+                    screenX = panelLocationOnScreen[0],
+                    screenY = panelLocationOnScreen[1],
+                    paramX = lp.x,
+                    paramY = lp.y,
+                    panelW = w,
+                    panelH = h,
+                )
+            ) {
+                return false
+            }
+            i += 2
+        }
+        return hasCustomTouchableRegionApplied || !isAnyPointInsidePanel(points)
     }
 
     private var touchpadBgDecodedTargetW = 0
@@ -608,6 +807,7 @@ class TouchpadService : AccessibilityService() {
             customSwipeStartY = cursorY
             customSwipeEndX = cursorX
             customSwipeEndY = cursorY
+            flushPanelTouchableRegionNow()
             swipeVelocityTracker.reset()
             swipeVelocityTracker.addMovement(SystemClock.uptimeMillis(), cursorX, cursorY)
             if (cachedTouchRingEnabled) {
@@ -1358,6 +1558,7 @@ class TouchpadService : AccessibilityService() {
         stopPanelDeformation(resetVisuals = true)
         pendingPanelLayout = false
         passThroughSynced = false
+        resetPinholeRegionState()
         val v = panel ?: return null
         val lp = panelParams ?: return null
         // 退场期间不再接收触摸，避免误触
@@ -1540,6 +1741,7 @@ class TouchpadService : AccessibilityService() {
             pendingPassThroughDispatchRunnable = null
             cancelGestureWatchdog()
             gestureDispatchGen++
+            activeGestureItem = null
             isDispatching = false
             if (gestureQueue.isNotEmpty()) {
                 main.post { drainGestureQueue() }
@@ -1567,6 +1769,7 @@ class TouchpadService : AccessibilityService() {
         // 新窗口本来就是可触摸的；同步清掉穿透标记与同步状态，避免重建后面板一直处于穿透态而忽略触摸。
         passThroughSynced = false
         isPassThroughActive = false
+        resetPinholeRegionState()
     }
 
     private fun panelLayoutParams(w: Int, h: Int): WindowManager.LayoutParams {
@@ -1679,6 +1882,15 @@ class TouchpadService : AccessibilityService() {
 
         val lp = panelLayoutParams(widthPx, heightPx)
         if (enteringWithTransition) root.alpha = 0f
+        root.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                if (panel === root) {
+                    flushPanelTouchableRegionNow()
+                }
+            }
+
+            override fun onViewDetachedFromWindow(v: View) = Unit
+        })
         if (runCatching { wm.addView(root, lp) }.isFailure) {
             padArea = null
             actionViews.clear()
@@ -1698,6 +1910,7 @@ class TouchpadService : AccessibilityService() {
                 } else {
                     keepPanelInBounds()
                 }
+                flushPanelTouchableRegionNow()
             }
         }
     }
@@ -2143,6 +2356,7 @@ class TouchpadService : AccessibilityService() {
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         if (isDown || v.isPressed) {
                             resetState(true)
+                            flushCancelledTapsIfIdle()
                             flushPendingBoundsRebuild()
                             return@setOnTouchListener true
                         }
@@ -2234,6 +2448,7 @@ class TouchpadService : AccessibilityService() {
                         PressFeedback.applyButtonRelease(v)
                     }
                     if (wasLongPressed) {
+                        flushCancelledTapsIfIdle()
                         flushPendingBoundsRebuild()
                         return@setOnTouchListener true
                     }
@@ -2250,12 +2465,14 @@ class TouchpadService : AccessibilityService() {
                             performAction(action)
                         }
                     }
+                    flushCancelledTapsIfIdle()
                     flushPendingBoundsRebuild()
                     true
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
                     resetState(true)
+                    flushCancelledTapsIfIdle()
                     flushPendingBoundsRebuild()
                     true
                 }
@@ -2299,12 +2516,16 @@ class TouchpadService : AccessibilityService() {
 
     private fun cancelPadTouchState() {
         val wasDown = padFingerDown
+        val wasCustomSwipeArmed = customSwipeArmed
         padFingerDown = false
         padTouchIgnored = false
         main.removeCallbacks(longPressRunnable)
         swipeVelocityTracker.reset()
         if (customSwipeArmed) touchRing?.release()
         customSwipeArmed = false
+        if (wasCustomSwipeArmed) {
+            scheduleTouchableRegionUpdate()
+        }
         if (wasDown && cachedPressFeedback) {
             padArea?.let { pad -> PressFeedback.applyPadRelease(pad) }
         }
@@ -2314,6 +2535,7 @@ class TouchpadService : AccessibilityService() {
         if (isPassThroughActive) {
             if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
                 cancelPadTouchState()
+                flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
             }
             return
@@ -2349,6 +2571,7 @@ class TouchpadService : AccessibilityService() {
         if (padTouchIgnored) {
             if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
                 padTouchIgnored = false
+                flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
             }
             return
@@ -2434,6 +2657,7 @@ class TouchpadService : AccessibilityService() {
 
             MotionEvent.ACTION_UP -> {
                 val wasDown = padFingerDown
+                val wasCustomSwipeArmed = customSwipeArmed
                 padFingerDown = false
                 if (cachedPressFeedback) {
                     padArea?.let { pad ->
@@ -2449,6 +2673,8 @@ class TouchpadService : AccessibilityService() {
                 swipeVelocityTracker.reset()
                 if (!wasDown) {
                     customSwipeArmed = false
+                    if (wasCustomSwipeArmed) scheduleTouchableRegionUpdate()
+                    flushCancelledTapsIfIdle()
                     flushPendingBoundsRebuild()
                     return
                 }
@@ -2456,6 +2682,8 @@ class TouchpadService : AccessibilityService() {
                 if (dragging) {
                     // 拖拽锁定期间圆环继续跟着光标，等第二次按拖拽锁定再收缩
                     customSwipeArmed = false
+                    if (wasCustomSwipeArmed) scheduleTouchableRegionUpdate()
+                    flushCancelledTapsIfIdle()
                     flushPendingBoundsRebuild()
                     return
                 }
@@ -2477,11 +2705,16 @@ class TouchpadService : AccessibilityService() {
                     PadTouchOutcome.MOVE_ONLY -> Unit
                 }
                 customSwipeArmed = false
+                if (wasCustomSwipeArmed && outcome != PadTouchOutcome.CUSTOM_SWIPE) {
+                    scheduleTouchableRegionUpdate()
+                }
+                flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
             }
 
             MotionEvent.ACTION_CANCEL -> {
                 cancelPadTouchState()
+                flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
             }
         }
@@ -2734,6 +2967,7 @@ class TouchpadService : AccessibilityService() {
                     }
                     startPanelDeformationLoop()
                 }
+                flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
             }
         }
@@ -2805,6 +3039,7 @@ class TouchpadService : AccessibilityService() {
                     panel?.post { keepPanelInBounds() }
                     onPanelResized?.invoke(resizingCurrentWidthDp, resizingCurrentExtraHeightDp)
                 }
+                flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
             }
         }
@@ -2943,6 +3178,7 @@ class TouchpadService : AccessibilityService() {
                     }
                 }
                 ballMoved = false
+                flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
             }
             MotionEvent.ACTION_CANCEL -> {
@@ -2950,6 +3186,7 @@ class TouchpadService : AccessibilityService() {
                 ballMoved = false
                 flushPendingLayoutsNow()
                 keepBallInBounds()
+                flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
             }
         }
@@ -2962,6 +3199,7 @@ class TouchpadService : AccessibilityService() {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (ballTouchDown || isDraggingBall || ballLongPressTriggered || isWaitingForBallDoubleTap || ballDoubleTapArmed) {
                         cancelBallTouchState()
+                        flushCancelledTapsIfIdle()
                         flushPendingBoundsRebuild()
                         return true
                     }
@@ -3154,6 +3392,7 @@ class TouchpadService : AccessibilityService() {
                 flushPendingLayoutsNow()
                 if (!wasDown) {
                     ballDoubleTapArmed = false
+                    flushCancelledTapsIfIdle()
                     flushPendingBoundsRebuild()
                     return true
                 }
@@ -3259,10 +3498,12 @@ class TouchpadService : AccessibilityService() {
                     isWaitingForBallDoubleTap = false
                     snapBallBackToAnchor()
                 }
+                flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
             }
             MotionEvent.ACTION_CANCEL -> {
                 cancelBallTouchState()
+                flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
             }
         }
@@ -3284,6 +3525,7 @@ class TouchpadService : AccessibilityService() {
         lp.y = position.y
         prefs.setPadPosition(isLandscape(), position.x, position.y)
         panel?.let { runCatching { wm.updateViewLayout(it, lp) } }
+        flushPanelTouchableRegionNow()
     }
 
     private fun keepBallInBounds() {
@@ -3307,16 +3549,27 @@ class TouchpadService : AccessibilityService() {
     private class QueuedGesture(
         val gesture: GestureDescription,
         val checkPoints: FloatArray,
+        val startPoints: FloatArray,
         val expectedMs: Long = 500L,
         val keepPassThroughAfterComplete: Boolean = false,
         val isContinuation: Boolean = false,
+        val isShortTap: Boolean = false,
+        val isCoalescedReplay: Boolean = false,
+        val tapX: Float = 0f,
+        val tapY: Float = 0f,
         val onComplete: (() -> Unit)? = null,
     )
 
     private var isDispatching = false
     private var gestureDispatchGen = 0L
     private var passThroughSynced = false
+    private var activeGestureItem: QueuedGesture? = null
     private val gestureQueue = ArrayDeque<QueuedGesture>()
+    private val cancelledTapTracker = CancelledTapTracker()
+    private val coalescedTapCoordsScratch = FloatArray(MAX_COALESCED_TAPS * 2)
+
+    private fun isUserTouchingOverlay(): Boolean =
+        padFingerDown || actionButtonDownCount > 0 || ballTouchDown || movingPanel || resizingPanel
 
     /** 具名可取消的 20ms 延迟恢复任务，杜绝连续穿透点击时前一次恢复覆盖下一次穿透态。 */
     private val delayedRestoreTouchRunnable = Runnable {
@@ -3339,11 +3592,16 @@ class TouchpadService : AccessibilityService() {
         cancelGestureWatchdog()
         main.removeCallbacks(delayedRestoreTouchRunnable)
         passThroughSynced = false
+        activeGestureItem = null
         isDispatching = false
         if (clearQueue) {
             gestureQueue.clear()
+            cancelledTapTracker.clear()
         }
         setOverlayTouchable(true)
+        if (isFullPanelVisible()) {
+            flushPanelTouchableRegionNow()
+        }
     }
 
     private fun setOverlayTouchable(touchable: Boolean) {
@@ -3407,8 +3665,13 @@ class TouchpadService : AccessibilityService() {
     private fun dispatch(
         gesture: GestureDescription,
         checkPoints: FloatArray,
+        startPoints: FloatArray,
         expectedMs: Long = 500L,
         keepPassThroughAfterComplete: Boolean = false,
+        isShortTap: Boolean = false,
+        isCoalescedReplay: Boolean = false,
+        tapX: Float = 0f,
+        tapY: Float = 0f,
         onComplete: (() -> Unit)? = null,
     ) {
         if (gestureQueue.size >= MAX_GESTURE_QUEUE_SIZE) {
@@ -3423,9 +3686,14 @@ class TouchpadService : AccessibilityService() {
             QueuedGesture(
                 gesture = gesture,
                 checkPoints = checkPoints,
+                startPoints = startPoints,
                 expectedMs = expectedMs,
                 keepPassThroughAfterComplete = keepPassThroughAfterComplete,
                 isContinuation = false,
+                isShortTap = isShortTap,
+                isCoalescedReplay = isCoalescedReplay,
+                tapX = tapX,
+                tapY = tapY,
                 onComplete = onComplete,
             ),
         )
@@ -3436,12 +3704,14 @@ class TouchpadService : AccessibilityService() {
     private fun dispatchFront(
         gesture: GestureDescription,
         checkPoints: FloatArray,
+        startPoints: FloatArray,
         expectedMs: Long = 500L,
     ) {
         gestureQueue.addFirst(
             QueuedGesture(
                 gesture = gesture,
                 checkPoints = checkPoints,
+                startPoints = startPoints,
                 expectedMs = expectedMs,
                 keepPassThroughAfterComplete = false,
                 isContinuation = true,
@@ -3451,14 +3721,117 @@ class TouchpadService : AccessibilityService() {
         drainGestureQueue()
     }
 
+    private fun recordCancelledTapIfNeeded(item: QueuedGesture) {
+        if (item.isShortTap && !item.isCoalescedReplay && isUserTouchingOverlay()) {
+            cancelledTapTracker.recordCancelledTap(item.tapX, item.tapY, SystemClock.uptimeMillis())
+        }
+    }
+
     private fun drainGestureQueue() {
         if (isDispatching) return
         val item = gestureQueue.removeFirstOrNull() ?: run {
+            activeGestureItem = null
+            scheduleTouchableRegionUpdate()
             flushPendingBoundsRebuild()
             return
         }
         isDispatching = true
+        activeGestureItem = item
         val gen = ++gestureDispatchGen
+
+        val api33FullPanel = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && isFullPanelVisible()
+        if (api33FullPanel) {
+            flushPanelTouchableRegionNow()
+        }
+        if (api33FullPanel && areItemStartPointsCoveredByPinhole(item)) {
+            if (isPassThroughActive) {
+                main.removeCallbacks(delayedRestoreTouchRunnable)
+                setOverlayTouchable(true)
+            }
+            val startInsidePanel = isAnyPointInsidePanel(item.startPoints)
+            val settleDelayMs = if (startInsidePanel) {
+                resolvePinholeSettleDelayMs(lastPinholeCommitUptimeMs, SystemClock.uptimeMillis())
+            } else {
+                0L
+            }
+
+            cancelGestureWatchdog()
+            val watchdogTimeout = resolveGestureWatchdogTimeoutMs(
+                expectedMs = item.expectedMs,
+                needsPassThrough = settleDelayMs > 0L,
+                passThroughDelayMs = settleDelayMs,
+            )
+            val watchdog = Runnable {
+                if (gestureDispatchGen != gen) return@Runnable
+                activeGestureWatchdogRunnable = null
+                pendingPassThroughDispatchRunnable?.let { main.removeCallbacks(it) }
+                pendingPassThroughDispatchRunnable = null
+                main.removeCallbacks(delayedRestoreTouchRunnable)
+                activeGestureItem = null
+                isDispatching = false
+                setOverlayTouchable(true)
+                scheduleTouchableRegionUpdate()
+                drainGestureQueue()
+            }
+            activeGestureWatchdogRunnable = watchdog
+            main.postDelayed(watchdog, watchdogTimeout)
+
+            val runPinholeDispatch = Runnable {
+                if (gestureDispatchGen != gen) return@Runnable
+                pendingPassThroughDispatchRunnable = null
+                val ok = runCatching {
+                    dispatchGesture(item.gesture, object : GestureResultCallback() {
+                        override fun onCompleted(gestureDescription: GestureDescription?) {
+                            if (gestureDispatchGen != gen) return
+                            cancelGestureWatchdog()
+                            activeGestureItem = null
+                            isDispatching = false
+                            runCatching { item.onComplete?.invoke() }
+                            if (gestureDispatchGen != gen || isDispatching) return
+                            if (gestureQueue.isNotEmpty()) {
+                                drainGestureQueue()
+                            } else {
+                                scheduleTouchableRegionUpdate()
+                                flushPendingBoundsRebuild()
+                            }
+                        }
+
+                        override fun onCancelled(gestureDescription: GestureDescription?) {
+                            if (gestureDispatchGen != gen) return
+                            cancelGestureWatchdog()
+                            activeGestureItem = null
+                            isDispatching = false
+                            recordCancelledTapIfNeeded(item)
+                            if (gestureQueue.isNotEmpty()) {
+                                drainGestureQueue()
+                            } else {
+                                scheduleTouchableRegionUpdate()
+                                flushPendingBoundsRebuild()
+                            }
+                        }
+                    }, main)
+                }.getOrDefault(false)
+                if (!ok && gestureDispatchGen == gen) {
+                    cancelGestureWatchdog()
+                    activeGestureItem = null
+                    isDispatching = false
+                    if (gestureQueue.isNotEmpty()) {
+                        drainGestureQueue()
+                    } else {
+                        scheduleTouchableRegionUpdate()
+                        flushPendingBoundsRebuild()
+                    }
+                }
+            }
+
+            if (settleDelayMs <= 0L) {
+                runPinholeDispatch.run()
+            } else {
+                pendingPassThroughDispatchRunnable = runPinholeDispatch
+                main.postDelayed(runPinholeDispatch, settleDelayMs)
+            }
+            return
+        }
 
         val needsPassThroughNow = isAnyPointInsidePanel(item.checkPoints)
 
@@ -3475,6 +3848,7 @@ class TouchpadService : AccessibilityService() {
             pendingPassThroughDispatchRunnable?.let { main.removeCallbacks(it) }
             pendingPassThroughDispatchRunnable = null
             main.removeCallbacks(delayedRestoreTouchRunnable)
+            activeGestureItem = null
             isDispatching = false
             setOverlayTouchable(true)
             drainGestureQueue()
@@ -3503,6 +3877,7 @@ class TouchpadService : AccessibilityService() {
                         override fun onCompleted(gestureDescription: GestureDescription?) {
                             if (gestureDispatchGen != gen) return
                             cancelGestureWatchdog()
+                            activeGestureItem = null
                             isDispatching = false
                             runCatching { item.onComplete?.invoke() }
                             if (gestureDispatchGen != gen) return
@@ -3527,7 +3902,9 @@ class TouchpadService : AccessibilityService() {
                             cancelGestureWatchdog()
                             main.removeCallbacks(delayedRestoreTouchRunnable)
                             setOverlayTouchable(true)
+                            activeGestureItem = null
                             isDispatching = false
+                            recordCancelledTapIfNeeded(item)
                             drainGestureQueue()
                         }
                     }, main)
@@ -3536,6 +3913,7 @@ class TouchpadService : AccessibilityService() {
                     cancelGestureWatchdog()
                     main.removeCallbacks(delayedRestoreTouchRunnable)
                     setOverlayTouchable(true)
+                    activeGestureItem = null
                     isDispatching = false
                     drainGestureQueue()
                 }
@@ -3560,6 +3938,7 @@ class TouchpadService : AccessibilityService() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
                         if (gestureDispatchGen != gen) return
                         cancelGestureWatchdog()
+                        activeGestureItem = null
                         isDispatching = false
                         runCatching { item.onComplete?.invoke() }
                         if (gestureDispatchGen != gen || isDispatching) return
@@ -3569,30 +3948,90 @@ class TouchpadService : AccessibilityService() {
                     override fun onCancelled(gestureDescription: GestureDescription?) {
                         if (gestureDispatchGen != gen) return
                         cancelGestureWatchdog()
+                        activeGestureItem = null
                         isDispatching = false
+                        recordCancelledTapIfNeeded(item)
                         drainGestureQueue()
                     }
                 }, main)
             }.getOrDefault(false)
             if (!ok && gestureDispatchGen == gen) {
                 cancelGestureWatchdog()
+                activeGestureItem = null
                 isDispatching = false
                 drainGestureQueue()
             }
         }
     }
 
-    private fun tapAt(x: Float, y: Float, ms: Long = 50, showFeedbackRing: Boolean = true) {
+    private fun dispatchCoalescedTaps(count: Int) {
+        if (count <= 0) return
+        val builder = GestureDescription.Builder()
+        for (idx in 0 until count) {
+            val tx = coalescedTapCoordsScratch[idx * 2]
+            val ty = coalescedTapCoordsScratch[idx * 2 + 1]
+            val path = Path().apply { moveTo(tx, ty) }
+            builder.addStroke(
+                GestureDescription.StrokeDescription(
+                    path,
+                    computeCoalescedTapStartTimeMs(idx),
+                    TAP_STROKE_DURATION_MS,
+                ),
+            )
+        }
+        val coords = coalescedTapCoordsScratch.copyOf(count * 2)
+        dispatch(
+            builder.build(),
+            checkPoints = coords,
+            startPoints = coords,
+            expectedMs = computeCoalescedTapTotalDurationMs(count),
+            isShortTap = false,
+            isCoalescedReplay = true,
+        )
+    }
+
+    private fun flushCancelledTapsIfIdle() {
+        if (isUserTouchingOverlay() || cancelledTapTracker.size <= 0) return
+        val count = cancelledTapTracker.drainForCoalescedTapInto(
+            coalescedTapCoordsScratch,
+            SystemClock.uptimeMillis(),
+            includeNewTap = false,
+        )
+        if (count >= 1) {
+            dispatchCoalescedTaps(count)
+        }
+    }
+
+    private fun tapAt(x: Float, y: Float, ms: Long = TAP_STROKE_DURATION_MS, showFeedbackRing: Boolean = true) {
         val sx = clampGestureCoord(x, screenW)
         val sy = clampGestureCoord(y, screenH)
         if (showFeedbackRing) showTouchRing(sx, sy, ms)
+        if (ms == TAP_STROKE_DURATION_MS && !isUserTouchingOverlay() && cancelledTapTracker.size > 0) {
+            val count = cancelledTapTracker.drainForCoalescedTapInto(
+                coalescedTapCoordsScratch,
+                SystemClock.uptimeMillis(),
+                includeNewTap = true,
+                newX = sx,
+                newY = sy,
+            )
+            if (count >= 2) {
+                dispatchCoalescedTaps(count)
+                return
+            }
+        }
         val path = Path().apply { moveTo(sx, sy) }
+        val point = floatArrayOf(sx, sy)
         dispatch(
             GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
                 .build(),
-            checkPoints = floatArrayOf(sx, sy),
+            checkPoints = point,
+            startPoints = point,
             expectedMs = ms,
+            isShortTap = ms == TAP_STROKE_DURATION_MS,
+            isCoalescedReplay = false,
+            tapX = sx,
+            tapY = sy,
         )
     }
 
@@ -3644,6 +4083,7 @@ class TouchpadService : AccessibilityService() {
                 .addStroke(GestureDescription.StrokeDescription(path, 0, plan.durationMs))
                 .build(),
             checkPoints = checkPoints,
+            startPoints = floatArrayOf(plan.startX, plan.startY),
             expectedMs = plan.durationMs,
         )
         haptic()
@@ -3663,6 +4103,7 @@ class TouchpadService : AccessibilityService() {
                 .addStroke(GestureDescription.StrokeDescription(path, 0, ms))
                 .build(),
             checkPoints = floatArrayOf(x0, y0, (x0 + x1) * 0.5f, (y0 + y1) * 0.5f, x1, y1),
+            startPoints = floatArrayOf(x0, y0),
             expectedMs = ms,
         )
     }
@@ -3671,6 +4112,7 @@ class TouchpadService : AccessibilityService() {
         dragging = true
         dragTrail.clear()
         dragTrail += TrailPoint(cursorX, cursorY)
+        flushPanelTouchableRegionNow()
         if (cachedTouchRingEnabled) {
             showTouchRing(cursorX, cursorY, 180)
         }
@@ -3681,6 +4123,7 @@ class TouchpadService : AccessibilityService() {
     private fun cancelDrag() {
         dragging = false
         dragTrail.clear()
+        scheduleTouchableRegionUpdate()
         touchRing?.release()
         refreshDragButtons()
     }
@@ -3707,6 +4150,7 @@ class TouchpadService : AccessibilityService() {
             dragPoints[idx * 2] = clampGestureCoord(pt.x, screenW)
             dragPoints[idx * 2 + 1] = clampGestureCoord(pt.y, screenH)
         }
+        val startPoints = floatArrayOf(startX, startY)
         val hold = prefs.cursorHoldMs.toLong()
         val moveMs = dragMoveDurationMs(trailLength(trail))
         val holdPath = Path().apply { moveTo(startX, startY) }
@@ -3724,6 +4168,7 @@ class TouchpadService : AccessibilityService() {
                 GestureDescription.Builder()
                     .addStroke(GestureDescription.StrokeDescription(movePath, 0, hold + moveMs)).build(),
                 checkPoints = dragPoints,
+                startPoints = startPoints,
                 expectedMs = hold + moveMs,
             )
             return
@@ -3731,12 +4176,14 @@ class TouchpadService : AccessibilityService() {
         dispatch(
             GestureDescription.Builder().addStroke(holdStroke).build(),
             checkPoints = dragPoints,
+            startPoints = startPoints,
             expectedMs = hold,
             keepPassThroughAfterComplete = true,
         ) {
             dispatchFront(
                 GestureDescription.Builder().addStroke(moveStroke).build(),
                 checkPoints = dragPoints,
+                startPoints = startPoints,
                 expectedMs = moveMs,
             )
         }
@@ -4044,9 +4491,12 @@ class TouchpadService : AccessibilityService() {
         p.y = oy
         if (immediate) {
             pendingCursorLayout = false
+            pendingTouchableRegionUpdate = false
             cursorView?.let { runCatching { wm.updateViewLayout(it, p) } }
+            flushPanelTouchableRegionNow()
         } else {
             pendingCursorLayout = true
+            pendingTouchableRegionUpdate = true
             scheduleLayoutFlush()
         }
     }

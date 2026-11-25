@@ -2224,5 +2224,257 @@ class TouchpadMathTest {
             assertEquals(viewHotspot, supersampledRing / scale, 0.0001f)
         }
     }
+
+    @Test
+    fun panelPinholeRectsHandleOutsideInsideMarginDualOriginNaNAndCapacity() {
+        val out = IntArray(16)
+
+        // Invalid dimensions or point count -> 0
+        assertEquals(0, computePanelPinholeRectsInto(out, floatArrayOf(150f, 250f), 1, 100, 200, 100, 200, 0, 300))
+        assertEquals(0, computePanelPinholeRectsInto(out, floatArrayOf(150f, 250f), 1, 100, 200, 100, 200, 200, -1))
+        assertEquals(0, computePanelPinholeRectsInto(out, floatArrayOf(150f, 250f), 0, 100, 200, 100, 200, 200, 300))
+
+        // Outside points (beyond 2px margin) -> 0 rects
+        assertEquals(
+            0,
+            computePanelPinholeRectsInto(
+                out,
+                floatArrayOf(97.5f, 250f, 302.5f, 250f, 150f, 197.5f, 150f, 502.5f),
+                4,
+                screenX = 100,
+                screenY = 200,
+                paramX = 100,
+                paramY = 200,
+                panelW = 200,
+                panelH = 300,
+            ),
+        )
+
+        // Inside point: (150, 250) with origin (100, 200), radius 3 -> cx=50, cy=50 -> [47, 47, 54, 54]
+        assertEquals(
+            1,
+            computePanelPinholeRectsInto(
+                out,
+                floatArrayOf(150f, 250f),
+                1,
+                screenX = 100,
+                screenY = 200,
+                paramX = 100,
+                paramY = 200,
+                panelW = 200,
+                panelH = 300,
+            ),
+        )
+        assertEquals(47, out[0])
+        assertEquals(47, out[1])
+        assertEquals(54, out[2])
+        assertEquals(54, out[3])
+
+        // 2px margin boundary points with radiusPx=3 (> marginPx=2) always produce non-empty clamped rects
+        val marginPoints = floatArrayOf(98f, 250f, 302f, 250f, 150f, 198f, 150f, 502f)
+        val marginCount = computePanelPinholeRectsInto(
+            out,
+            marginPoints,
+            4,
+            screenX = 100,
+            screenY = 200,
+            paramX = 100,
+            paramY = 200,
+            panelW = 200,
+            panelH = 300,
+        )
+        assertEquals(4, marginCount)
+        for (i in 0 until marginCount) {
+            val l = out[i * 4]
+            val t = out[i * 4 + 1]
+            val r = out[i * 4 + 2]
+            val b = out[i * 4 + 3]
+            assertTrue("Non-empty width for margin rect $i", r > l)
+            assertTrue("Non-empty height for margin rect $i", b > t)
+            assertTrue(l >= 0 && r <= 200 && t >= 0 && b <= 300)
+        }
+
+        // Dual origin (screenX, screenY) != (paramX, paramY) produces 2 distinct rects
+        val dualCount = computePanelPinholeRectsInto(
+            out,
+            floatArrayOf(150f, 250f),
+            1,
+            screenX = 110,
+            screenY = 205,
+            paramX = 100,
+            paramY = 200,
+            panelW = 200,
+            panelH = 300,
+        )
+        assertEquals(2, dualCount)
+        // First from param origin (100, 200) -> [47, 47, 54, 54]
+        assertEquals(47, out[0]); assertEquals(47, out[1]); assertEquals(54, out[2]); assertEquals(54, out[3])
+        // Second from screen origin (110, 205) -> [37, 42, 44, 49]
+        assertEquals(37, out[4]); assertEquals(42, out[5]); assertEquals(44, out[6]); assertEquals(49, out[7])
+
+        // Deduplicates identical rects from duplicate points or same origin
+        val dupCount = computePanelPinholeRectsInto(
+            out,
+            floatArrayOf(150f, 250f, 150.2f, 249.8f),
+            2,
+            screenX = 100,
+            screenY = 200,
+            paramX = 100,
+            paramY = 200,
+            panelW = 200,
+            panelH = 300,
+        )
+        assertEquals(1, dupCount)
+
+        // NaN / Inf points are skipped safely while valid points are kept
+        val nanCount = computePanelPinholeRectsInto(
+            out,
+            floatArrayOf(Float.NaN, 250f, 150f, Float.POSITIVE_INFINITY, 150f, 250f),
+            3,
+            screenX = 100,
+            screenY = 200,
+            paramX = 100,
+            paramY = 200,
+            panelW = 200,
+            panelH = 300,
+        )
+        assertEquals(1, nanCount)
+
+        // Buffer capacity cap is respected without out-of-bounds access
+        val tinyOut = IntArray(4)
+        assertEquals(
+            1,
+            computePanelPinholeRectsInto(
+                tinyOut,
+                floatArrayOf(150f, 250f, 180f, 280f),
+                2,
+                screenX = 100,
+                screenY = 200,
+                paramX = 100,
+                paramY = 200,
+                panelW = 200,
+                panelH = 300,
+            ),
+        )
+    }
+
+    @Test
+    fun pinholeRectEqualityAndCoverageRespectSubpixelAndDualOriginBounds() {
+        val a = intArrayOf(10, 20, 17, 27, 99, 99, 99, 99)
+        val b = intArrayOf(10, 20, 17, 27, 0, 0, 0, 0)
+        assertTrue(arePinholeRectsEqual(a, 1, b, 1))
+        assertTrue(arePinholeRectsEqual(a, 0, b, 0))
+        assertFalse(arePinholeRectsEqual(a, 1, b, 2))
+        assertFalse(arePinholeRectsEqual(a, 2, b, 2))
+        assertFalse(arePinholeRectsEqual(a, -1, b, -1))
+        assertFalse(arePinholeRectsEqual(IntArray(2), 1, IntArray(2), 1))
+
+        // Non-finite point -> false; non-positive panel -> true
+        assertFalse(isScreenPointCoveredByPinholeRects(Float.NaN, 250f, a, 1, 100, 200, 100, 200, 200, 300))
+        assertFalse(isScreenPointCoveredByPinholeRects(150f, Float.NEGATIVE_INFINITY, a, 1, 100, 200, 100, 200, 200, 300))
+        assertTrue(isScreenPointCoveredByPinholeRects(150f, 250f, a, 0, 100, 200, 100, 200, 0, 300))
+
+        // Outside panel passes even with 0 committed rects
+        assertTrue(isScreenPointCoveredByPinholeRects(50f, 250f, a, 0, 100, 200, 100, 200, 200, 300))
+        // Inside panel with 0 committed rects -> false
+        assertFalse(isScreenPointCoveredByPinholeRects(150f, 250f, a, 0, 100, 200, 100, 200, 200, 300))
+
+        // Sub-pixel .4f / .6f floor vs round check against rect [9, 9, 12, 12] (covers 9, 10, 11)
+        val subPixelRect = intArrayOf(9, 9, 12, 12)
+        // 110.4 - 100 = 10.4 -> round=10, floor=10 (both in [9, 12))
+        assertTrue(isScreenPointCoveredByPinholeRects(110.4f, 210.4f, subPixelRect, 1, 100, 200, 100, 200, 200, 300))
+        // 110.6 - 100 = 10.6 -> round=11, floor=10 (both in [9, 12))
+        assertTrue(isScreenPointCoveredByPinholeRects(110.6f, 210.6f, subPixelRect, 1, 100, 200, 100, 200, 200, 300))
+        // 111.6 - 100 = 11.6 -> floor=11 (in), round=12 (out) -> false
+        assertFalse(isScreenPointCoveredByPinholeRects(111.6f, 210.4f, subPixelRect, 1, 100, 200, 100, 200, 200, 300))
+        // 108.6 - 100 = 8.6 -> round=9 (in), floor=8 (out) -> false
+        assertFalse(isScreenPointCoveredByPinholeRects(108.6f, 210.4f, subPixelRect, 1, 100, 200, 100, 200, 200, 300))
+
+        // Dual-origin: must cover BOTH param and screen origins when they differ
+        val dualRects = IntArray(8)
+        val dualCount = computePanelPinholeRectsInto(
+            dualRects,
+            floatArrayOf(150f, 250f),
+            1,
+            screenX = 110,
+            screenY = 205,
+            paramX = 100,
+            paramY = 200,
+            panelW = 200,
+            panelH = 300,
+        )
+        assertEquals(2, dualCount)
+        assertTrue(isScreenPointCoveredByPinholeRects(150f, 250f, dualRects, dualCount, 110, 205, 100, 200, 200, 300))
+        // Only the first rect (param origin) committed -> fails for screen origin (110, 205)
+        assertFalse(isScreenPointCoveredByPinholeRects(150f, 250f, dualRects, 1, 110, 205, 100, 200, 200, 300))
+    }
+
+    @Test
+    fun pinholeSettleDelayComputesRemainingTimeAndClamps() {
+        assertEquals(32L, resolvePinholeSettleDelayMs(lastPinholeCommitUptimeMs = 0L, nowUptimeMs = 5000L))
+        assertEquals(32L, resolvePinholeSettleDelayMs(lastPinholeCommitUptimeMs = -10L, nowUptimeMs = 5000L))
+        assertEquals(22L, resolvePinholeSettleDelayMs(lastPinholeCommitUptimeMs = 1000L, nowUptimeMs = 1010L))
+        assertEquals(0L, resolvePinholeSettleDelayMs(lastPinholeCommitUptimeMs = 1000L, nowUptimeMs = 1032L))
+        assertEquals(0L, resolvePinholeSettleDelayMs(lastPinholeCommitUptimeMs = 1000L, nowUptimeMs = 1200L))
+        assertEquals(32L, resolvePinholeSettleDelayMs(lastPinholeCommitUptimeMs = 2000L, nowUptimeMs = 1990L))
+    }
+
+    @Test
+    fun cancelledTapTrackerMaintainsFifoPrunesExpiredDropsOldestAndClearsOnDrain() {
+        val tracker = CancelledTapTracker(maxTaps = 2, expireMs = 300L)
+        val out = FloatArray(MAX_COALESCED_TAPS * 2)
+
+        // Non-finite coordinates are ignored
+        tracker.recordCancelledTap(Float.NaN, 100f, nowUptimeMs = 1000L)
+        tracker.recordCancelledTap(100f, Float.POSITIVE_INFINITY, nowUptimeMs = 1000L)
+        assertEquals(0, tracker.size)
+
+        // Ring overflow (capacity=2): recording 3 taps drops oldest (10, 20), keeps (30, 40) then (50, 60)
+        tracker.recordCancelledTap(10f, 20f, nowUptimeMs = 1000L)
+        tracker.recordCancelledTap(30f, 40f, nowUptimeMs = 1050L)
+        tracker.recordCancelledTap(50f, 60f, nowUptimeMs = 1100L)
+        assertEquals(2, tracker.size)
+
+        // Drain with includeNewTap = true writes FIFO + new tap and clears state
+        val count = tracker.drainForCoalescedTapInto(
+            outCoords = out,
+            nowUptimeMs = 1200L,
+            includeNewTap = true,
+            newX = 70f,
+            newY = 80f,
+        )
+        assertEquals(3, count)
+        assertEquals(30f, out[0], 0.001f); assertEquals(40f, out[1], 0.001f)
+        assertEquals(50f, out[2], 0.001f); assertEquals(60f, out[3], 0.001f)
+        assertEquals(70f, out[4], 0.001f); assertEquals(80f, out[5], 0.001f)
+        assertEquals(0, tracker.size)
+
+        // Second drain never replays previously drained taps
+        assertEquals(0, tracker.drainForCoalescedTapInto(out, nowUptimeMs = 1210L, includeNewTap = false))
+
+        // Expiration pruning: (100, 200) at t=2000 expires at t=2301 (>300ms), (300, 400) at t=2100 remains
+        tracker.recordCancelledTap(100f, 200f, nowUptimeMs = 2000L)
+        tracker.recordCancelledTap(300f, 400f, nowUptimeMs = 2100L)
+        val drainedAfterExpiry = tracker.drainForCoalescedTapInto(out, nowUptimeMs = 2301L, includeNewTap = false)
+        assertEquals(1, drainedAfterExpiry)
+        assertEquals(300f, out[0], 0.001f); assertEquals(400f, out[1], 0.001f)
+        assertEquals(0, tracker.size)
+    }
+
+    @Test
+    fun coalescedTapTimingPreservesMinimumDoubleTapGap() {
+        assertTrue(TAP_COALESCE_GAP_MS >= 40L) // ViewConfiguration.DOUBLE_TAP_MIN_TIME
+        assertEquals(0L, computeCoalescedTapStartTimeMs(0))
+        assertEquals(TAP_STROKE_DURATION_MS + TAP_COALESCE_GAP_MS, computeCoalescedTapStartTimeMs(1))
+        assertEquals(2L * (TAP_STROKE_DURATION_MS + TAP_COALESCE_GAP_MS), computeCoalescedTapStartTimeMs(2))
+
+        val gapBetweenTap0And1 = computeCoalescedTapStartTimeMs(1) - (computeCoalescedTapStartTimeMs(0) + TAP_STROKE_DURATION_MS)
+        assertTrue(gapBetweenTap0And1 >= 40L)
+
+        assertEquals(0L, computeCoalescedTapTotalDurationMs(0))
+        assertEquals(TAP_STROKE_DURATION_MS, computeCoalescedTapTotalDurationMs(1))
+        assertEquals(2L * TAP_STROKE_DURATION_MS + TAP_COALESCE_GAP_MS, computeCoalescedTapTotalDurationMs(2))
+        assertEquals(3L * TAP_STROKE_DURATION_MS + 2L * TAP_COALESCE_GAP_MS, computeCoalescedTapTotalDurationMs(3))
+    }
 }
 
