@@ -3,6 +3,7 @@
 ## Local Build & Test — HARD RULE (scoped to the 1 GB VPS host only)
 - **On this VPS host (`ser331458405279`, 1 vCPU / ~1 GB RAM): NEVER run Gradle / any JVM build or test.** It has 1 vCPU and ~1 GB RAM shared with other services. Starting Gradle (even `testDebugUnitTest`, even with `--no-daemon`) forks JVMs, drives the box into swap, and gets java OOM-killed — which takes the whole host (and the Telegram bot) down with it.
   - Incident 2026-11-25 16:23: `java` OOM-killed during `gradle test`, host swap-thrashed for minutes, bot couldn't poll Telegram.
+  - **Exempt:** GitHub Actions runners and agy **remote/cloud agents** (`--remote-agent`) do not run on this host — they have their own cloud environment and MUST run `gradle test assembleRelease` normally there.
 - **Build and test only in GitHub Actions**:
   ```bash
   gh workflow run build.yml            # compile + unit tests
