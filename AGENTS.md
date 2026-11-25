@@ -37,7 +37,8 @@
     ```bash
     agy --remote-agent --project "baozaodelaozhongyi-droid/OpenTouchpad" --model <model-id> -i "<prompt>"
     ```
-  - Pass `--model <model-id>` to pick any model from `agy models` (e.g. `gemini-4-hydrogen-high`, `gemini-4-carbon-high`, `gemini-4-neon-high`, `claude-opus-5-5-high`).
+  - Pass `--model <model-id>` to pick any supported model from `agy models` (e.g. `gemini-4-hydrogen-high`, `gemini-4-carbon-high`, `gemini-4-neon-high`, `claude-opus-5-5-high`; `Orchestrator` models are not supported on remote agents).
+  - **Multi-agent note (verified):** Remote Agents do **not** support the `/swarm` message-board slash command yet, **but DO support parallel `invoke_subagent` / `manage_subagents` subagents** inside the 7.8 GiB `devbox`.
   - Cloud agents work on the GitHub remote repo (not uncommitted files on `ser331458405279`), so sync via `git push` / `git pull`, and always kill/clean up the local PTY thin-client process group (`\x04\x04` + `SIGTERM`) in `finally`.
 
 ## Release Workflow
