@@ -3,11 +3,21 @@
 ## Local Build, Test & Memory — HARD RULE (scoped to the 1 GB VPS host only)
 - **On this VPS host (`ser331458405279`, 1 vCPU / ~967 MB RAM, ~100–180 MB free): NEVER run Gradle / any JVM build or test.** Starting Gradle (even `testDebugUnitTest`, even with `--no-daemon`) forks JVMs, drives the box into swap, and gets `java` OOM-killed — taking the whole host (and Telegram/Hermes/agy services) down with it.
   - Incident 2026-11-25 16:23: `java` OOM-killed during `gradle test`, host swap-thrashed for minutes, bot couldn't poll Telegram.
-  - **Do NOT run heavy multi-agent `/swarm` locally on `ser331458405279`**; work single-threaded locally or offload heavy tasks to the Cloud Remote Agent / GitHub Actions below.
+  - **Do NOT run heavy multi-agent `/swarm` locally on `ser331458405279`**.
   - **Exempt:** GitHub Actions runners and Antigravity **Cloud Remote Agents** (`--remote-agent`, `hostname = devbox`, ~7.8 GiB RAM) do not run on this host — they have their own cloud environment and MUST run `gradle --no-daemon test assembleRelease` normally there.
-- Allowed locally on `ser331458405279`: reading/editing code, `git`, `gh`, `grep`, `diff`, plain Python/shell that does not start a JVM.
+- Allowed locally on `ser331458405279`: reading/editing code, `git`, `gh`, `grep`, `diff`, plain Python/shell (`< 50 MB` RAM, zero JVM).
 - If a local JVM run on `ser331458405279` is truly unavoidable, **ask the user first**, run one at a time, with `GRADLE_OPTS="-Xmx256m" --no-daemon`.
 - Keep project `gradle.properties` untouched for CI; machine-specific overrides belong in `~/.gradle/gradle.properties`.
+
+## 3-Tier Task Routing Matrix (for sessions on `ser331458405279`)
+1. **Tier 1 — Local Only (zero cloud overhead):**
+   - Q&A, code walkthroughs/diagnosis, docs/config updates, or small targeted fixes (`≤ 3` files, clear logic, no iterative compile/test loop needed).
+2. **Tier 2 — Local Edit + GitHub Actions (single verification / release):**
+   - Changes that can be written cleanly in one pass locally and only need a **single** `gradle --no-daemon test assembleRelease` verification run or signed release APK build.
+3. **Tier 3 — MUST Dispatch to Cloud Remote Agent (`devbox`, ~7.8 GiB RAM) if ANY apply:**
+   - Needs multi-round **edit ↔ `gradle test` / compile** iteration (e.g., complex gesture/physics/state-machine refactors, fixing tricky compile errors, writing large unit test suites);
+   - Touches **`≥ 4` core source files** or the user asks for `/swarm` / multi-agent parallel development or full-repo review;
+   - Requires any JVM tool, heavy decompilation/reverse-engineering, batch image/asset processing, or **`> 50 MB` extra RAM**.
 
 ## Cloud Build, Test & Remote Agent Offloading
 
@@ -21,8 +31,8 @@
   ```
 
 ### 2. Proactive Cloud Remote Agent (`baozaodelaozhongyi-droid/OpenTouchpad`)
-- The cloud project **`baozaodelaozhongyi-droid/OpenTouchpad`** is already configured and runs in a ~7.8 GiB RAM cloud container (`devbox`).
-- From `ser331458405279`, you can proactively dispatch heavy tasks (multi-file refactors, local Gradle test loops, etc.) to the cloud agent:
+- The cloud project **`baozaodelaozhongyi-droid/OpenTouchpad`** runs in a ~7.8 GiB RAM cloud container (`devbox`).
+- From `ser331458405279`, proactively dispatch all **Tier 3** tasks to the cloud agent:
   - `--remote-agent` does **not** support `-p` / `--print` yet; invoke `-i` (`--prompt-interactive`) via a small Python `pty` wrapper:
     ```bash
     agy --remote-agent --project "baozaodelaozhongyi-droid/OpenTouchpad" --model <model-id> -i "<prompt>"
