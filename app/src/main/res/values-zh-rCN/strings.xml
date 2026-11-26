@@ -77,6 +77,14 @@
     <string name="set_cursor_size">光标尺寸</string>
     <string name="set_cursor_color">光标颜色</string>
     <string name="set_sensitivity">光标移动灵敏度</string>
+    <string name="switch_pointer_accel">动态指针倍率</string>
+    <string name="switch_pointer_accel_hint">根据手指滑动快慢平滑缩放灵敏度；关闭时保持纯粹 1:1 线性移动</string>
+    <string name="set_pointer_accel_min">慢移最低倍率</string>
+    <string name="set_pointer_accel_min_hint">设为 1.00× 时关闭慢移减速区，仅保留快滑提速</string>
+    <string name="set_pointer_accel_max">快滑最高倍率</string>
+    <string name="set_pointer_accel_max_hint">快速拨动触控板时的最高灵敏度放大倍数</string>
+    <string name="set_pointer_accel_threshold">提速触发速度</string>
+    <string name="set_pointer_accel_threshold_hint">手指超过此速率后开始平滑提速；数值越高日常滑动越稳重</string>
     <string name="set_long_press">触控板长按手势识别时长</string>
     <string name="set_scroll_distance">单次滚动模拟距离</string>
     <string name="scroll_distance_hint">控制面板滚动按键（↑ / ↓ / ← / →）单次点击时在屏幕上模拟滚动的距离。</string>

@@ -109,6 +109,38 @@ class Prefs(ctx: Context) {
         get() = sp.getFloat("sensitivity", 1.4f)
         set(v) = sp.edit().putFloat("sensitivity", v).apply()
 
+    /** 动态指针倍率开关；默认关闭以保持纯粹 1:1 线性跟手。 */
+    var pointerAccelEnabled: Boolean
+        get() = sp.getBoolean("pointerAccelEnabled", false)
+        set(v) = sp.edit().putBoolean("pointerAccelEnabled", v).apply()
+
+    /** 慢移最低倍率（百分比，50..100 对应 0.50×..1.00×）；默认 100（1.00×，关闭慢移减速区）。 */
+    var pointerAccelMinPercent: Int
+        get() = sp.getInt("pointerAccelMinPercent", POINTER_ACCEL_MIN_PERCENT_DEFAULT)
+            .coerceIn(POINTER_ACCEL_MIN_PERCENT_MIN, POINTER_ACCEL_MIN_PERCENT_MAX)
+        set(v) = sp.edit()
+            .putInt("pointerAccelMinPercent", v.coerceIn(POINTER_ACCEL_MIN_PERCENT_MIN, POINTER_ACCEL_MIN_PERCENT_MAX))
+            .apply()
+
+    /** 快滑最高倍率（百分比，100..250 对应 1.00×..2.50×）；默认 145（1.45×）。 */
+    var pointerAccelMaxPercent: Int
+        get() = sp.getInt("pointerAccelMaxPercent", POINTER_ACCEL_MAX_PERCENT_DEFAULT)
+            .coerceIn(POINTER_ACCEL_MAX_PERCENT_MIN, POINTER_ACCEL_MAX_PERCENT_MAX)
+        set(v) = sp.edit()
+            .putInt("pointerAccelMaxPercent", v.coerceIn(POINTER_ACCEL_MAX_PERCENT_MIN, POINTER_ACCEL_MAX_PERCENT_MAX))
+            .apply()
+
+    /** 提速触发速度（dp/s，60..400）；默认 160 dp/s。 */
+    var pointerAccelThresholdDpPerSec: Int
+        get() = sp.getInt("pointerAccelThresholdDpPerSec", POINTER_ACCEL_THRESHOLD_DEFAULT_DP_PER_SEC)
+            .coerceIn(POINTER_ACCEL_THRESHOLD_MIN_DP_PER_SEC, POINTER_ACCEL_THRESHOLD_MAX_DP_PER_SEC)
+        set(v) = sp.edit()
+            .putInt(
+                "pointerAccelThresholdDpPerSec",
+                v.coerceIn(POINTER_ACCEL_THRESHOLD_MIN_DP_PER_SEC, POINTER_ACCEL_THRESHOLD_MAX_DP_PER_SEC),
+            )
+            .apply()
+
     var cursorSizeDp: Int
         get() = sp.getInt("cursorSize", 36)
         set(v) = sp.edit().putInt("cursorSize", v).apply()

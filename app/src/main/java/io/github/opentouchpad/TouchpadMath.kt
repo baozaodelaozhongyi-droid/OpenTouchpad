@@ -2542,36 +2542,72 @@ internal class CancelledTapTracker(
 
 // ───────────────────────── 光标动态增益、物理微动效与边缘触感状态机 ─────────────────────────
 
-internal const val POINTER_ACCEL_MIN_MULTIPLIER = 0.64f
-internal const val POINTER_ACCEL_MAX_MULTIPLIER = 1.80f
-internal const val POINTER_ACCEL_SLOW_KNEE_DP_PER_SEC = 22f
-internal const val POINTER_ACCEL_UNIT_SPEED_DP_PER_SEC = 135f
-private const val POINTER_ACCEL_SCALE_DP_PER_SEC = 168.44716f
+internal const val POINTER_ACCEL_MIN_PERCENT_MIN = 50
+internal const val POINTER_ACCEL_MIN_PERCENT_MAX = 100
+internal const val POINTER_ACCEL_MIN_PERCENT_DEFAULT = 100
+internal const val POINTER_ACCEL_MAX_PERCENT_MIN = 100
+internal const val POINTER_ACCEL_MAX_PERCENT_MAX = 250
+internal const val POINTER_ACCEL_MAX_PERCENT_DEFAULT = 145
+internal const val POINTER_ACCEL_THRESHOLD_MIN_DP_PER_SEC = 60
+internal const val POINTER_ACCEL_THRESHOLD_MAX_DP_PER_SEC = 400
+internal const val POINTER_ACCEL_THRESHOLD_DEFAULT_DP_PER_SEC = 160
+
+internal const val POINTER_ACCEL_DEFAULT_MIN_MULTIPLIER = POINTER_ACCEL_MIN_PERCENT_DEFAULT / 100f
+internal const val POINTER_ACCEL_DEFAULT_MAX_MULTIPLIER = POINTER_ACCEL_MAX_PERCENT_DEFAULT / 100f
+internal const val POINTER_ACCEL_DEFAULT_THRESHOLD_DP_PER_SEC = POINTER_ACCEL_THRESHOLD_DEFAULT_DP_PER_SEC.toFloat()
 
 /**
- * 动态指针加速度曲线（热路径零分配）：
- * - 慢速微瞄区间（<= 22 dp/s）：平滑收敛至 0.64f，指尖微调稳健精准；
- * - 中速巡航区间（~120–150 dp/s）：在 135 dp/s 处平滑通过 1.00f，保持用户灵敏度直觉；
- * - 快速轻甩区间（300–900+ dp/s）：C1 连续单调递增并渐进收敛至上限 1.80f，绝不失控飞出。
+ * 两段式 C1 连续动态指针加速度曲线（纯函数、热路径零分配）：
+ * - 第一段（慢移微瞄至常速区 `0 <= v <= thresh`）：
+ *   - 若 `minM >= 0.999f`，全区间严格恒等于 `1.0f`（零减速死区、零提前提速）；
+ *   - 若 `minM < 0.999f`，在 `slowKnee = min(18, thresh * 0.25)` 以下保持 `minM`，
+ *     在 `(slowKnee, thresh)` 内用三次 Hermite `t^2 * (3 - 2t)` 平滑插值至 `1.0f`（两端导数均为 0）。
+ * - 第二段（快滑提速区 `v > thresh`）：
+ *   - 若 `maxM <= 1.001f`，返回 `1.0f`；
+ *   - 否则按 `ratio = u^2 / (1 + u^2)`（`rampScale = max(140, thresh * 1.25)`）从 `1.0f` 平滑递增至 `maxM`，
+ *     在 `v = thresh` 处值为 `1.0f` 且右导数为 `0`，全局 C1 连续、单调不减、渐进有界不超调。
  */
-internal fun computePointerAccelerationMultiplier(fingerSpeedDpPerSec: Float): Float {
+internal fun computePointerAccelerationMultiplier(
+    fingerSpeedDpPerSec: Float,
+    minMultiplier: Float = POINTER_ACCEL_DEFAULT_MIN_MULTIPLIER,
+    maxMultiplier: Float = POINTER_ACCEL_DEFAULT_MAX_MULTIPLIER,
+    thresholdDpPerSec: Float = POINTER_ACCEL_DEFAULT_THRESHOLD_DP_PER_SEC,
+): Float {
     if (!fingerSpeedDpPerSec.isFinite()) return 1f
-    if (fingerSpeedDpPerSec <= POINTER_ACCEL_SLOW_KNEE_DP_PER_SEC) {
-        return POINTER_ACCEL_MIN_MULTIPLIER
+    val safeMin = if (minMultiplier.isFinite()) minMultiplier else POINTER_ACCEL_DEFAULT_MIN_MULTIPLIER
+    val safeMax = if (maxMultiplier.isFinite()) maxMultiplier else POINTER_ACCEL_DEFAULT_MAX_MULTIPLIER
+    val safeThresh = if (thresholdDpPerSec.isFinite()) thresholdDpPerSec else POINTER_ACCEL_DEFAULT_THRESHOLD_DP_PER_SEC
+
+    val minM = safeMin.coerceIn(0.50f, 1.00f)
+    val maxM = maxOf(minM, safeMax.coerceIn(1.00f, 2.50f))
+    val thresh = safeThresh.coerceIn(60f, 400f)
+    val v = fingerSpeedDpPerSec.coerceAtLeast(0f)
+
+    if (v <= thresh) {
+        if (minM >= 0.999f) return 1f
+        val slowKnee = minOf(18f, thresh * 0.25f)
+        if (v <= slowKnee) return minM
+        val t = ((v - slowKnee) / (thresh - slowKnee)).coerceIn(0f, 1f)
+        val smooth = t * t * (3f - 2f * t)
+        return (minM + (1f - minM) * smooth).coerceIn(minM, 1f)
     }
-    val u = (fingerSpeedDpPerSec - POINTER_ACCEL_SLOW_KNEE_DP_PER_SEC) / POINTER_ACCEL_SCALE_DP_PER_SEC
-    if (u >= 1e4f) return POINTER_ACCEL_MAX_MULTIPLIER
+
+    if (maxM <= 1.001f) return 1f
+    val rampScale = maxOf(140f, thresh * 1.25f)
+    val u = (v - thresh) / rampScale
+    if (u >= 1e4f) return maxM
     val u2 = u * u
     val ratio = u2 / (1f + u2)
-    return (POINTER_ACCEL_MIN_MULTIPLIER + (POINTER_ACCEL_MAX_MULTIPLIER - POINTER_ACCEL_MIN_MULTIPLIER) * ratio)
-        .coerceIn(POINTER_ACCEL_MIN_MULTIPLIER, POINTER_ACCEL_MAX_MULTIPLIER)
+    return (1f + (maxM - 1f) * ratio).coerceIn(1f, maxM)
 }
 
 /**
  * VRR / 高触控采样率自适应指针弹道状态（全基本类型原地更新，热路径零分配）：
- * - 首包播种防触屏落指形变跳变尖峰；
+ * - 首包播种时间戳并将初始倍率置为 `1.0f`，避免落指首帧跳变或滞后；
  * - `< 1.5ms` 合包/粘包先累积位移，避免极短 dt 放大瞬时速度噪声；
- * - 通过 `computeVrrEmaAlpha` 平滑手指速度向量并映射为动态指针倍率。
+ * - 使用**无符号标量速率**（`hypot(pendingDxPx, pendingDyPx)`）做 VRR 自适应 EMA 滤波驱动动态倍率，
+ *   消除折返或画圈时有符号分量正负抵消掉回 0 速引发的急刹缺陷；
+ * - 有符号速度向量 `smoothedVxDpPerSec / smoothedVyDpPerSec` 独立维护，仅供光标顺风微摆使用。
  */
 internal class MutablePointerBallisticsState {
     var lastEventTimeNs: Long = 0L
@@ -2586,7 +2622,7 @@ internal class MutablePointerBallisticsState {
         private set
     var smoothedSpeedDpPerSec: Float = 0f
         private set
-    var multiplier: Float = POINTER_ACCEL_MIN_MULTIPLIER
+    var multiplier: Float = 1f
         private set
 
     fun reset() {
@@ -2596,10 +2632,18 @@ internal class MutablePointerBallisticsState {
         smoothedVxDpPerSec = 0f
         smoothedVyDpPerSec = 0f
         smoothedSpeedDpPerSec = 0f
-        multiplier = POINTER_ACCEL_MIN_MULTIPLIER
+        multiplier = 1f
     }
 
-    fun onMove(dxPx: Float, dyPx: Float, eventTimeNs: Long, density: Float): Float {
+    fun onMove(
+        dxPx: Float,
+        dyPx: Float,
+        eventTimeNs: Long,
+        density: Float,
+        minMultiplier: Float = POINTER_ACCEL_DEFAULT_MIN_MULTIPLIER,
+        maxMultiplier: Float = POINTER_ACCEL_DEFAULT_MAX_MULTIPLIER,
+        thresholdDpPerSec: Float = POINTER_ACCEL_DEFAULT_THRESHOLD_DP_PER_SEC,
+    ): Float {
         if (!dxPx.isFinite() || !dyPx.isFinite()) return multiplier
         if (lastEventTimeNs == 0L) {
             lastEventTimeNs = eventTimeNs
@@ -2608,7 +2652,7 @@ internal class MutablePointerBallisticsState {
             smoothedVxDpPerSec = 0f
             smoothedVyDpPerSec = 0f
             smoothedSpeedDpPerSec = 0f
-            multiplier = computePointerAccelerationMultiplier(0f)
+            multiplier = 1f
             return multiplier
         }
         val rawDtNs = eventTimeNs - lastEventTimeNs
@@ -2627,11 +2671,12 @@ internal class MutablePointerBallisticsState {
         val dtSec = (rawDtNs / 1_000_000_000f).coerceAtLeast(0.0015f)
         val rawVxDp = (pendingDxPx / safeDensity) / dtSec
         val rawVyDp = (pendingDyPx / safeDensity) / dtSec
+        val rawScalarSpeedDp = (kotlin.math.hypot(pendingDxPx, pendingDyPx) / safeDensity) / dtSec
         pendingDxPx = 0f
         pendingDyPx = 0f
         lastEventTimeNs = eventTimeNs
 
-        // 方向反转过零时立即清零残留反向速度，消除反向滑动时的滞后反摆
+        // 方向反转过零时立即清零残留反向速度，消除光标微摆方向滞后（不影响标量速率）
         if (rawVxDp * smoothedVxDpPerSec < 0f) {
             smoothedVxDpPerSec = 0f
         }
@@ -2639,11 +2684,20 @@ internal class MutablePointerBallisticsState {
             smoothedVyDpPerSec = 0f
         }
 
-        val alpha = computeVrrEmaAlpha(dtSec.coerceAtMost(0.5f), 0.028f)
-        smoothedVxDpPerSec += (rawVxDp - smoothedVxDpPerSec) * alpha
-        smoothedVyDpPerSec += (rawVyDp - smoothedVyDpPerSec) * alpha
-        smoothedSpeedDpPerSec = kotlin.math.hypot(smoothedVxDpPerSec, smoothedVyDpPerSec)
-        multiplier = computePointerAccelerationMultiplier(smoothedSpeedDpPerSec)
+        val clampedDtSec = dtSec.coerceAtMost(0.5f)
+        val vecAlpha = computeVrrEmaAlpha(clampedDtSec, 0.028f)
+        smoothedVxDpPerSec += (rawVxDp - smoothedVxDpPerSec) * vecAlpha
+        smoothedVyDpPerSec += (rawVyDp - smoothedVyDpPerSec) * vecAlpha
+
+        // 无符号标量速率恒 >= 0，手指来回折返或画圈时不会正负抵消掉回 0 速造成急刹
+        val speedAlpha = computeVrrEmaAlpha(clampedDtSec, 0.022f)
+        smoothedSpeedDpPerSec += (rawScalarSpeedDp - smoothedSpeedDpPerSec) * speedAlpha
+        multiplier = computePointerAccelerationMultiplier(
+            fingerSpeedDpPerSec = smoothedSpeedDpPerSec,
+            minMultiplier = minMultiplier,
+            maxMultiplier = maxMultiplier,
+            thresholdDpPerSec = thresholdDpPerSec,
+        )
         return multiplier
     }
 }

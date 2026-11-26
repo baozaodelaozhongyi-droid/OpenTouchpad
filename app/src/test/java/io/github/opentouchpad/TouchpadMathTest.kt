@@ -2478,33 +2478,97 @@ class TouchpadMathTest {
     }
 
     @Test
-    fun pointerAccelerationCurveIsMonotonicSmoothAndStrictlyBounded() {
-        // Slow micro-aiming zone <= 22 dp/s stays at 0.64f
-        assertEquals(0.64f, computePointerAccelerationMultiplier(-10f), 0.0001f)
-        assertEquals(0.64f, computePointerAccelerationMultiplier(0f), 0.0001f)
-        assertEquals(0.64f, computePointerAccelerationMultiplier(22f), 0.0001f)
+    fun pointerAccelerationDefaultCurveIsFlatBelowThresholdAndC1SmoothAbove() {
+        // Default params: min = 1.00f, max = 1.45f, threshold = 160f
+        assertEquals(1.00f, POINTER_ACCEL_DEFAULT_MIN_MULTIPLIER, 0.0001f)
+        assertEquals(1.45f, POINTER_ACCEL_DEFAULT_MAX_MULTIPLIER, 0.0001f)
+        assertEquals(160f, POINTER_ACCEL_DEFAULT_THRESHOLD_DP_PER_SEC, 0.0001f)
 
-        // Medium cruising zone (~120–150 dp/s) smoothly crosses 1.00f
-        val cruiseLow = computePointerAccelerationMultiplier(120f)
-        val cruiseUnit = computePointerAccelerationMultiplier(135f)
-        val cruiseHigh = computePointerAccelerationMultiplier(150f)
-        assertTrue(cruiseLow in 0.90f..0.99f)
-        assertEquals(1.00f, cruiseUnit, 0.001f)
-        assertTrue(cruiseHigh in 1.01f..1.12f)
+        // Strict 1.00f across 0..160 dp/s (zero slow-down dead zone, zero early boost)
+        assertEquals(1.00f, computePointerAccelerationMultiplier(-10f), 0.0001f)
+        for (speed in 0..160) {
+            assertEquals(
+                "Expected exact 1.00f at $speed dp/s",
+                1.00f,
+                computePointerAccelerationMultiplier(speed.toFloat()),
+                0.00001f,
+            )
+        }
 
-        // Fast flick zone approaches 1.80f monotonically with no jumps or overshoot
+        // C1 continuity across threshold = 160 dp/s (right derivative is 0, no jump)
+        val justAbove = computePointerAccelerationMultiplier(161f)
+        assertTrue("Expected smooth rise above 160 dp/s, got $justAbove", justAbove > 1.00f && justAbove < 1.001f)
+
+        // Monotonic, smooth, strictly bounded in [1.00, 1.45] across 0..2000 dp/s
         var prev = computePointerAccelerationMultiplier(0f)
         for (speed in 1..2000) {
             val cur = computePointerAccelerationMultiplier(speed.toFloat())
             assertTrue("Must be monotonically non-decreasing at $speed dp/s", cur >= prev)
-            assertTrue("Must stay strictly smooth without jump at $speed dp/s", cur - prev < 0.01f)
-            assertTrue("Must stay within [0.64, 1.80] at $speed dp/s", cur in 0.64f..1.80f)
+            assertTrue("Must stay strictly smooth without jump at $speed dp/s", cur - prev < 0.005f)
+            assertTrue("Must stay within [1.00, 1.45] at $speed dp/s", cur in 1.00f..1.45f)
             prev = cur
         }
-        assertTrue(computePointerAccelerationMultiplier(900f) in 1.72f..1.80f)
-        assertEquals(1.80f, computePointerAccelerationMultiplier(Float.MAX_VALUE), 0.0001f)
+
+        // Fast flick approaches 1.45f asymptotically without overshoot
+        assertTrue(computePointerAccelerationMultiplier(360f) in 1.20f..1.25f)
+        assertTrue(computePointerAccelerationMultiplier(900f) in 1.40f..1.45f)
+        assertEquals(1.45f, computePointerAccelerationMultiplier(Float.MAX_VALUE), 0.0001f)
         assertEquals(1.0f, computePointerAccelerationMultiplier(Float.NaN), 0.0001f)
         assertEquals(1.0f, computePointerAccelerationMultiplier(Float.POSITIVE_INFINITY), 0.0001f)
+        assertEquals(1.0f, computePointerAccelerationMultiplier(Float.NEGATIVE_INFINITY), 0.0001f)
+    }
+
+    @Test
+    fun pointerAccelerationCustomCurvesAndParameterClampingStaySmoothAndMonotonic() {
+        // 1. Slow-down + fast-boost enabled: min = 0.75, max = 1.80, thresh = 120
+        val minM = 0.75f
+        val maxM = 1.80f
+        val thresh = 120f
+        assertEquals(minM, computePointerAccelerationMultiplier(0f, minM, maxM, thresh), 0.0001f)
+        assertEquals(minM, computePointerAccelerationMultiplier(18f, minM, maxM, thresh), 0.0001f)
+        assertEquals(1.00f, computePointerAccelerationMultiplier(thresh, minM, maxM, thresh), 0.0001f)
+
+        // Verify C1 smoothness around slowKnee (18) and threshold (120)
+        val at19 = computePointerAccelerationMultiplier(19f, minM, maxM, thresh)
+        val at119 = computePointerAccelerationMultiplier(119f, minM, maxM, thresh)
+        val at121 = computePointerAccelerationMultiplier(121f, minM, maxM, thresh)
+        assertTrue(at19 > minM && at19 - minM < 0.002f)
+        assertTrue(at119 < 1.00f && 1.00f - at119 < 0.002f)
+        assertTrue(at121 > 1.00f && at121 - 1.00f < 0.002f)
+
+        var prev = computePointerAccelerationMultiplier(0f, minM, maxM, thresh)
+        for (speed in 1..2000) {
+            val cur = computePointerAccelerationMultiplier(speed.toFloat(), minM, maxM, thresh)
+            assertTrue("Must be monotonically non-decreasing at $speed dp/s", cur >= prev)
+            assertTrue("Must stay smooth without jump at $speed dp/s", cur - prev < 0.01f)
+            assertTrue("Must stay within [$minM, $maxM] at $speed dp/s", cur in minM..maxM)
+            prev = cur
+        }
+        assertEquals(maxM, computePointerAccelerationMultiplier(Float.MAX_VALUE, minM, maxM, thresh), 0.0001f)
+
+        // 2. Slow-down only (no fast boost): min = 0.80, max = 1.00, thresh = 120
+        var prevSlowOnly = computePointerAccelerationMultiplier(0f, 0.80f, 1.00f, 120f)
+        assertEquals(0.80f, prevSlowOnly, 0.0001f)
+        for (speed in 1..2000) {
+            val cur = computePointerAccelerationMultiplier(speed.toFloat(), 0.80f, 1.00f, 120f)
+            assertTrue("Slow-only must be monotonic at $speed dp/s", cur >= prevSlowOnly)
+            assertTrue("Slow-only must be smooth at $speed dp/s", cur - prevSlowOnly < 0.01f)
+            assertTrue("Slow-only must stay in [0.80, 1.00] at $speed dp/s", cur in 0.80f..1.00f)
+            if (speed >= 120) {
+                assertEquals("Slow-only must stay exact 1.00f at $speed dp/s", 1.00f, cur, 0.00001f)
+            }
+            prevSlowOnly = cur
+        }
+        assertEquals(1.00f, computePointerAccelerationMultiplier(Float.MAX_VALUE, 0.80f, 1.00f, 120f), 0.0001f)
+
+        // 3. Out-of-range parameter clamping
+        // min clamped to [0.50, 1.00], max clamped to [1.00, 2.50], threshold clamped to [60, 400]
+        assertEquals(0.50f, computePointerAccelerationMultiplier(0f, minMultiplier = 0.10f, maxMultiplier = 5.0f, thresholdDpPerSec = 10f), 0.0001f)
+        assertEquals(0.50f, computePointerAccelerationMultiplier(15f, minMultiplier = 0.10f, maxMultiplier = 5.0f, thresholdDpPerSec = 10f), 0.0001f)
+        assertEquals(1.00f, computePointerAccelerationMultiplier(60f, minMultiplier = 0.10f, maxMultiplier = 5.0f, thresholdDpPerSec = 10f), 0.0001f)
+        assertEquals(2.50f, computePointerAccelerationMultiplier(Float.MAX_VALUE, minMultiplier = 0.10f, maxMultiplier = 5.0f, thresholdDpPerSec = 10f), 0.0001f)
+        assertEquals(1.00f, computePointerAccelerationMultiplier(400f, minMultiplier = 1.50f, maxMultiplier = 0.50f, thresholdDpPerSec = 999f), 0.0001f)
+        assertEquals(1.00f, computePointerAccelerationMultiplier(2000f, minMultiplier = 1.50f, maxMultiplier = 0.50f, thresholdDpPerSec = 999f), 0.0001f)
     }
 
     @Test
@@ -2512,9 +2576,17 @@ class TouchpadMathTest {
         val state = MutablePointerBallisticsState()
         val density = 3f
 
-        // 1. First move seeds timestamp without spiking even on large initial displacement
-        val firstMul = state.onMove(dxPx = 60f, dyPx = 0f, eventTimeNs = 1_000_000_000L, density = density)
-        assertEquals(POINTER_ACCEL_MIN_MULTIPLIER, firstMul, 0.0001f)
+        // 1. First move seeds timestamp and starts at 1.0f (even if slow-down minMultiplier < 1.0f) to avoid initial lag
+        val firstMul = state.onMove(
+            dxPx = 60f,
+            dyPx = 0f,
+            eventTimeNs = 1_000_000_000L,
+            density = density,
+            minMultiplier = 0.70f,
+            maxMultiplier = 1.80f,
+            thresholdDpPerSec = 140f,
+        )
+        assertEquals(1.0f, firstMul, 0.0001f)
         assertEquals(0f, state.smoothedSpeedDpPerSec, 0.0001f)
 
         // 2. Sub-1.5ms coalesced burst packets accumulate displacement without dividing by tiny dt
@@ -2527,11 +2599,11 @@ class TouchpadMathTest {
         assertEquals(0f, state.pendingDxPx, 0.0001f)
         assertTrue(state.smoothedSpeedDpPerSec > 0f)
 
-        // 4. VRR consistency: steady 300 dp/s finger motion at 60Hz vs 120Hz vs 240Hz converges to ~300 dp/s
+        // 4. VRR consistency: steady 350 dp/s finger motion at 60Hz vs 120Hz vs 240Hz converges consistently
         fun simulateSteadyMotion(hz: Int): Float {
             val s = MutablePointerBallisticsState()
             val dtNs = 1_000_000_000L / hz
-            val stepPx = (300f * density) / hz
+            val stepPx = (350f * density) / hz
             var t = 10_000_000_000L
             s.onMove(0f, 0f, t, density)
             repeat(hz / 2) {
@@ -2543,34 +2615,72 @@ class TouchpadMathTest {
         val m60 = simulateSteadyMotion(60)
         val m120 = simulateSteadyMotion(120)
         val m240 = simulateSteadyMotion(240)
-        assertEquals(m60, m120, 0.01f)
-        assertEquals(m120, m240, 0.01f)
-        assertTrue(m120 in 1.45f..1.52f)
+        assertEquals(m60, m120, 0.005f)
+        assertEquals(m120, m240, 0.005f)
+        assertTrue("Expected steady 350 dp/s multiplier in 1.19..1.25, got $m120", m120 in 1.19f..1.25f)
 
         state.reset()
         assertEquals(0L, state.lastEventTimeNs)
-        assertEquals(POINTER_ACCEL_MIN_MULTIPLIER, state.multiplier, 0.0001f)
+        assertEquals(1.0f, state.multiplier, 0.0001f)
     }
 
     @Test
-    fun pointerBallisticsZeroCrossesImmediatelyOnDirectionReversal() {
+    fun pointerBallisticsReversalDoesNotBrakeAndCrossesZeroForCursorBank() {
         val state = MutablePointerBallisticsState()
         val density = 3f
+        val minMul = 0.70f
+        val maxMul = 1.80f
+        val thresh = 140f
+        val dtNs = 1_000_000_000L / 120L
         var t = 1_000_000_000L
-        state.onMove(0f, 0f, t, density)
+        state.onMove(0f, 0f, t, density, minMul, maxMul, thresh)
 
-        // Steady rightward motion at ~400 dp/s
-        val stepRightPx = (400f * density) / 120f
-        repeat(20) {
-            t += 1_000_000_000L / 120L
-            state.onMove(stepRightPx, 0f, t, density)
+        // Steady fast rightward swipe at +350 dp/s
+        val stepRightPx = (350f * density) / 120f
+        repeat(24) {
+            t += dtNs
+            state.onMove(stepRightPx, 0f, t, density, minMul, maxMul, thresh)
         }
-        assertTrue(state.smoothedVxDpPerSec > 250f)
+        val speedBeforeReversal = state.smoothedSpeedDpPerSec
+        val mulBeforeReversal = state.multiplier
+        assertTrue("Expected signed vx > 300 dp/s, got ${state.smoothedVxDpPerSec}", state.smoothedVxDpPerSec > 300f)
+        assertTrue("Expected scalar speed ~350 dp/s, got $speedBeforeReversal", speedBeforeReversal in 335f..355f)
+        assertTrue("Expected boosted multiplier > 1.40, got $mulBeforeReversal", mulBeforeReversal > 1.40f)
 
-        // Immediate reversal leftward: smoothedVxDpPerSec crosses zero without lagging positive
-        t += 1_000_000_000L / 120L
-        state.onMove(-stepRightPx * 0.5f, 0f, t, density)
-        assertTrue("Expected negative vx immediately after reversal, got ${state.smoothedVxDpPerSec}", state.smoothedVxDpPerSec < 0f)
+        // Immediately reverse leftward at -350 dp/s:
+        // 1) Signed vx crosses zero immediately so cursor visual banking flips without lag;
+        // 2) Unsigned scalar speed and acceleration multiplier stay in the high-speed boost zone (NEVER brake to minMul!).
+        repeat(6) { idx ->
+            t += dtNs
+            val mul = state.onMove(-stepRightPx, 0f, t, density, minMul, maxMul, thresh)
+            assertTrue(
+                "Expected negative signed vx on reversal frame $idx, got ${state.smoothedVxDpPerSec}",
+                state.smoothedVxDpPerSec < 0f,
+            )
+            assertTrue(
+                "Expected scalar speed to stay near 350 dp/s on reversal frame $idx, got ${state.smoothedSpeedDpPerSec}",
+                state.smoothedSpeedDpPerSec in 330f..360f,
+            )
+            assertTrue(
+                "Multiplier must remain boosted (not drop to minMul=$minMul) on reversal frame $idx, got $mul",
+                mul > 1.40f,
+            )
+        }
+
+        // Rapid back-and-forth oscillation (+350 / -350 dp/s alternating) must also never brake
+        repeat(10) { idx ->
+            t += dtNs
+            val dir = if (idx % 2 == 0) 1f else -1f
+            val mul = state.onMove(dir * stepRightPx, 0f, t, density, minMul, maxMul, thresh)
+            assertTrue(
+                "Scalar speed must stay high during oscillation step $idx, got ${state.smoothedSpeedDpPerSec}",
+                state.smoothedSpeedDpPerSec > 330f,
+            )
+            assertTrue(
+                "Multiplier must stay boosted during oscillation step $idx, got $mul",
+                mul > 1.40f,
+            )
+        }
     }
 
     @Test

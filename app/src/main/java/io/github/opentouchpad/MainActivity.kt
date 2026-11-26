@@ -1183,9 +1183,56 @@ class MainActivity : Activity() {
                 summary = feelSummary,
                 defaultExpanded = false,
             ) {
+                var pointerAccelMinRow: View? = null
+                var pointerAccelMaxRow: View? = null
+                var pointerAccelThresholdRow: View? = null
                 var edgeHapticsRow: View? = null
                 listOf(
                     slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt(), format = { String.format(java.util.Locale.US, "%.1f×", it / 10f) }) { prefs.sensitivity = it / 10f },
+                    switchRow(
+                        getString(R.string.switch_pointer_accel),
+                        prefs.pointerAccelEnabled,
+                        hint = getString(R.string.switch_pointer_accel_hint),
+                        onChange = { enabled ->
+                            prefs.pointerAccelEnabled = enabled
+                            pointerAccelMinRow?.let { setCardRowVisibility(it, enabled) }
+                            pointerAccelMaxRow?.let { setCardRowVisibility(it, enabled) }
+                            pointerAccelThresholdRow?.let { setCardRowVisibility(it, enabled) }
+                        },
+                    ),
+                    slider(
+                        getString(R.string.set_pointer_accel_min),
+                        10,
+                        20,
+                        (prefs.pointerAccelMinPercent / 5).coerceIn(10, 20),
+                        hint = getString(R.string.set_pointer_accel_min_hint),
+                        format = { String.format(java.util.Locale.US, "%.2f×", it * 5 / 100f) },
+                        onChange = { prefs.pointerAccelMinPercent = it * 5 },
+                    ).also { pointerAccelMinRow = it }.apply {
+                        visibility = if (prefs.pointerAccelEnabled) View.VISIBLE else View.GONE
+                    },
+                    slider(
+                        getString(R.string.set_pointer_accel_max),
+                        20,
+                        50,
+                        (prefs.pointerAccelMaxPercent / 5).coerceIn(20, 50),
+                        hint = getString(R.string.set_pointer_accel_max_hint),
+                        format = { String.format(java.util.Locale.US, "%.2f×", it * 5 / 100f) },
+                        onChange = { prefs.pointerAccelMaxPercent = it * 5 },
+                    ).also { pointerAccelMaxRow = it }.apply {
+                        visibility = if (prefs.pointerAccelEnabled) View.VISIBLE else View.GONE
+                    },
+                    slider(
+                        getString(R.string.set_pointer_accel_threshold),
+                        6,
+                        40,
+                        (prefs.pointerAccelThresholdDpPerSec / 10).coerceIn(6, 40),
+                        hint = getString(R.string.set_pointer_accel_threshold_hint),
+                        format = { "${it * 10} dp/s" },
+                        onChange = { prefs.pointerAccelThresholdDpPerSec = it * 10 },
+                    ).also { pointerAccelThresholdRow = it }.apply {
+                        visibility = if (prefs.pointerAccelEnabled) View.VISIBLE else View.GONE
+                    },
                     slider(getString(R.string.set_pad_dead_zone), 0, PAD_EDGE_DEAD_ZONE_MAX_DP, prefs.padEdgeDeadZoneDp, unit = "dp",
                         offLabel = getString(R.string.label_off), hint = getString(R.string.pad_dead_zone_hint),
                         onChange = { prefs.padEdgeDeadZoneDp = it }),

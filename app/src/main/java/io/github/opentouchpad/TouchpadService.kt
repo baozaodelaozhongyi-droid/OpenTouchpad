@@ -107,6 +107,10 @@ class TouchpadService : AccessibilityService() {
 
     // 热路径内存缓存：避免在 120–240Hz ACTION_MOVE 中反复读写 SharedPreferences / 磁盘 stat
     private var cachedSensitivity = 1.4f
+    private var cachedPointerAccelEnabled = false
+    private var cachedPointerAccelMinMul = POINTER_ACCEL_DEFAULT_MIN_MULTIPLIER
+    private var cachedPointerAccelMaxMul = POINTER_ACCEL_DEFAULT_MAX_MULTIPLIER
+    private var cachedPointerAccelThresholdDpPerSec = POINTER_ACCEL_DEFAULT_THRESHOLD_DP_PER_SEC
     private var cachedPressFeedback = true
     private var cachedTouchRingEnabled = true
     private var cachedPadEdgeDeadZoneDp = PAD_EDGE_DEAD_ZONE_DEFAULT_DP
@@ -245,6 +249,13 @@ class TouchpadService : AccessibilityService() {
     private fun refreshHotPrefs() {
         if (!this::prefs.isInitialized) return
         cachedSensitivity = prefs.sensitivity
+        cachedPointerAccelEnabled = prefs.pointerAccelEnabled
+        cachedPointerAccelMinMul = prefs.pointerAccelMinPercent / 100f
+        cachedPointerAccelMaxMul = prefs.pointerAccelMaxPercent / 100f
+        cachedPointerAccelThresholdDpPerSec = prefs.pointerAccelThresholdDpPerSec.toFloat()
+        if (!cachedPointerAccelEnabled) {
+            pointerBallistics.reset()
+        }
         cachedPressFeedback = prefs.pressFeedback
         cachedTouchRingEnabled = prefs.touchRingEnabled
         cachedPadEdgeDeadZoneDp = prefs.padEdgeDeadZoneDp
@@ -2677,9 +2688,22 @@ class TouchpadService : AccessibilityService() {
                         (cursorView as? CursorArrowView)?.onPadMovedPastSlop()
                     }
                 }
-                val stepX = dx * cachedSensitivity
-                val stepY = dy * cachedSensitivity
-                pointerBallistics.onMove(stepX, stepY, eventTimeNs, density)
+                val accel = pointerBallistics.onMove(
+                    dxPx = dx,
+                    dyPx = dy,
+                    eventTimeNs = eventTimeNs,
+                    density = density,
+                    minMultiplier = cachedPointerAccelMinMul,
+                    maxMultiplier = cachedPointerAccelMaxMul,
+                    thresholdDpPerSec = cachedPointerAccelThresholdDpPerSec,
+                )
+                val effectiveGain = if (cachedPointerAccelEnabled) {
+                    cachedSensitivity * accel
+                } else {
+                    cachedSensitivity
+                }
+                val stepX = dx * effectiveGain
+                val stepY = dy * effectiveGain
                 val rawNextX = cursorX + stepX
                 val rawNextY = cursorY + stepY
                 cursorX = clampGestureCoord(rawNextX, screenW)
@@ -2696,8 +2720,9 @@ class TouchpadService : AccessibilityService() {
                 }
                 val pushX = computeCursorEdgePushAmount(rawNextX, maxCursorX, stepX, density)
                 val pushY = computeCursorEdgePushAmount(rawNextY, maxCursorY, stepY, density)
+                val cursorVxDpPerSec = pointerBallistics.smoothedVxDpPerSec * effectiveGain
                 (cursorView as? CursorArrowView)?.onCursorMotion(
-                    vxDpPerSec = pointerBallistics.smoothedVxDpPerSec,
+                    vxDpPerSec = cursorVxDpPerSec,
                     edgePushX = pushX,
                     edgePushY = pushY,
                     eventTimeNs = eventTimeNs,

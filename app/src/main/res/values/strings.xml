@@ -77,6 +77,14 @@
     <string name="set_cursor_size">Cursor Size</string>
     <string name="set_cursor_color">Cursor Color</string>
     <string name="set_sensitivity">Cursor Sensitivity</string>
+    <string name="switch_pointer_accel">Dynamic Pointer Multiplier</string>
+    <string name="switch_pointer_accel_hint">Smoothly scales cursor speed with finger velocity; keeps pure 1:1 linear motion when off</string>
+    <string name="set_pointer_accel_min">Slow-Move Min Multiplier</string>
+    <string name="set_pointer_accel_min_hint">Set to 1.00× to disable slow-down zone and only boost fast flicks</string>
+    <string name="set_pointer_accel_max">Fast-Flick Max Multiplier</string>
+    <string name="set_pointer_accel_max_hint">Maximum sensitivity multiplier during rapid thumb flicks</string>
+    <string name="set_pointer_accel_threshold">Boost Trigger Speed</string>
+    <string name="set_pointer_accel_threshold_hint">Finger speed where acceleration begins; higher values keep everyday motion steady at 1:1</string>
     <string name="set_long_press">Touchpad Long-Press Threshold</string>
     <string name="set_scroll_distance">Scroll Step Distance</string>
     <string name="scroll_distance_hint">Controls simulated scroll distance per click for panel scroll buttons (↑ / ↓ / ← / →).</string>
