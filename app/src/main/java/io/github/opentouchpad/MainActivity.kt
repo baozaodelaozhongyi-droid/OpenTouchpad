@@ -1183,6 +1183,7 @@ class MainActivity : Activity() {
                 summary = feelSummary,
                 defaultExpanded = false,
             ) {
+                var edgeHapticsRow: View? = null
                 listOf(
                     slider(getString(R.string.set_sensitivity), 5, 40, (prefs.sensitivity * 10).roundToInt(), format = { String.format(java.util.Locale.US, "%.1f×", it / 10f) }) { prefs.sensitivity = it / 10f },
                     slider(getString(R.string.set_pad_dead_zone), 0, PAD_EDGE_DEAD_ZONE_MAX_DP, prefs.padEdgeDeadZoneDp, unit = "dp",
@@ -1193,7 +1194,18 @@ class MainActivity : Activity() {
                         hint = getString(R.string.cursor_hold_hint), onChange = { prefs.cursorHoldMs = it }),
                     slider(getString(R.string.set_scroll_distance), 60, 500, prefs.scrollDistanceDp, unit = "dp", hint = getString(R.string.scroll_distance_hint), onChange = { prefs.scrollDistanceDp = it }),
                     switchRow(getString(R.string.switch_press_feedback), prefs.pressFeedback, onChange = { prefs.pressFeedback = it; reload() }),
-                    switchRow(getString(R.string.switch_haptics), prefs.haptics, onChange = { prefs.haptics = it }),
+                    switchRow(getString(R.string.switch_haptics), prefs.haptics, onChange = { enabled ->
+                        prefs.haptics = enabled
+                        edgeHapticsRow?.let { setCardRowVisibility(it, enabled) }
+                    }),
+                    switchRow(
+                        getString(R.string.switch_edge_haptics),
+                        prefs.edgeHaptics,
+                        hint = getString(R.string.switch_edge_haptics_hint),
+                        onChange = { prefs.edgeHaptics = it },
+                    ).also { edgeHapticsRow = it }.apply {
+                        visibility = if (prefs.haptics) View.VISIBLE else View.GONE
+                    },
                     switchRow(getString(R.string.switch_autohide_landscape), prefs.autoHideLandscape, onChange = { prefs.autoHideLandscape = it; reload() }),
                     switchRow(getString(R.string.switch_minimize_keyboard), prefs.minimizeOnKeyboard, onChange = {
                         prefs.minimizeOnKeyboard = it
@@ -2620,7 +2632,7 @@ class MainActivity : Activity() {
                 setPadding(padHoriz, padVert, padHoriz, padVert)
                 background = RippleDrawable(bindings.colors.ripple, face, mask)
                 isClickable = true
-                PressFeedback.attach(this, maxTiltX = 6f, maxTiltY = 6f, pressScale = 0.92f, sinkDp = 1.5f, isEnabled = pressFeedbackEnabled)
+                PressFeedback.attach(this, maxTiltX = 5.5f, maxTiltY = 6f, pressScale = 0.93f, sinkDp = 1.5f, isEnabled = pressFeedbackEnabled)
                 setOnClickListener {
                     pickAction(bindings, index, slots[index]) { picked ->
                         slots[index] = picked

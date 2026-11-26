@@ -98,6 +98,7 @@ class CursorArrowView(context: Context) : View(context) {
             val targetScale = resolveTargetScale(frameTimeNanos)
             val activelyCharging = isActivelyCharging(frameTimeNanos)
 
+            val wasIdentity = dynamics.isIdentity
             stepCursorDynamicsInPlace(
                 state = dynamics,
                 targetScale = targetScale,
@@ -106,10 +107,15 @@ class CursorArrowView(context: Context) : View(context) {
                 targetSquishY = targetSquishY,
                 dtSec = dtSec,
             )
-            invalidate()
+            if (!wasIdentity || !dynamics.isIdentity) {
+                invalidate()
+            }
 
             if (!activelyCharging && dynamics.isSettled(targetScale, targetBankDeg, targetSquishX, targetSquishY)) {
                 dynamics.snapTo(targetScale, targetBankDeg, targetSquishX, targetSquishY)
+                if (!wasIdentity || !dynamics.isIdentity) {
+                    invalidate()
+                }
                 frameLoopActive = false
                 lastFrameNanos = 0L
             } else {
@@ -141,7 +147,7 @@ class CursorArrowView(context: Context) : View(context) {
             val progress = computeCursorLongPressChargeProgress(elapsedMs, longPressDurationMs)
             return computeCursorLongPressChargeScale(progress)
         }
-        return if (padFingerDown) CURSOR_PRESENCE_LIFT_SCALE else 1f
+        return 1f
     }
 
     private fun ensureFrameLoopRunning() {

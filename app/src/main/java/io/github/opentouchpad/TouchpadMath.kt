@@ -1253,7 +1253,7 @@ internal fun computeSpecularShift(normX: Float, normY: Float, maxRatio: Float = 
     val cy = normY.coerceIn(-1f, 1f)
     val shiftX = if (cx == 0f) 0f else -cx * maxRatio
     val shiftY = if (cy == 0f) 0f else -cy * maxRatio
-    val boost = (kotlin.math.hypot(cx, cy).coerceIn(0f, 1.4f) / 1.4f) * 0.25f
+    val boost = (kotlin.math.hypot(cx, cy).coerceIn(0f, 1.4f) / 1.4f) * 0.08f
     return SpecularShift(shiftXRatio = shiftX, shiftYRatio = shiftY, boost = boost)
 }
 
@@ -1897,7 +1897,7 @@ internal fun computeSpecularShiftInto(
     val cy = normY.coerceIn(-1f, 1f)
     out[0] = if (cx == 0f) 0f else -cx * maxRatio
     out[1] = if (cy == 0f) 0f else -cy * maxRatio
-    out[2] = (kotlin.math.hypot(cx, cy).coerceIn(0f, 1.4f) / 1.4f) * 0.25f
+    out[2] = (kotlin.math.hypot(cx, cy).coerceIn(0f, 1.4f) / 1.4f) * 0.08f
 }
 
 /** 热路径零分配版本：[out][0] = x, [out][1] = y。 */
@@ -2624,14 +2624,22 @@ internal class MutablePointerBallisticsState {
             return multiplier
         }
         val safeDensity = density.coerceAtLeast(1f)
-        val dtSec = (rawDtNs / 1_000_000_000f).coerceIn(0.0015f, 0.100f)
+        val dtSec = (rawDtNs / 1_000_000_000f).coerceAtLeast(0.0015f)
         val rawVxDp = (pendingDxPx / safeDensity) / dtSec
         val rawVyDp = (pendingDyPx / safeDensity) / dtSec
         pendingDxPx = 0f
         pendingDyPx = 0f
         lastEventTimeNs = eventTimeNs
 
-        val alpha = computeVrrEmaAlpha(dtSec, 0.028f)
+        // 方向反转过零时立即清零残留反向速度，消除反向滑动时的滞后反摆
+        if (rawVxDp * smoothedVxDpPerSec < 0f) {
+            smoothedVxDpPerSec = 0f
+        }
+        if (rawVyDp * smoothedVyDpPerSec < 0f) {
+            smoothedVyDpPerSec = 0f
+        }
+
+        val alpha = computeVrrEmaAlpha(dtSec.coerceAtMost(0.5f), 0.028f)
         smoothedVxDpPerSec += (rawVxDp - smoothedVxDpPerSec) * alpha
         smoothedVyDpPerSec += (rawVyDp - smoothedVyDpPerSec) * alpha
         smoothedSpeedDpPerSec = kotlin.math.hypot(smoothedVxDpPerSec, smoothedVyDpPerSec)
@@ -2640,24 +2648,162 @@ internal class MutablePointerBallisticsState {
     }
 }
 
-internal const val CURSOR_DYNAMICS_MIN_SCALE = 0.83f
-internal const val CURSOR_DYNAMICS_MAX_SCALE = 1.05f
-internal const val CURSOR_DYNAMICS_MAX_BANK_DEG = 5.0f
-internal const val CURSOR_DYNAMICS_MAX_ANGLE_DEG = 5.5f
-internal const val CURSOR_PRESENCE_LIFT_SCALE = 1.035f
-internal const val CURSOR_CLICK_PECK_MIN_SCALE = 0.84f
-internal const val CURSOR_LONG_PRESS_CHARGE_DELAY_MS = 130L
-internal const val CURSOR_LONG_PRESS_CHARGE_MIN_SCALE = 0.87f
+internal const val PRESS_SPRING_IMPULSE_VEL = 20.0f
+internal const val PRESS_SPRING_IMPULSE_CUTOFF = 0.35f
+internal const val PRESS_SPRING_OMEGA = 18.0f
+internal const val PRESS_SPRING_ZETA = 0.84f
+internal const val PRESS_TILT_OMEGA = 22.0f
+internal const val PRESS_TILT_ZETA = 0.88f
+
+/**
+ * 触控板与面板按键的连续二阶质量-弹簧-阻尼按压状态（全基本类型原地更新，热路径零分配）。
+ */
+internal class MutablePressSpringState(
+    var press: Float = 0f,
+    var pressVel: Float = 0f,
+    var tiltX: Float = 0f,
+    var tiltVelX: Float = 0f,
+    var tiltY: Float = 0f,
+    var tiltVelY: Float = 0f,
+) {
+    val isIdentity: Boolean
+        get() = kotlin.math.abs(press) < 0.002f &&
+            kotlin.math.abs(pressVel) < 0.02f &&
+            kotlin.math.abs(tiltX) < 0.003f &&
+            kotlin.math.abs(tiltVelX) < 0.02f &&
+            kotlin.math.abs(tiltY) < 0.003f &&
+            kotlin.math.abs(tiltVelY) < 0.02f
+
+    fun applyDownImpulse(impulseVel: Float = PRESS_SPRING_IMPULSE_VEL) {
+        if (press < PRESS_SPRING_IMPULSE_CUTOFF && pressVel < impulseVel) {
+            pressVel = impulseVel
+        }
+    }
+
+    fun isSettled(targetPress: Float, targetTiltX: Float, targetTiltY: Float): Boolean =
+        kotlin.math.abs(press - targetPress) < 0.003f &&
+            kotlin.math.abs(pressVel) < 0.03f &&
+            kotlin.math.abs(tiltX - targetTiltX) < 0.004f &&
+            kotlin.math.abs(tiltVelX) < 0.03f &&
+            kotlin.math.abs(tiltY - targetTiltY) < 0.004f &&
+            kotlin.math.abs(tiltVelY) < 0.03f
+
+    fun snapTo(targetPress: Float, targetTiltX: Float, targetTiltY: Float) {
+        press = targetPress.coerceIn(0f, 1f)
+        pressVel = 0f
+        tiltX = targetTiltX.coerceIn(-1f, 1f)
+        tiltVelX = 0f
+        tiltY = targetTiltY.coerceIn(-1f, 1f)
+        tiltVelY = 0f
+    }
+
+    fun reset() {
+        press = 0f
+        pressVel = 0f
+        tiltX = 0f
+        tiltVelX = 0f
+        tiltY = 0f
+        tiltVelY = 0f
+    }
+}
+
+/**
+ * 原地步进按压与 3D 倾斜弹簧（子步欧拉积分，近临界阻尼，VRR 60–240Hz 一致，零堆分配）。
+ */
+internal fun stepPressSpringInPlace(
+    state: MutablePressSpringState,
+    targetPress: Float,
+    targetTiltX: Float,
+    targetTiltY: Float,
+    dtSec: Float,
+) {
+    val safeTargetPress = targetPress.coerceIn(0f, 1f)
+    val safeTargetTiltX = targetTiltX.coerceIn(-1f, 1f)
+    val safeTargetTiltY = targetTiltY.coerceIn(-1f, 1f)
+
+    val clampedDt = dtSec.coerceIn(0.001f, 0.040f)
+    val subSteps = when {
+        clampedDt > 0.032f -> 5
+        clampedDt > 0.024f -> 4
+        clampedDt > 0.016f -> 3
+        clampedDt > 0.008f -> 2
+        else -> 1
+    }
+    val stepDt = clampedDt / subSteps
+
+    val pressK = PRESS_SPRING_OMEGA * PRESS_SPRING_OMEGA
+    val pressC = 2f * PRESS_SPRING_ZETA * PRESS_SPRING_OMEGA
+    val tiltK = PRESS_TILT_OMEGA * PRESS_TILT_OMEGA
+    val tiltC = 2f * PRESS_TILT_ZETA * PRESS_TILT_OMEGA
+
+    var press = state.press
+    var pressVel = state.pressVel
+    var tiltX = state.tiltX
+    var tiltVelX = state.tiltVelX
+    var tiltY = state.tiltY
+    var tiltVelY = state.tiltVelY
+
+    repeat(subSteps) {
+        val aPress = pressK * (safeTargetPress - press) - pressC * pressVel
+        pressVel += aPress * stepDt
+        press += pressVel * stepDt
+        if (press < -0.04f) {
+            press = -0.04f
+            if (pressVel < 0f) pressVel = 0f
+        } else if (press > 1.08f) {
+            press = 1.08f
+            if (pressVel > 0f) pressVel = 0f
+        }
+
+        val aTiltX = tiltK * (safeTargetTiltX - tiltX) - tiltC * tiltVelX
+        tiltVelX += aTiltX * stepDt
+        tiltX += tiltVelX * stepDt
+        if (tiltX < -1.1f) {
+            tiltX = -1.1f
+            if (tiltVelX < 0f) tiltVelX = 0f
+        } else if (tiltX > 1.1f) {
+            tiltX = 1.1f
+            if (tiltVelX > 0f) tiltVelX = 0f
+        }
+
+        val aTiltY = tiltK * (safeTargetTiltY - tiltY) - tiltC * tiltVelY
+        tiltVelY += aTiltY * stepDt
+        tiltY += tiltVelY * stepDt
+        if (tiltY < -1.1f) {
+            tiltY = -1.1f
+            if (tiltVelY < 0f) tiltVelY = 0f
+        } else if (tiltY > 1.1f) {
+            tiltY = 1.1f
+            if (tiltVelY > 0f) tiltVelY = 0f
+        }
+    }
+
+    state.press = press
+    state.pressVel = pressVel
+    state.tiltX = tiltX
+    state.tiltVelX = tiltVelX
+    state.tiltY = tiltY
+    state.tiltVelY = tiltVelY
+}
+
+internal const val CURSOR_DYNAMICS_MIN_SCALE = 0.85f
+internal const val CURSOR_DYNAMICS_MAX_SCALE = 1.03f
+internal const val CURSOR_DYNAMICS_MAX_BANK_DEG = 3.5f
+internal const val CURSOR_DYNAMICS_MAX_ANGLE_DEG = 3.5f
+internal const val CURSOR_PRESENCE_LIFT_SCALE = 1.0f
+internal const val CURSOR_CLICK_PECK_MIN_SCALE = 0.90f
+internal const val CURSOR_LONG_PRESS_CHARGE_DELAY_MS = 150L
+internal const val CURSOR_LONG_PRESS_CHARGE_MIN_SCALE = 0.89f
 internal const val CURSOR_ARMED_GRIP_SCALE = 0.94f
-internal const val CURSOR_EDGE_SQUISH_MAX = 0.07f
+internal const val CURSOR_EDGE_SQUISH_MAX = 0.05f
 internal const val CURSOR_BANK_DEADZONE_DP_PER_SEC = 55f
 internal const val CURSOR_BANK_REF_DP_PER_SEC = 480f
 internal const val CURSOR_BLOCKED_SHAKE_DURATION_SEC = 0.22f
-internal const val CURSOR_BLOCKED_SHAKE_AMPLITUDE_DEG = 4.5f
+internal const val CURSOR_BLOCKED_SHAKE_AMPLITUDE_DEG = 3.2f
 
 /**
  * 计算长按蓄力前馈进度（0f..1f）：
- * 静止按住触控板满 [delayMs] (130ms) 后平滑从 0 升至 1（在 [longPressMs] 时封顶）。
+ * 静止按住触控板满 [delayMs] (150ms) 后平滑从 0 升至 1（在 [longPressMs] 时封顶）。
  */
 internal fun computeCursorLongPressChargeProgress(
     elapsedMs: Long,
@@ -2671,7 +2817,7 @@ internal fun computeCursorLongPressChargeProgress(
 }
 
 /**
- * 根据长按蓄力进度计算目标缩放比例（从 1.035f 唤醒态平滑内聚至 0.87f）。
+ * 根据长按蓄力进度计算目标缩放比例（从 1.0f 平滑内聚至 0.89f）。
  */
 internal fun computeCursorLongPressChargeScale(chargeProgress: Float): Float {
     val p = chargeProgress.coerceIn(0f, 1f)
@@ -2680,7 +2826,7 @@ internal fun computeCursorLongPressChargeScale(chargeProgress: Float): Float {
 }
 
 /**
- * 计算高速移动顺风微摆目标角（严格封顶在 ±5.0° 内，慢速微瞄死区内保持 0°）。
+ * 计算高速移动顺风微摆目标角（严格封顶在 ±3.5° 内，慢速微瞄死区内保持 0°）。
  */
 internal fun computeCursorVelocityBankDeg(
     vxDpPerSec: Float,
@@ -2698,7 +2844,7 @@ internal fun computeCursorVelocityBankDeg(
 }
 
 /**
- * 计算撞边继续外推时的法向挤压量（0f..1f，对应最多 7% 的柔和微挤压）。
+ * 计算撞边继续外推时的法向挤压量（0f..1f，对应最多 5% 的柔和微挤压）。
  */
 internal fun computeCursorEdgePushAmount(
     rawNextCoord: Float,
@@ -2720,7 +2866,7 @@ internal fun computeCursorEdgePushAmount(
 }
 
 /**
- * 计算安全界面拦截受阻微抖角（阻尼正弦衰减，严格限幅在 ±5.5° 内）。
+ * 计算安全界面拦截受阻微抖角（阻尼正弦衰减，严格限幅在 ±3.5° 内）。
  */
 internal fun computeCursorBlockedShakeDeg(
     elapsedSec: Float,
@@ -2737,7 +2883,7 @@ internal fun computeCursorBlockedShakeDeg(
 }
 
 /**
- * 可原地更新的光标本体动力学状态（零堆分配，严格满足 0.83f..1.05f 缩放包络与 ±5.5° 角度包络）。
+ * 可原地更新的光标本体动力学状态（零堆分配，严格满足 0.85f..1.03f 缩放包络与 ±3.5° 角度包络）。
  */
 internal class MutableCursorDynamicsState(
     var scale: Float = 1f,
@@ -2769,12 +2915,13 @@ internal class MutableCursorDynamicsState(
             kotlin.math.abs(renderAngleDeg) < 0.02f
 
     fun triggerClickPeck() {
-        scale = minOf(scale, 0.94f)
-        scaleVel = -9.6f
+        if (scaleVel > -4.9f) {
+            scaleVel = -4.9f
+        }
     }
 
     fun triggerLatchPop(fromCharge: Boolean) {
-        val targetVel = if (fromCharge) 3.6f else 2.6f
+        val targetVel = if (fromCharge) 1.4f else 0.9f
         if (scaleVel < targetVel) {
             scaleVel = targetVel
         }
@@ -2825,7 +2972,7 @@ internal class MutableCursorDynamicsState(
 }
 
 /**
- * 原地步进光标本体弹簧动力学（子步欧拉积分，适应 30–240Hz 任意 VRR 帧间隔，零堆分配）。
+ * 原地步进光标本体弹簧动力学（子步欧拉积分，近临界阻尼，适应 30–240Hz 任意 VRR 帧间隔，零堆分配）。
  */
 internal fun stepCursorDynamicsInPlace(
     state: MutableCursorDynamicsState,
@@ -2850,18 +2997,18 @@ internal fun stepCursorDynamicsInPlace(
     }
     val stepDt = clampedDt / subSteps
 
-    val scaleOmega = 30f
-    val scaleZeta = 0.56f
+    val scaleOmega = 18f
+    val scaleZeta = 0.85f
     val scaleK = scaleOmega * scaleOmega
     val scaleC = 2f * scaleZeta * scaleOmega
 
-    val bankOmega = 26f
-    val bankZeta = 0.78f
+    val bankOmega = 20f
+    val bankZeta = 0.90f
     val bankK = bankOmega * bankOmega
     val bankC = 2f * bankZeta * bankOmega
 
-    val squishOmega = 32f
-    val squishZeta = 0.72f
+    val squishOmega = 22f
+    val squishZeta = 0.88f
     val squishK = squishOmega * squishOmega
     val squishC = 2f * squishZeta * squishOmega
 

@@ -5,6 +5,7 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.TimeInterpolator
 import android.animation.ValueAnimator
 import android.content.Context
+import android.view.animation.DecelerateInterpolator
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas
@@ -228,7 +229,7 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         targetNormY: Float,
         targetIntensity: Float,
         durationMs: Long,
-        interpolator: TimeInterpolator = PressFeedback.decelerate,
+        interpolator: TimeInterpolator = DecelerateInterpolator(),
     ) {
         tiltAnimator?.cancel()
         val startX = tiltNormX
@@ -536,10 +537,10 @@ class TouchpadSurfaceView(context: Context) : View(context) {
         var shader = cachedTiltShader
         if (shader == null || cachedTiltShaderOpacity != clampedOpacity) {
             val glassFactor = computeLiquidGlassFactor(clampedOpacity)
-            val highAlpha = ((60f + 40f * glassFactor) * clampedOpacity / 100f)
-                .roundToInt().coerceIn(0, 255)
-            val shadowAlpha = ((80f - 25f * glassFactor) * clampedOpacity / 100f)
-                .roundToInt().coerceIn(0, 255)
+            val highAlpha = ((15f + 9f * glassFactor) * clampedOpacity / 100f)
+                .roundToInt().coerceIn(0, 24)
+            val shadowAlpha = ((20f - 5f * glassFactor) * clampedOpacity / 100f)
+                .roundToInt().coerceIn(0, 24)
             colors3[0] = Color.argb(highAlpha, 255, 255, 255)
             colors3[1] = Color.TRANSPARENT
             colors3[2] = Color.argb(shadowAlpha, 0, 0, 0)

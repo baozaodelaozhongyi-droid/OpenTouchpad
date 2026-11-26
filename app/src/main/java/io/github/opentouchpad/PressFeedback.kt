@@ -1,34 +1,191 @@
 package io.github.opentouchpad
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.graphics.drawable.RippleDrawable
-import android.os.SystemClock
+import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.View
-import android.view.animation.DecelerateInterpolator
-import android.view.animation.OvershootInterpolator
-import kotlin.math.roundToInt
 
 /**
- * 物理按压反馈：
- * 模拟真实触控板和机械按键的悬浮按压感。
- * - 按住左边：左侧下沉（沿 Y 轴产生 3D 透视倾斜）；
- * - 按住右边：右侧下沉；
- * - 按住上方/下方：上下对应倾斜下沉；
- * - 整体下压：伴随微幅深度位移与缩放，呈现立体凹陷质感；
- * - 抬起松手：带微回弹动效恢复平整，并触发触觉反馈。
+ * 物理按压反馈（基于 Choreographer 的连续二阶质量-弹簧-阻尼驱动）：
+ * - 按下时施加柔和连续的向下初速度动量脉冲（位置严禁瞬移），即使 30–50ms 快速轻点抬手，
+ *   已有动量也会自然推着面板/按键走完一段圆润软垫下压弧线，再以近临界阻尼丝滑回弹归零；
+ * - 按住拖动时平滑更新目标倾斜角，全程连续跟手，零动画取消/重启/65ms 跳变；
+ * - 每个受控 View 持有独立弹簧状态，收敛静止或离窗时自动停帧，保持 0 后台唤醒。
  */
 object PressFeedback {
 
-    val decelerate = DecelerateInterpolator()
-    val overshoot = OvershootInterpolator(1.25f)
+    private class ViewSpringController(private val view: View) : View.OnAttachStateChangeListener {
+        val spring = MutablePressSpringState()
+        var targetPress: Float = 0f
+        var targetTiltX: Float = 0f
+        var targetTiltY: Float = 0f
+        var maxTiltX: Float = 5.5f
+        var maxTiltY: Float = 7.5f
+        var pressScale: Float = 0.93f
+        var sinkDp: Float = 1.8f
+        var density: Float = view.resources.displayMetrics.density
+        var isPad: Boolean = false
+        var buttonLastInside: Boolean = true
+        var frameLoopActive: Boolean = false
+        var lastFrameNanos: Long = 0L
 
-    private var padDownTimeMs: Long = 0L
-    private var padDownAnimRunning: Boolean = false
+        val frameCallback = object : Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (!frameLoopActive) return
+                if (!canAnimate()) {
+                    cancelAndReset()
+                    return
+                }
+                val dtSec = if (lastFrameNanos == 0L) {
+                    1f / 60f
+                } else {
+                    ((frameTimeNanos - lastFrameNanos) / 1_000_000_000f).coerceIn(0.001f, 0.040f)
+                }
+                lastFrameNanos = frameTimeNanos
 
-    private var buttonDownTimeMs: Long = 0L
-    private var buttonDownAnimRunning: Boolean = false
-    private var buttonLastInside: Boolean = true
+                stepPressSpringInPlace(
+                    state = spring,
+                    targetPress = targetPress,
+                    targetTiltX = targetTiltX,
+                    targetTiltY = targetTiltY,
+                    dtSec = dtSec,
+                )
+                applyVisuals()
+
+                if (spring.isSettled(targetPress, targetTiltX, targetTiltY)) {
+                    spring.snapTo(targetPress, targetTiltX, targetTiltY)
+                    applyVisuals()
+                    frameLoopActive = false
+                    lastFrameNanos = 0L
+                } else {
+                    Choreographer.getInstance().postFrameCallback(this)
+                }
+            }
+        }
+
+        init {
+            view.addOnAttachStateChangeListener(this)
+        }
+
+        override fun onViewAttachedToWindow(v: View) = Unit
+
+        override fun onViewDetachedFromWindow(v: View) {
+            cancelAndReset()
+        }
+
+        fun canAnimate(): Boolean =
+            ValueAnimator.areAnimatorsEnabled() && view.isAttachedToWindow
+
+        fun configure(
+            isPad: Boolean,
+            maxTiltX: Float,
+            maxTiltY: Float,
+            pressScale: Float,
+            sinkDp: Float,
+            densityOverride: Float = view.resources.displayMetrics.density,
+        ) {
+            this.isPad = isPad
+            this.maxTiltX = maxTiltX
+            this.maxTiltY = maxTiltY
+            this.pressScale = pressScale
+            this.sinkDp = sinkDp
+            this.density = densityOverride
+            val targetCameraDist = 1400f * densityOverride
+            if (view.cameraDistance != targetCameraDist) {
+                view.cameraDistance = targetCameraDist
+            }
+            if (view.isHapticFeedbackEnabled) {
+                view.isHapticFeedbackEnabled = false
+            }
+        }
+
+        fun ensureRunning() {
+            if (!canAnimate()) {
+                cancelAndReset()
+                return
+            }
+            if (!frameLoopActive) {
+                frameLoopActive = true
+                lastFrameNanos = 0L
+                Choreographer.getInstance().postFrameCallback(frameCallback)
+            }
+        }
+
+        fun ensureRunningIfNeeded() {
+            if (!canAnimate()) {
+                cancelAndReset()
+                return
+            }
+            if (!frameLoopActive && !spring.isSettled(targetPress, targetTiltX, targetTiltY)) {
+                frameLoopActive = true
+                lastFrameNanos = 0L
+                Choreographer.getInstance().postFrameCallback(frameCallback)
+            }
+        }
+
+        fun applyVisuals() {
+            val p = spring.press.coerceIn(-0.04f, 1.08f)
+            val s = 1f + (pressScale - 1f) * p
+            val sinkPx = sinkDp * density * p
+            if (view.scaleX != s) view.scaleX = s
+            if (view.scaleY != s) view.scaleY = s
+            if (view.translationY != sinkPx) view.translationY = sinkPx
+            val rx = -spring.tiltY * maxTiltX
+            val ry = spring.tiltX * maxTiltY
+            if (kotlin.math.abs(view.rotationX - rx) > 0.01f || rx == 0f) view.rotationX = rx
+            if (kotlin.math.abs(view.rotationY - ry) > 0.01f || ry == 0f) view.rotationY = ry
+            if (isPad) {
+                (view as? TouchpadSurfaceView)?.setTilt(
+                    spring.tiltX,
+                    spring.tiltY,
+                    spring.press.coerceIn(0f, 1f),
+                )
+            } else {
+                updateBubbleTilt(view, spring.tiltX, spring.tiltY)
+            }
+        }
+
+        fun cancelAndReset() {
+            if (frameLoopActive) {
+                frameLoopActive = false
+                runCatching { Choreographer.getInstance().removeFrameCallback(frameCallback) }
+            }
+            lastFrameNanos = 0L
+            buttonLastInside = true
+            targetPress = 0f
+            targetTiltX = 0f
+            targetTiltY = 0f
+            val hadTransform = !spring.isIdentity ||
+                view.scaleX != 1f ||
+                view.scaleY != 1f ||
+                view.translationY != 0f ||
+                view.rotationX != 0f ||
+                view.rotationY != 0f
+            spring.reset()
+            if (hadTransform) {
+                view.scaleX = 1f
+                view.scaleY = 1f
+                view.translationY = 0f
+                view.rotationX = 0f
+                view.rotationY = 0f
+                if (isPad) {
+                    (view as? TouchpadSurfaceView)?.setTilt(0f, 0f, 0f)
+                } else {
+                    updateBubbleTilt(view, 0f, 0f)
+                }
+            }
+        }
+    }
+
+    private fun getOrCreateController(view: View): ViewSpringController {
+        val existing = view.getTag(R.id.tag_press_spring) as? ViewSpringController
+        if (existing != null) return existing
+        return ViewSpringController(view).also {
+            view.setTag(R.id.tag_press_spring, it)
+        }
+    }
 
     private fun updateBubbleTilt(view: View, normX: Float, normY: Float) {
         when (val bg = view.background) {
@@ -41,6 +198,21 @@ object PressFeedback {
         }
     }
 
+    fun cancel(view: View) {
+        val controller = view.getTag(R.id.tag_press_spring) as? ViewSpringController
+        if (controller != null) {
+            controller.cancelAndReset()
+            return
+        }
+        view.scaleX = 1f
+        view.scaleY = 1f
+        view.translationY = 0f
+        view.rotationX = 0f
+        view.rotationY = 0f
+        (view as? TouchpadSurfaceView)?.setTilt(0f, 0f, 0f)
+        updateBubbleTilt(view, 0f, 0f)
+    }
+
     /**
      * 为按钮等普通 View 挂载 3D 倾斜下沉按压反馈。
      * 返回 false 保持 View 原有的 onTouchEvent 继续触发点击（OnClickListener/performClick）和长按（OnLongClickListener）。
@@ -48,10 +220,10 @@ object PressFeedback {
     @SuppressLint("ClickableViewAccessibility")
     fun attach(
         view: View,
-        maxTiltX: Float = 8f,
-        maxTiltY: Float = 12f,
+        maxTiltX: Float = 5.5f,
+        maxTiltY: Float = 7.5f,
         pressScale: Float = 0.93f,
-        sinkDp: Float = 2f,
+        sinkDp: Float = 1.8f,
         isEnabled: () -> Boolean = { true },
         onHaptic: (() -> Unit)? = null,
     ) {
@@ -61,6 +233,9 @@ object PressFeedback {
 
         view.setOnTouchListener { v, event ->
             if (!isEnabled()) {
+                if (v.getTag(R.id.tag_press_spring) != null) {
+                    cancel(v)
+                }
                 return@setOnTouchListener false
             }
             when (event.actionMasked) {
@@ -75,216 +250,152 @@ object PressFeedback {
     fun applyButtonDown(
         v: View,
         event: MotionEvent,
-        maxTiltX: Float = 8f,
-        maxTiltY: Float = 12f,
+        maxTiltX: Float = 5.5f,
+        maxTiltY: Float = 7.5f,
         pressScale: Float = 0.93f,
-        sinkDp: Float = 3f,
+        sinkDp: Float = 1.8f,
         onHaptic: (() -> Unit)? = null,
     ) {
-        val density = v.resources.displayMetrics.density
-        v.cameraDistance = 1400f * density
-        v.isHapticFeedbackEnabled = false
         val w = v.width.toFloat().coerceAtLeast(1f)
         val h = v.height.toFloat().coerceAtLeast(1f)
-        val normX = ((event.x - w / 2f) / (w / 2f)).coerceIn(-1.5f, 1.5f)
-        val normY = ((event.y - h / 2f) / (h / 2f)).coerceIn(-1.5f, 1.5f)
-        val sinkPx = (sinkDp * density).roundToInt().toFloat()
-        val clampedNormX = normX.coerceIn(-1f, 1f)
-        val clampedNormY = normY.coerceIn(-1f, 1f)
-        buttonDownTimeMs = SystemClock.uptimeMillis()
-        buttonDownAnimRunning = true
-        buttonLastInside = true
-        updateBubbleTilt(v, clampedNormX, clampedNormY)
-        v.animate().cancel()
-        v.animate()
-            .rotationX(-clampedNormY * maxTiltX)
-            .rotationY(clampedNormX * maxTiltY)
-            .scaleX(pressScale)
-            .scaleY(pressScale)
-            .translationY(sinkPx)
-            .setDuration(70)
-            .setInterpolator(decelerate)
-            .start()
+        val clampedNormX = ((event.x - w / 2f) / (w / 2f)).coerceIn(-1f, 1f)
+        val clampedNormY = ((event.y - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
+        val controller = getOrCreateController(v)
+        controller.configure(
+            isPad = false,
+            maxTiltX = maxTiltX,
+            maxTiltY = maxTiltY,
+            pressScale = pressScale,
+            sinkDp = sinkDp,
+        )
+        controller.buttonLastInside = true
+        controller.targetPress = 1f
+        controller.targetTiltX = clampedNormX
+        controller.targetTiltY = clampedNormY
+        controller.spring.applyDownImpulse()
+        controller.ensureRunning()
         onHaptic?.invoke()
     }
 
     fun applyButtonMove(
         v: View,
         event: MotionEvent,
-        maxTiltX: Float = 8f,
-        maxTiltY: Float = 12f,
+        maxTiltX: Float = 5.5f,
+        maxTiltY: Float = 7.5f,
         pressScale: Float = 0.93f,
-        sinkDp: Float = 3f,
+        sinkDp: Float = 1.8f,
     ) {
-        val density = v.resources.displayMetrics.density
         val w = v.width.toFloat().coerceAtLeast(1f)
         val h = v.height.toFloat().coerceAtLeast(1f)
-        val normX = ((event.x - w / 2f) / (w / 2f)).coerceIn(-1.5f, 1.5f)
-        val normY = ((event.y - h / 2f) / (h / 2f)).coerceIn(-1.5f, 1.5f)
-        val sinkPx = (sinkDp * density).roundToInt().toFloat()
         val inside = event.x in -w * 0.25f..w * 1.25f && event.y in -h * 0.25f..h * 1.25f
+        val controller = getOrCreateController(v)
+        controller.configure(
+            isPad = false,
+            maxTiltX = maxTiltX,
+            maxTiltY = maxTiltY,
+            pressScale = pressScale,
+            sinkDp = sinkDp,
+        )
         if (inside) {
-            val clampedNormX = normX.coerceIn(-1f, 1f)
-            val clampedNormY = normY.coerceIn(-1f, 1f)
-            updateBubbleTilt(v, clampedNormX, clampedNormY)
-            val elapsed = SystemClock.uptimeMillis() - buttonDownTimeMs
-            if (!buttonLastInside || elapsed < 70L) {
-                buttonLastInside = true
-                buttonDownAnimRunning = true
-                val remainingMs = if (elapsed < 70L) (70L - elapsed).coerceAtLeast(16L) else 45L
-                v.animate()
-                    .rotationX(-clampedNormY * maxTiltX)
-                    .rotationY(clampedNormX * maxTiltY)
-                    .scaleX(pressScale)
-                    .scaleY(pressScale)
-                    .translationY(sinkPx)
-                    .setDuration(remainingMs)
-                    .start()
-            } else {
-                if (buttonDownAnimRunning) {
-                    v.animate().cancel()
-                    buttonDownAnimRunning = false
-                }
-                v.scaleX = pressScale
-                v.scaleY = pressScale
-                v.translationY = sinkPx
-                v.rotationX = -clampedNormY * maxTiltX
-                v.rotationY = clampedNormX * maxTiltY
+            val clampedNormX = ((event.x - w / 2f) / (w / 2f)).coerceIn(-1f, 1f)
+            val clampedNormY = ((event.y - h / 2f) / (h / 2f)).coerceIn(-1f, 1f)
+            if (!controller.buttonLastInside) {
+                controller.buttonLastInside = true
+                controller.spring.applyDownImpulse()
             }
-        } else if (buttonLastInside) {
-            // 手指拖移出按钮较远区域，仅在状态切换时触发一次平滑复原
-            buttonLastInside = false
-            buttonDownAnimRunning = false
-            updateBubbleTilt(v, 0f, 0f)
-            v.animate().cancel()
-            v.animate()
-                .rotationX(0f)
-                .rotationY(0f)
-                .scaleX(1f)
-                .scaleY(1f)
-                .translationY(0f)
-                .setDuration(160)
-                .setInterpolator(decelerate)
-                .start()
+            controller.targetPress = 1f
+            controller.targetTiltX = clampedNormX
+            controller.targetTiltY = clampedNormY
+            controller.ensureRunningIfNeeded()
+        } else if (controller.buttonLastInside) {
+            controller.buttonLastInside = false
+            controller.targetPress = 0f
+            controller.targetTiltX = 0f
+            controller.targetTiltY = 0f
+            controller.ensureRunningIfNeeded()
         }
     }
 
     fun applyButtonRelease(v: View) {
-        buttonDownTimeMs = 0L
-        buttonDownAnimRunning = false
-        buttonLastInside = true
-        updateBubbleTilt(v, 0f, 0f)
-        v.animate().cancel()
-        v.animate()
-            .rotationX(0f)
-            .rotationY(0f)
-            .scaleX(1f)
-            .scaleY(1f)
-            .translationY(0f)
-            .setDuration(180)
-            .setInterpolator(overshoot)
-            .start()
+        val controller = v.getTag(R.id.tag_press_spring) as? ViewSpringController ?: return
+        controller.buttonLastInside = true
+        controller.targetPress = 0f
+        controller.targetTiltX = 0f
+        controller.targetTiltY = 0f
+        controller.ensureRunningIfNeeded()
     }
 
     /**
      * 触控板按下反馈：
-     * 基于归一化按压坐标 [normX], [normY]（-1f..1f），下沉并沿落点朝向微幅 3D 倾斜。
+     * 基于归一化按压坐标 [normX], [normY]（-1f..1f），赋予柔和下压初速度动量并平滑倾斜。
      */
     fun applyPadDown(
         pad: View,
         normX: Float,
         normY: Float,
         density: Float,
-        maxTiltX: Float = 7.0f,
-        maxTiltY: Float = 9.0f,
+        maxTiltX: Float = 4.0f,
+        maxTiltY: Float = 5.0f,
         pressScale: Float = 0.985f,
-        sinkDp: Float = 4.5f,
+        sinkDp: Float = 2.2f,
     ) {
-        padDownTimeMs = SystemClock.uptimeMillis()
-        padDownAnimRunning = true
         val clampedNormX = normX.coerceIn(-1f, 1f)
         val clampedNormY = normY.coerceIn(-1f, 1f)
-        val sinkPx = (sinkDp * density).roundToInt().toFloat()
-
-        (pad as? TouchpadSurfaceView)?.animateTilt(clampedNormX, clampedNormY, 1f, 65, decelerate)
-
-        pad.animate().cancel()
-        pad.animate()
-            .rotationX(-clampedNormY * maxTiltX)
-            .rotationY(clampedNormX * maxTiltY)
-            .scaleX(pressScale)
-            .scaleY(pressScale)
-            .translationY(sinkPx)
-            .setDuration(65)
-            .setInterpolator(decelerate)
-            .start()
+        val controller = getOrCreateController(pad)
+        controller.configure(
+            isPad = true,
+            maxTiltX = maxTiltX,
+            maxTiltY = maxTiltY,
+            pressScale = pressScale,
+            sinkDp = sinkDp,
+            densityOverride = density,
+        )
+        controller.targetPress = 1f
+        controller.targetTiltX = clampedNormX
+        controller.targetTiltY = clampedNormY
+        controller.spring.applyDownImpulse()
+        controller.ensureRunning()
     }
 
     /**
      * 触控板手指移动：
-     * 保持下沉状态，动态更新 3D 倾斜角度跟随手指位置。
-     * 初始 65ms 下沉窗口过后直接以屏幕物理刷新率 1:1 跟随手指，无动画打断与延迟滞后。
+     * 平滑更新目标倾斜角，连续弹簧跟手，无任何动画取消或跳变。
      */
     fun applyPadMove(
         pad: View,
         normX: Float,
         normY: Float,
         density: Float,
-        maxTiltX: Float = 7.0f,
-        maxTiltY: Float = 9.0f,
+        maxTiltX: Float = 4.0f,
+        maxTiltY: Float = 5.0f,
         pressScale: Float = 0.985f,
-        sinkDp: Float = 4.5f,
+        sinkDp: Float = 2.2f,
     ) {
         val clampedNormX = normX.coerceIn(-1f, 1f)
         val clampedNormY = normY.coerceIn(-1f, 1f)
-        val sinkPx = (sinkDp * density).roundToInt().toFloat()
-
-        val elapsed = SystemClock.uptimeMillis() - padDownTimeMs
-        if (elapsed >= 65L) {
-            if (padDownAnimRunning) {
-                pad.animate().cancel()
-                padDownAnimRunning = false
-            }
-            if (pad.scaleX != pressScale) pad.scaleX = pressScale
-            if (pad.scaleY != pressScale) pad.scaleY = pressScale
-            if (pad.translationY != sinkPx) pad.translationY = sinkPx
-            val targetRx = -clampedNormY * maxTiltX
-            val targetRy = clampedNormX * maxTiltY
-            if (kotlin.math.abs(pad.rotationX - targetRx) > 0.05f) pad.rotationX = targetRx
-            if (kotlin.math.abs(pad.rotationY - targetRy) > 0.05f) pad.rotationY = targetRy
-            (pad as? TouchpadSurfaceView)?.setTilt(clampedNormX, clampedNormY, 1f)
-        } else {
-            val remainingMs = (65L - elapsed).coerceAtLeast(10L)
-            pad.animate()
-                .rotationX(-clampedNormY * maxTiltX)
-                .rotationY(clampedNormX * maxTiltY)
-                .scaleX(pressScale)
-                .scaleY(pressScale)
-                .translationY(sinkPx)
-                .setDuration(remainingMs)
-                .setInterpolator(decelerate)
-                .start()
-            (pad as? TouchpadSurfaceView)?.setTilt(clampedNormX, clampedNormY, 1f)
-        }
+        val controller = getOrCreateController(pad)
+        controller.configure(
+            isPad = true,
+            maxTiltX = maxTiltX,
+            maxTiltY = maxTiltY,
+            pressScale = pressScale,
+            sinkDp = sinkDp,
+            densityOverride = density,
+        )
+        controller.targetPress = 1f
+        controller.targetTiltX = clampedNormX
+        controller.targetTiltY = clampedNormY
+        controller.ensureRunningIfNeeded()
     }
 
     /**
-     * 触控板松开：微弹回弹恢复平整。
+     * 触控板松开：近临界阻尼丝滑回弹恢复平整。
      */
     fun applyPadRelease(pad: View) {
-        padDownTimeMs = 0L
-        padDownAnimRunning = false
-        (pad as? TouchpadSurfaceView)?.animateTilt(0f, 0f, 0f, 200, overshoot)
-
-        pad.animate().cancel()
-        pad.animate()
-            .rotationX(0f)
-            .rotationY(0f)
-            .scaleX(1f)
-            .scaleY(1f)
-            .translationY(0f)
-            .setDuration(200)
-            .setInterpolator(overshoot)
-            .start()
+        val controller = pad.getTag(R.id.tag_press_spring) as? ViewSpringController ?: return
+        controller.targetPress = 0f
+        controller.targetTiltX = 0f
+        controller.targetTiltY = 0f
+        controller.ensureRunningIfNeeded()
     }
 }

@@ -83,6 +83,8 @@
     <string name="set_button_spacing">Button Spacing</string>
 
     <string name="switch_haptics">Haptic Vibration Feedback</string>
+    <string name="switch_edge_haptics">Cursor Screen-Edge Haptics</string>
+    <string name="switch_edge_haptics_hint">Subtle tick vibration when the cursor reaches screen edges (with anti-buzz cooldown)</string>
     <string name="switch_press_feedback">3D Press Sink &amp; Tilt Animation</string>
     <string name="switch_autohide_landscape">Auto-Hide in Landscape Mode</string>
     <string name="switch_minimize_keyboard">Auto-Minimize when Keyboard Opens</string>

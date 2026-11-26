@@ -83,6 +83,8 @@
     <string name="set_button_spacing">按键间距</string>
 
     <string name="switch_haptics">触感震动反馈</string>
+    <string name="switch_edge_haptics">光标触边微震反馈</string>
+    <string name="switch_edge_haptics_hint">光标首次触碰屏幕四边时提供轻微刻度震感（含防连震保护）</string>
     <string name="switch_press_feedback">3D 按压下沉与倾斜动效</string>
     <string name="switch_autohide_landscape">屏幕横向旋转时自动隐藏</string>
     <string name="switch_minimize_keyboard">软键盘弹出时自动最小化</string>

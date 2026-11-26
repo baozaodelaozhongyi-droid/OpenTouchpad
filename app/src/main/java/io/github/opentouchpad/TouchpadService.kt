@@ -112,6 +112,7 @@ class TouchpadService : AccessibilityService() {
     private var cachedPadEdgeDeadZoneDp = PAD_EDGE_DEAD_ZONE_DEFAULT_DP
     private var cachedLongPressMs = 600
     private var cachedHaptics = true
+    private var cachedEdgeHaptics = true
     private var cachedHasTouchpadBg = false
     private var cachedScaledTouchSlopPx = 0f
 
@@ -249,6 +250,10 @@ class TouchpadService : AccessibilityService() {
         cachedPadEdgeDeadZoneDp = prefs.padEdgeDeadZoneDp
         cachedLongPressMs = prefs.longPressMs
         cachedHaptics = prefs.haptics
+        cachedEdgeHaptics = prefs.edgeHaptics
+        if (!cachedHaptics || !cachedEdgeHaptics) {
+            edgeHapticTracker.reset()
+        }
         (cursorView as? CursorArrowView)?.dynamicsEnabled = cachedPressFeedback
     }
 
@@ -956,6 +961,8 @@ class TouchpadService : AccessibilityService() {
         ballSnapAnimator?.cancel()
         ballSnapAnimator = null
         stopPanelDeformation(resetVisuals = true)
+        padArea?.let { PressFeedback.cancel(it) }
+        actionViews.forEach { PressFeedback.cancel(it) }
         resetBallDeformation(animated = false)
         pointerBallistics.reset()
         edgeHapticTracker.reset()
@@ -1726,7 +1733,11 @@ class TouchpadService : AccessibilityService() {
         activeButtonCancelCallback?.invoke()
         activeButtonCancelCallback = null
         actionButtonDownCount = 0
-        padArea?.animate()?.cancel()
+        padArea?.let {
+            PressFeedback.cancel(it)
+            it.animate().cancel()
+        }
+        actionViews.forEach { PressFeedback.cancel(it) }
         padFingerDown = false
         // 拖拽锁定状态（以及跟随光标的圆环）跨面板重建保留，不在这里结束
         panel?.let { v ->
@@ -2408,11 +2419,7 @@ class TouchpadService : AccessibilityService() {
                     v.isPressed = true
                     v.drawableHotspotChanged(event.x, event.y)
                     if (cachedPressFeedback) {
-                        PressFeedback.applyButtonDown(
-                            v, event,
-                            maxTiltX = 8f, maxTiltY = 12f,
-                            pressScale = 0.92f, sinkDp = 3f,
-                        )
+                        PressFeedback.applyButtonDown(v, event)
                     }
                     if (prefs.longPressButtonToCustomize) {
                         val holdMs = prefs.buttonCustomizeHoldMs.toLong()
@@ -2426,7 +2433,7 @@ class TouchpadService : AccessibilityService() {
                     if (!isDown) return@setOnTouchListener true
                     val dx = event.rawX - downRawX
                     val dy = event.rawY - downRawY
-                    // 使用未形变屏幕矩形 + 容差（或原地微动 <= slop），免疫 PressFeedback 下沉 3dp、3D 倾斜及展开缩放动画期间的坐标偏移
+                    // 使用未形变屏幕矩形 + 容差（或原地微动 <= slop），免疫 PressFeedback 下沉、3D 倾斜及展开缩放动画期间的坐标偏移
                     val inside = isButtonReleaseWithinHitTarget(
                         event.rawX, event.rawY,
                         downRawX, downRawY,
@@ -2443,11 +2450,7 @@ class TouchpadService : AccessibilityService() {
                         v.drawableHotspotChanged(event.x, event.y)
                     }
                     if (cachedPressFeedback) {
-                        PressFeedback.applyButtonMove(
-                            v, event,
-                            maxTiltX = 8f, maxTiltY = 12f,
-                            pressScale = 0.92f, sinkDp = 3f,
-                        )
+                        PressFeedback.applyButtonMove(v, event)
                     }
                     true
                 }
@@ -2674,10 +2677,9 @@ class TouchpadService : AccessibilityService() {
                         (cursorView as? CursorArrowView)?.onPadMovedPastSlop()
                     }
                 }
-                val accel = pointerBallistics.onMove(dx, dy, eventTimeNs, density)
-                val effectiveGain = cachedSensitivity * accel
-                val stepX = dx * effectiveGain
-                val stepY = dy * effectiveGain
+                val stepX = dx * cachedSensitivity
+                val stepY = dy * cachedSensitivity
+                pointerBallistics.onMove(stepX, stepY, eventTimeNs, density)
                 val rawNextX = cursorX + stepX
                 val rawNextY = cursorY + stepY
                 cursorX = clampGestureCoord(rawNextX, screenW)
@@ -2687,8 +2689,10 @@ class TouchpadService : AccessibilityService() {
                 val maxCursorX = (screenW - 1).coerceAtLeast(0).toFloat()
                 val maxCursorY = (screenH - 1).coerceAtLeast(0).toFloat()
                 val eventTimeMs = eventTimeNs / 1_000_000L
-                if (edgeHapticTracker.onCursorMoved(cursorX, cursorY, maxCursorX, maxCursorY, density, eventTimeMs) != CURSOR_EDGE_NONE) {
-                    hapticEdgeTick()
+                if (cachedHaptics && cachedEdgeHaptics) {
+                    if (edgeHapticTracker.onCursorMoved(cursorX, cursorY, maxCursorX, maxCursorY, density, eventTimeMs) != CURSOR_EDGE_NONE) {
+                        hapticEdgeTick()
+                    }
                 }
                 val pushX = computeCursorEdgePushAmount(rawNextX, maxCursorX, stepX, density)
                 val pushY = computeCursorEdgePushAmount(rawNextY, maxCursorY, stepY, density)

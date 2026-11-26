@@ -1225,13 +1225,13 @@ class TouchpadMathTest {
         val bottomRight = computeSpecularShift(1f, 1f, maxRatio = 0.28f)
         assertEquals(-0.28f, bottomRight.shiftXRatio, 0.001f)
         assertEquals(-0.28f, bottomRight.shiftYRatio, 0.001f)
-        assertEquals(0.25f, bottomRight.boost, 0.001f)
+        assertEquals(0.08f, bottomRight.boost, 0.001f)
 
         // 超出 [-1, 1] 的输入应被钳制
         val clamped = computeSpecularShift(2.5f, -3.0f, maxRatio = 0.28f)
         assertEquals(-0.28f, clamped.shiftXRatio, 0.001f)
         assertEquals(0.28f, clamped.shiftYRatio, 0.001f)
-        assertEquals(0.25f, clamped.boost, 0.001f)
+        assertEquals(0.08f, clamped.boost, 0.001f)
     }
 
     @Test
@@ -2553,14 +2553,91 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun pointerBallisticsZeroCrossesImmediatelyOnDirectionReversal() {
+        val state = MutablePointerBallisticsState()
+        val density = 3f
+        var t = 1_000_000_000L
+        state.onMove(0f, 0f, t, density)
+
+        // Steady rightward motion at ~400 dp/s
+        val stepRightPx = (400f * density) / 120f
+        repeat(20) {
+            t += 1_000_000_000L / 120L
+            state.onMove(stepRightPx, 0f, t, density)
+        }
+        assertTrue(state.smoothedVxDpPerSec > 250f)
+
+        // Immediate reversal leftward: smoothedVxDpPerSec crosses zero without lagging positive
+        t += 1_000_000_000L / 120L
+        state.onMove(-stepRightPx * 0.5f, 0f, t, density)
+        assertTrue("Expected negative vx immediately after reversal, got ${state.smoothedVxDpPerSec}", state.smoothedVxDpPerSec < 0f)
+    }
+
+    @Test
+    fun pressSpringShortTapMomentumContinuesSmoothlyAndSettlesWithoutOvershoot() {
+        fun simulateTap(hz: Int, tapMs: Float): Triple<Float, Float, Boolean> {
+            val state = MutablePressSpringState()
+            state.applyDownImpulse()
+            // Position must never jump instantaneously on ACTION_DOWN
+            assertEquals(0f, state.press, 0.0001f)
+
+            val dtSec = 1f / hz
+            var elapsedMs = 0f
+            var peakPress = 0f
+            var minAfterPeak = 1f
+            var passedPeak = false
+            val totalSteps = (0.65f * hz).roundToInt()
+
+            repeat(totalSteps) {
+                elapsedMs += dtSec * 1000f
+                val isDown = elapsedMs <= tapMs
+                stepPressSpringInPlace(
+                    state = state,
+                    targetPress = if (isDown) 1f else 0f,
+                    targetTiltX = if (isDown) 0.6f else 0f,
+                    targetTiltY = if (isDown) -0.4f else 0f,
+                    dtSec = dtSec,
+                )
+                if (state.press > peakPress) {
+                    peakPress = state.press
+                } else if (!isDown && state.press < peakPress - 0.02f) {
+                    passedPeak = true
+                }
+                if (passedPeak) {
+                    minAfterPeak = minOf(minAfterPeak, state.press)
+                }
+            }
+            return Triple(peakPress, minAfterPeak, state.isSettled(0f, 0f, 0f))
+        }
+
+        val (peak35_60, min35_60, settled35_60) = simulateTap(60, 35f)
+        val (peak35_120, min35_120, settled35_120) = simulateTap(120, 35f)
+        val (peak35_240, min35_240, settled35_240) = simulateTap(240, 35f)
+
+        // 35ms short tap continues downward via momentum into ~0.60..0.82 cushion arc
+        assertTrue("Expected 35ms tap peak in 0.60..0.82 at 60Hz, got $peak35_60", peak35_60 in 0.60f..0.82f)
+        assertTrue("Expected 35ms tap peak in 0.60..0.82 at 120Hz, got $peak35_120", peak35_120 in 0.60f..0.82f)
+        assertTrue("Expected 35ms tap peak in 0.60..0.82 at 240Hz, got $peak35_240", peak35_240 in 0.60f..0.82f)
+        assertEquals(peak35_120, peak35_240, 0.02f)
+
+        // Near-critical damping returns cleanly without bouncy overshoot
+        assertTrue("Unexpected release overshoot at 60Hz: $min35_60", min35_60 >= -0.01f)
+        assertTrue("Unexpected release overshoot at 120Hz: $min35_120", min35_120 >= -0.01f)
+        assertTrue("Unexpected release overshoot at 240Hz: $min35_240", min35_240 >= -0.01f)
+        assertTrue(settled35_60)
+        assertTrue(settled35_120)
+        assertTrue(settled35_240)
+    }
+
+    @Test
     fun cursorLongPressChargeProgressAndScaleRampSmoothlyAfterDelay() {
         assertEquals(0f, computeCursorLongPressChargeProgress(0L, 600L), 0.0001f)
-        assertEquals(0f, computeCursorLongPressChargeProgress(130L, 600L), 0.0001f)
+        assertEquals(0f, computeCursorLongPressChargeProgress(150L, 600L), 0.0001f)
         assertEquals(CURSOR_PRESENCE_LIFT_SCALE, computeCursorLongPressChargeScale(0f), 0.0001f)
 
         var prevProg = 0f
         var prevScale = CURSOR_PRESENCE_LIFT_SCALE
-        for (ms in 150L..600L step 50L) {
+        for (ms in 200L..600L step 50L) {
             val prog = computeCursorLongPressChargeProgress(ms, 600L)
             val scale = computeCursorLongPressChargeScale(prog)
             assertTrue("Charge progress should increase at $ms ms", prog > prevProg)
@@ -2573,7 +2650,7 @@ class TouchpadMathTest {
         assertEquals(1f, computeCursorLongPressChargeProgress(600L, 600L), 0.0001f)
         assertEquals(1f, computeCursorLongPressChargeProgress(900L, 600L), 0.0001f)
         assertEquals(CURSOR_LONG_PRESS_CHARGE_MIN_SCALE, computeCursorLongPressChargeScale(1f), 0.0001f)
-        assertEquals(0f, computeCursorLongPressChargeProgress(200L, 100L), 0.0001f)
+        assertEquals(0f, computeCursorLongPressChargeProgress(200L, 120L), 0.0001f)
     }
 
     @Test
@@ -2583,7 +2660,7 @@ class TouchpadMathTest {
         assertEquals(0f, computeCursorVelocityBankDeg(55f), 0.0001f)
         assertEquals(0f, computeCursorVelocityBankDeg(-55f), 0.0001f)
 
-        // Symmetric bounded bank within ±5.0°
+        // Symmetric bounded bank within ±3.5°
         val bankRight = computeCursorVelocityBankDeg(450f)
         val bankLeft = computeCursorVelocityBankDeg(-450f)
         assertTrue(bankRight in 1f..CURSOR_DYNAMICS_MAX_BANK_DEG)
@@ -2599,7 +2676,7 @@ class TouchpadMathTest {
         assertTrue(pushLeft in 0.1f..1f)
         assertEquals(pushLeft, pushRight, 0.0001f)
 
-        // Blocked shake starts at 0, oscillates strictly inside ±5.5°, returns to 0 after duration
+        // Blocked shake starts at 0, oscillates strictly inside ±3.5°, returns to 0 after duration
         assertEquals(0f, computeCursorBlockedShakeDeg(0f), 0.0001f)
         var maxShake = 0f
         for (i in 1..21) {
@@ -2607,7 +2684,7 @@ class TouchpadMathTest {
             assertTrue(kotlin.math.abs(deg) <= CURSOR_DYNAMICS_MAX_ANGLE_DEG)
             maxShake = maxOf(maxShake, kotlin.math.abs(deg))
         }
-        assertTrue(maxShake > 2f)
+        assertTrue(maxShake > 1.8f)
         assertEquals(0f, computeCursorBlockedShakeDeg(CURSOR_BLOCKED_SHAKE_DURATION_SEC), 0.0001f)
     }
 
@@ -2615,40 +2692,41 @@ class TouchpadMathTest {
     fun cursorDynamicsSpringClickPeckLatchAndShakeRespectEnvelopeAndSettle() {
         val state = MutableCursorDynamicsState()
 
-        // 1. Click peck dips crisply near 0.84f then settles back to 1.0f within [0.83, 1.05]
+        // 1. Click peck never jumps position, dips gently near 0.90f then settles smoothly to 1.0f without overshoot flicker
         state.triggerClickPeck()
+        assertEquals(1f, state.scale, 0.0001f)
         var minScaleSeen = 1f
         var maxScaleSeen = 1f
-        repeat(60) {
+        repeat(80) {
             stepCursorDynamicsInPlace(state, targetScale = 1f, targetBankDeg = 0f, targetSquishX = 0f, targetSquishY = 0f, dtSec = 1f / 120f)
             minScaleSeen = minOf(minScaleSeen, state.renderScaleX)
             maxScaleSeen = maxOf(maxScaleSeen, state.renderScaleX)
             assertTrue(state.renderScaleX in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
             assertTrue(state.renderScaleY in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
         }
-        assertTrue("Click peck should dip near 0.84f (actual $minScaleSeen)", minScaleSeen in 0.83f..0.86f)
-        assertTrue("Click peck should rebound gently (max $maxScaleSeen)", maxScaleSeen in 1.00f..1.05f)
+        assertTrue("Click peck should dip smoothly near 0.90f (actual $minScaleSeen)", minScaleSeen in 0.88f..0.92f)
+        assertTrue("Click peck should settle cleanly without jarring overshoot (max $maxScaleSeen)", maxScaleSeen in 1.00f..1.005f)
         repeat(60) {
             stepCursorDynamicsInPlace(state, targetScale = 1f, targetBankDeg = 0f, targetSquishX = 0f, targetSquishY = 0f, dtSec = 1f / 120f)
         }
         assertTrue(state.isSettled(1f, 0f, 0f, 0f))
 
-        // 2. Latch pop from charged 0.87f pops outward then settles at 0.94f grip scale
+        // 2. Latch pop from charged 0.89f expands gently then settles at 0.94f grip scale
         state.snapTo(CURSOR_LONG_PRESS_CHARGE_MIN_SCALE, 0f, 0f, 0f)
         state.triggerLatchPop(fromCharge = true)
         var peakLatch = 0f
-        repeat(80) {
+        repeat(100) {
             stepCursorDynamicsInPlace(state, targetScale = CURSOR_ARMED_GRIP_SCALE, targetBankDeg = 0f, targetSquishX = 0f, targetSquishY = 0f, dtSec = 1f / 120f)
             peakLatch = maxOf(peakLatch, state.renderScaleX)
             assertTrue(state.renderScaleX in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
         }
-        assertTrue("Latch pop should overshoot grip 0.94f (peak $peakLatch)", peakLatch > CURSOR_ARMED_GRIP_SCALE + 0.02f)
+        assertTrue("Latch pop should expand smoothly to >= 0.94f (peak $peakLatch)", peakLatch in CURSOR_ARMED_GRIP_SCALE..0.96f)
         assertTrue(state.isSettled(CURSOR_ARMED_GRIP_SCALE, 0f, 0f, 0f))
 
         // 3. Combined max bank + blocked shake + squish never breaches envelope bounds and settles completely
         state.snapTo(CURSOR_PRESENCE_LIFT_SCALE, CURSOR_DYNAMICS_MAX_BANK_DEG, 1f, 1f)
         state.triggerBlockedShake()
-        repeat(80) {
+        repeat(100) {
             stepCursorDynamicsInPlace(state, targetScale = 1f, targetBankDeg = 0f, targetSquishX = 0f, targetSquishY = 0f, dtSec = 1f / 120f)
             assertTrue(state.renderScaleX in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
             assertTrue(state.renderScaleY in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
@@ -2697,6 +2775,10 @@ class TouchpadMathTest {
         // 7. Starting touch while already at right/bottom edge suppresses initial false tick
         tracker.syncInitialPosition(maxX, maxY, maxX, maxY)
         assertEquals(CURSOR_EDGE_NONE, tracker.onCursorMoved(maxX, maxY, maxX, maxY, density, nowMs = 3000L))
+
+        // 8. Reset clears cooldown and re-arms edges cleanly (used when edgeHaptics is toggled)
+        tracker.reset()
+        assertEquals(CURSOR_EDGE_RIGHT, tracker.onCursorMoved(maxX, 500f, maxX, maxY, density, nowMs = 3010L))
     }
 }
 

@@ -476,6 +476,10 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("haptics", true)
         set(v) = sp.edit().putBoolean("haptics", v).apply()
 
+    var edgeHaptics: Boolean
+        get() = sp.getBoolean("edgeHaptics", true)
+        set(v) = sp.edit().putBoolean("edgeHaptics", v).apply()
+
     var pressFeedback: Boolean
         get() = sp.getBoolean("pressFeedback", true)
         set(v) = sp.edit().putBoolean("pressFeedback", v).apply()
