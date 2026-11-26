@@ -2539,3 +2539,485 @@ internal class CancelledTapTracker(
         return written
     }
 }
+
+// ───────────────────────── 光标动态增益、物理微动效与边缘触感状态机 ─────────────────────────
+
+internal const val POINTER_ACCEL_MIN_MULTIPLIER = 0.64f
+internal const val POINTER_ACCEL_MAX_MULTIPLIER = 1.80f
+internal const val POINTER_ACCEL_SLOW_KNEE_DP_PER_SEC = 22f
+internal const val POINTER_ACCEL_UNIT_SPEED_DP_PER_SEC = 135f
+private const val POINTER_ACCEL_SCALE_DP_PER_SEC = 168.44716f
+
+/**
+ * 动态指针加速度曲线（热路径零分配）：
+ * - 慢速微瞄区间（<= 22 dp/s）：平滑收敛至 0.64f，指尖微调稳健精准；
+ * - 中速巡航区间（~120–150 dp/s）：在 135 dp/s 处平滑通过 1.00f，保持用户灵敏度直觉；
+ * - 快速轻甩区间（300–900+ dp/s）：C1 连续单调递增并渐进收敛至上限 1.80f，绝不失控飞出。
+ */
+internal fun computePointerAccelerationMultiplier(fingerSpeedDpPerSec: Float): Float {
+    if (!fingerSpeedDpPerSec.isFinite()) return 1f
+    if (fingerSpeedDpPerSec <= POINTER_ACCEL_SLOW_KNEE_DP_PER_SEC) {
+        return POINTER_ACCEL_MIN_MULTIPLIER
+    }
+    val u = (fingerSpeedDpPerSec - POINTER_ACCEL_SLOW_KNEE_DP_PER_SEC) / POINTER_ACCEL_SCALE_DP_PER_SEC
+    if (u >= 1e4f) return POINTER_ACCEL_MAX_MULTIPLIER
+    val u2 = u * u
+    val ratio = u2 / (1f + u2)
+    return (POINTER_ACCEL_MIN_MULTIPLIER + (POINTER_ACCEL_MAX_MULTIPLIER - POINTER_ACCEL_MIN_MULTIPLIER) * ratio)
+        .coerceIn(POINTER_ACCEL_MIN_MULTIPLIER, POINTER_ACCEL_MAX_MULTIPLIER)
+}
+
+/**
+ * VRR / 高触控采样率自适应指针弹道状态（全基本类型原地更新，热路径零分配）：
+ * - 首包播种防触屏落指形变跳变尖峰；
+ * - `< 1.5ms` 合包/粘包先累积位移，避免极短 dt 放大瞬时速度噪声；
+ * - 通过 `computeVrrEmaAlpha` 平滑手指速度向量并映射为动态指针倍率。
+ */
+internal class MutablePointerBallisticsState {
+    var lastEventTimeNs: Long = 0L
+        private set
+    var pendingDxPx: Float = 0f
+        private set
+    var pendingDyPx: Float = 0f
+        private set
+    var smoothedVxDpPerSec: Float = 0f
+        private set
+    var smoothedVyDpPerSec: Float = 0f
+        private set
+    var smoothedSpeedDpPerSec: Float = 0f
+        private set
+    var multiplier: Float = POINTER_ACCEL_MIN_MULTIPLIER
+        private set
+
+    fun reset() {
+        lastEventTimeNs = 0L
+        pendingDxPx = 0f
+        pendingDyPx = 0f
+        smoothedVxDpPerSec = 0f
+        smoothedVyDpPerSec = 0f
+        smoothedSpeedDpPerSec = 0f
+        multiplier = POINTER_ACCEL_MIN_MULTIPLIER
+    }
+
+    fun onMove(dxPx: Float, dyPx: Float, eventTimeNs: Long, density: Float): Float {
+        if (!dxPx.isFinite() || !dyPx.isFinite()) return multiplier
+        if (lastEventTimeNs == 0L) {
+            lastEventTimeNs = eventTimeNs
+            pendingDxPx = 0f
+            pendingDyPx = 0f
+            smoothedVxDpPerSec = 0f
+            smoothedVyDpPerSec = 0f
+            smoothedSpeedDpPerSec = 0f
+            multiplier = computePointerAccelerationMultiplier(0f)
+            return multiplier
+        }
+        val rawDtNs = eventTimeNs - lastEventTimeNs
+        if (rawDtNs < 0L) {
+            lastEventTimeNs = eventTimeNs
+            pendingDxPx = 0f
+            pendingDyPx = 0f
+            return multiplier
+        }
+        pendingDxPx += dxPx
+        pendingDyPx += dyPx
+        if (rawDtNs < 1_500_000L) {
+            return multiplier
+        }
+        val safeDensity = density.coerceAtLeast(1f)
+        val dtSec = (rawDtNs / 1_000_000_000f).coerceIn(0.0015f, 0.100f)
+        val rawVxDp = (pendingDxPx / safeDensity) / dtSec
+        val rawVyDp = (pendingDyPx / safeDensity) / dtSec
+        pendingDxPx = 0f
+        pendingDyPx = 0f
+        lastEventTimeNs = eventTimeNs
+
+        val alpha = computeVrrEmaAlpha(dtSec, 0.028f)
+        smoothedVxDpPerSec += (rawVxDp - smoothedVxDpPerSec) * alpha
+        smoothedVyDpPerSec += (rawVyDp - smoothedVyDpPerSec) * alpha
+        smoothedSpeedDpPerSec = kotlin.math.hypot(smoothedVxDpPerSec, smoothedVyDpPerSec)
+        multiplier = computePointerAccelerationMultiplier(smoothedSpeedDpPerSec)
+        return multiplier
+    }
+}
+
+internal const val CURSOR_DYNAMICS_MIN_SCALE = 0.83f
+internal const val CURSOR_DYNAMICS_MAX_SCALE = 1.05f
+internal const val CURSOR_DYNAMICS_MAX_BANK_DEG = 5.0f
+internal const val CURSOR_DYNAMICS_MAX_ANGLE_DEG = 5.5f
+internal const val CURSOR_PRESENCE_LIFT_SCALE = 1.035f
+internal const val CURSOR_CLICK_PECK_MIN_SCALE = 0.84f
+internal const val CURSOR_LONG_PRESS_CHARGE_DELAY_MS = 130L
+internal const val CURSOR_LONG_PRESS_CHARGE_MIN_SCALE = 0.87f
+internal const val CURSOR_ARMED_GRIP_SCALE = 0.94f
+internal const val CURSOR_EDGE_SQUISH_MAX = 0.07f
+internal const val CURSOR_BANK_DEADZONE_DP_PER_SEC = 55f
+internal const val CURSOR_BANK_REF_DP_PER_SEC = 480f
+internal const val CURSOR_BLOCKED_SHAKE_DURATION_SEC = 0.22f
+internal const val CURSOR_BLOCKED_SHAKE_AMPLITUDE_DEG = 4.5f
+
+/**
+ * 计算长按蓄力前馈进度（0f..1f）：
+ * 静止按住触控板满 [delayMs] (130ms) 后平滑从 0 升至 1（在 [longPressMs] 时封顶）。
+ */
+internal fun computeCursorLongPressChargeProgress(
+    elapsedMs: Long,
+    longPressMs: Long,
+    delayMs: Long = CURSOR_LONG_PRESS_CHARGE_DELAY_MS,
+): Float {
+    if (elapsedMs <= delayMs || longPressMs <= delayMs) return 0f
+    val span = (longPressMs - delayMs).toFloat()
+    val t = ((elapsedMs - delayMs) / span).coerceIn(0f, 1f)
+    return t * t * (3f - 2f * t)
+}
+
+/**
+ * 根据长按蓄力进度计算目标缩放比例（从 1.035f 唤醒态平滑内聚至 0.87f）。
+ */
+internal fun computeCursorLongPressChargeScale(chargeProgress: Float): Float {
+    val p = chargeProgress.coerceIn(0f, 1f)
+    return (CURSOR_PRESENCE_LIFT_SCALE + (CURSOR_LONG_PRESS_CHARGE_MIN_SCALE - CURSOR_PRESENCE_LIFT_SCALE) * p)
+        .coerceIn(CURSOR_DYNAMICS_MIN_SCALE, CURSOR_DYNAMICS_MAX_SCALE)
+}
+
+/**
+ * 计算高速移动顺风微摆目标角（严格封顶在 ±5.0° 内，慢速微瞄死区内保持 0°）。
+ */
+internal fun computeCursorVelocityBankDeg(
+    vxDpPerSec: Float,
+    maxBankDeg: Float = CURSOR_DYNAMICS_MAX_BANK_DEG,
+    deadzoneDpPerSec: Float = CURSOR_BANK_DEADZONE_DP_PER_SEC,
+    refSpeedDpPerSec: Float = CURSOR_BANK_REF_DP_PER_SEC,
+): Float {
+    if (!vxDpPerSec.isFinite() || maxBankDeg <= 0f || refSpeedDpPerSec <= 0f) return 0f
+    val absV = kotlin.math.abs(vxDpPerSec)
+    if (absV <= deadzoneDpPerSec) return 0f
+    val effective = (absV - deadzoneDpPerSec) / refSpeedDpPerSec
+    val norm = effective / (1f + 0.65f * effective)
+    val mag = (maxBankDeg * norm).coerceIn(0f, maxBankDeg)
+    return if (vxDpPerSec >= 0f) mag else -mag
+}
+
+/**
+ * 计算撞边继续外推时的法向挤压量（0f..1f，对应最多 7% 的柔和微挤压）。
+ */
+internal fun computeCursorEdgePushAmount(
+    rawNextCoord: Float,
+    maxCoord: Float,
+    stepPx: Float,
+    density: Float,
+    refPushDp: Float = 8f,
+): Float {
+    if (!rawNextCoord.isFinite() || !stepPx.isFinite() || maxCoord <= 1f) return 0f
+    val safeDensity = density.coerceAtLeast(1f)
+    val refPx = (refPushDp * safeDensity).coerceAtLeast(1f)
+    val pushingMin = rawNextCoord <= 0f && stepPx < 0f
+    val pushingMax = rawNextCoord >= maxCoord && stepPx > 0f
+    if (!pushingMin && !pushingMax) return 0f
+    val overshoot = if (pushingMin) -rawNextCoord else rawNextCoord - maxCoord
+    val pushPx = maxOf(overshoot, kotlin.math.abs(stepPx))
+    val norm = pushPx / refPx
+    return (norm / (1f + 0.5f * norm)).coerceIn(0f, 1f)
+}
+
+/**
+ * 计算安全界面拦截受阻微抖角（阻尼正弦衰减，严格限幅在 ±5.5° 内）。
+ */
+internal fun computeCursorBlockedShakeDeg(
+    elapsedSec: Float,
+    durationSec: Float = CURSOR_BLOCKED_SHAKE_DURATION_SEC,
+    amplitudeDeg: Float = CURSOR_BLOCKED_SHAKE_AMPLITUDE_DEG,
+): Float {
+    if (!elapsedSec.isFinite() || elapsedSec <= 0f || elapsedSec >= durationSec || durationSec <= 0f) {
+        return 0f
+    }
+    val u = (elapsedSec / durationSec).coerceIn(0f, 1f)
+    val envelope = (1f - u) * (1f - u)
+    val wave = kotlin.math.sin(u * 5.0 * kotlin.math.PI).toFloat()
+    return (amplitudeDeg * envelope * wave).coerceIn(-CURSOR_DYNAMICS_MAX_ANGLE_DEG, CURSOR_DYNAMICS_MAX_ANGLE_DEG)
+}
+
+/**
+ * 可原地更新的光标本体动力学状态（零堆分配，严格满足 0.83f..1.05f 缩放包络与 ±5.5° 角度包络）。
+ */
+internal class MutableCursorDynamicsState(
+    var scale: Float = 1f,
+    var scaleVel: Float = 0f,
+    var bankDeg: Float = 0f,
+    var bankVelDeg: Float = 0f,
+    var squishX: Float = 0f,
+    var squishVelX: Float = 0f,
+    var squishY: Float = 0f,
+    var squishVelY: Float = 0f,
+    var shakeElapsedSec: Float = -1f,
+    var shakeDeg: Float = 0f,
+) {
+    val renderScaleX: Float
+        get() = (scale * (1f - CURSOR_EDGE_SQUISH_MAX * squishX.coerceIn(0f, 1f)))
+            .coerceIn(CURSOR_DYNAMICS_MIN_SCALE, CURSOR_DYNAMICS_MAX_SCALE)
+
+    val renderScaleY: Float
+        get() = (scale * (1f - CURSOR_EDGE_SQUISH_MAX * squishY.coerceIn(0f, 1f)))
+            .coerceIn(CURSOR_DYNAMICS_MIN_SCALE, CURSOR_DYNAMICS_MAX_SCALE)
+
+    val renderAngleDeg: Float
+        get() = (bankDeg + shakeDeg).coerceIn(-CURSOR_DYNAMICS_MAX_ANGLE_DEG, CURSOR_DYNAMICS_MAX_ANGLE_DEG)
+
+    val isIdentity: Boolean
+        get() = shakeElapsedSec < 0f &&
+            kotlin.math.abs(renderScaleX - 1f) < 0.001f &&
+            kotlin.math.abs(renderScaleY - 1f) < 0.001f &&
+            kotlin.math.abs(renderAngleDeg) < 0.02f
+
+    fun triggerClickPeck() {
+        scale = minOf(scale, 0.94f)
+        scaleVel = -9.6f
+    }
+
+    fun triggerLatchPop(fromCharge: Boolean) {
+        val targetVel = if (fromCharge) 3.6f else 2.6f
+        if (scaleVel < targetVel) {
+            scaleVel = targetVel
+        }
+    }
+
+    fun triggerBlockedShake() {
+        shakeElapsedSec = 0f
+        shakeDeg = 0f
+    }
+
+    fun isSettled(
+        targetScale: Float,
+        targetBankDeg: Float,
+        targetSquishX: Float,
+        targetSquishY: Float,
+    ): Boolean =
+        shakeElapsedSec < 0f &&
+            kotlin.math.abs(scale - targetScale) < 0.0015f &&
+            kotlin.math.abs(scaleVel) < 0.01f &&
+            kotlin.math.abs(bankDeg - targetBankDeg) < 0.04f &&
+            kotlin.math.abs(bankVelDeg) < 0.4f &&
+            kotlin.math.abs(squishX - targetSquishX) < 0.003f &&
+            kotlin.math.abs(squishVelX) < 0.02f &&
+            kotlin.math.abs(squishY - targetSquishY) < 0.003f &&
+            kotlin.math.abs(squishVelY) < 0.02f
+
+    fun snapTo(
+        targetScale: Float,
+        targetBankDeg: Float,
+        targetSquishX: Float,
+        targetSquishY: Float,
+    ) {
+        scale = targetScale.coerceIn(CURSOR_DYNAMICS_MIN_SCALE, CURSOR_DYNAMICS_MAX_SCALE)
+        scaleVel = 0f
+        bankDeg = targetBankDeg.coerceIn(-CURSOR_DYNAMICS_MAX_BANK_DEG, CURSOR_DYNAMICS_MAX_BANK_DEG)
+        bankVelDeg = 0f
+        squishX = targetSquishX.coerceIn(0f, 1f)
+        squishVelX = 0f
+        squishY = targetSquishY.coerceIn(0f, 1f)
+        squishVelY = 0f
+        shakeElapsedSec = -1f
+        shakeDeg = 0f
+    }
+
+    fun reset() {
+        snapTo(1f, 0f, 0f, 0f)
+    }
+}
+
+/**
+ * 原地步进光标本体弹簧动力学（子步欧拉积分，适应 30–240Hz 任意 VRR 帧间隔，零堆分配）。
+ */
+internal fun stepCursorDynamicsInPlace(
+    state: MutableCursorDynamicsState,
+    targetScale: Float,
+    targetBankDeg: Float,
+    targetSquishX: Float,
+    targetSquishY: Float,
+    dtSec: Float,
+) {
+    val safeTargetScale = targetScale.coerceIn(CURSOR_DYNAMICS_MIN_SCALE, CURSOR_DYNAMICS_MAX_SCALE)
+    val safeTargetBank = targetBankDeg.coerceIn(-CURSOR_DYNAMICS_MAX_BANK_DEG, CURSOR_DYNAMICS_MAX_BANK_DEG)
+    val safeTargetSqX = targetSquishX.coerceIn(0f, 1f)
+    val safeTargetSqY = targetSquishY.coerceIn(0f, 1f)
+
+    val clampedDt = dtSec.coerceIn(0.001f, 0.040f)
+    val subSteps = when {
+        clampedDt > 0.032f -> 5
+        clampedDt > 0.024f -> 4
+        clampedDt > 0.016f -> 3
+        clampedDt > 0.008f -> 2
+        else -> 1
+    }
+    val stepDt = clampedDt / subSteps
+
+    val scaleOmega = 30f
+    val scaleZeta = 0.56f
+    val scaleK = scaleOmega * scaleOmega
+    val scaleC = 2f * scaleZeta * scaleOmega
+
+    val bankOmega = 26f
+    val bankZeta = 0.78f
+    val bankK = bankOmega * bankOmega
+    val bankC = 2f * bankZeta * bankOmega
+
+    val squishOmega = 32f
+    val squishZeta = 0.72f
+    val squishK = squishOmega * squishOmega
+    val squishC = 2f * squishZeta * squishOmega
+
+    var scale = state.scale
+    var scaleVel = state.scaleVel
+    var bank = state.bankDeg
+    var bankVel = state.bankVelDeg
+    var sqX = state.squishX
+    var sqVelX = state.squishVelX
+    var sqY = state.squishY
+    var sqVelY = state.squishVelY
+
+    repeat(subSteps) {
+        val aScale = scaleK * (safeTargetScale - scale) - scaleC * scaleVel
+        scaleVel += aScale * stepDt
+        scale += scaleVel * stepDt
+        if (scale < CURSOR_DYNAMICS_MIN_SCALE) {
+            scale = CURSOR_DYNAMICS_MIN_SCALE
+            if (scaleVel < 0f) scaleVel = 0f
+        } else if (scale > CURSOR_DYNAMICS_MAX_SCALE) {
+            scale = CURSOR_DYNAMICS_MAX_SCALE
+            if (scaleVel > 0f) scaleVel = 0f
+        }
+
+        val aBank = bankK * (safeTargetBank - bank) - bankC * bankVel
+        bankVel += aBank * stepDt
+        bank = (bank + bankVel * stepDt).coerceIn(-CURSOR_DYNAMICS_MAX_BANK_DEG, CURSOR_DYNAMICS_MAX_BANK_DEG)
+
+        val aSqX = squishK * (safeTargetSqX - sqX) - squishC * sqVelX
+        sqVelX += aSqX * stepDt
+        sqX = (sqX + sqVelX * stepDt).coerceIn(0f, 1.1f)
+
+        val aSqY = squishK * (safeTargetSqY - sqY) - squishC * sqVelY
+        sqVelY += aSqY * stepDt
+        sqY = (sqY + sqVelY * stepDt).coerceIn(0f, 1.1f)
+    }
+
+    state.scale = scale
+    state.scaleVel = scaleVel
+    state.bankDeg = bank
+    state.bankVelDeg = bankVel
+    state.squishX = sqX.coerceIn(0f, 1f)
+    state.squishVelX = sqVelX
+    state.squishY = sqY.coerceIn(0f, 1f)
+    state.squishVelY = sqVelY
+
+    if (state.shakeElapsedSec >= 0f) {
+        val nextElapsed = state.shakeElapsedSec + clampedDt
+        if (nextElapsed >= CURSOR_BLOCKED_SHAKE_DURATION_SEC) {
+            state.shakeElapsedSec = -1f
+            state.shakeDeg = 0f
+        } else {
+            state.shakeElapsedSec = nextElapsed
+            state.shakeDeg = computeCursorBlockedShakeDeg(nextElapsed)
+        }
+    }
+}
+
+internal const val CURSOR_EDGE_NONE = 0
+internal const val CURSOR_EDGE_LEFT = 1 shl 0
+internal const val CURSOR_EDGE_RIGHT = 1 shl 1
+internal const val CURSOR_EDGE_TOP = 1 shl 2
+internal const val CURSOR_EDGE_BOTTOM = 1 shl 3
+internal const val CURSOR_EDGE_REARM_DISTANCE_DP = 14f
+internal const val CURSOR_EDGE_HAPTIC_COOLDOWN_MS = 180L
+
+/**
+ * 屏幕四边撞边触觉迟滞冷却状态机（零分配）：
+ * - 同一轴首次触碰边界触发一次微刻度（返回非 0 边缘掩码）；
+ * - 贴边滑动或微颤绝不连续重复触发；
+ * - 同一轴必须离开边界至少 [rearmDistanceDp] (14dp) 且距上次触发 >= [cooldownMs] (180ms) 后才重新武装。
+ */
+internal class CursorEdgeHapticTracker(
+    private val rearmDistanceDp: Float = CURSOR_EDGE_REARM_DISTANCE_DP,
+    private val cooldownMs: Long = CURSOR_EDGE_HAPTIC_COOLDOWN_MS,
+) {
+    var leftArmed: Boolean = true
+        private set
+    var rightArmed: Boolean = true
+        private set
+    var topArmed: Boolean = true
+        private set
+    var bottomArmed: Boolean = true
+        private set
+
+    private var lastXTriggerMs: Long = -1L
+    private var lastYTriggerMs: Long = -1L
+
+    fun syncInitialPosition(x: Float, y: Float, maxX: Float, maxY: Float) {
+        val edgeEps = 0.5f
+        leftArmed = maxX > 1f && x > edgeEps
+        rightArmed = maxX > 1f && x < maxX - edgeEps
+        topArmed = maxY > 1f && y > edgeEps
+        bottomArmed = maxY > 1f && y < maxY - edgeEps
+    }
+
+    fun reset() {
+        leftArmed = true
+        rightArmed = true
+        topArmed = true
+        bottomArmed = true
+        lastXTriggerMs = -1L
+        lastYTriggerMs = -1L
+    }
+
+    fun onCursorMoved(
+        x: Float,
+        y: Float,
+        maxX: Float,
+        maxY: Float,
+        density: Float,
+        nowMs: Long,
+    ): Int {
+        if (!x.isFinite() || !y.isFinite() || maxX <= 1f || maxY <= 1f) return CURSOR_EDGE_NONE
+        val safeDensity = density.coerceAtLeast(1f)
+        val rearmPxX = minOf(rearmDistanceDp * safeDensity, maxX * 0.4f)
+        val rearmPxY = minOf(rearmDistanceDp * safeDensity, maxY * 0.4f)
+        val edgeEps = 0.5f
+
+        var triggered = CURSOR_EDGE_NONE
+
+        if (x >= rearmPxX) leftArmed = true
+        if (x <= maxX - rearmPxX) rightArmed = true
+
+        if (x <= edgeEps) {
+            if (leftArmed && (lastXTriggerMs < 0L || nowMs - lastXTriggerMs >= cooldownMs)) {
+                triggered = triggered or CURSOR_EDGE_LEFT
+                lastXTriggerMs = nowMs
+            }
+            leftArmed = false
+        } else if (x >= maxX - edgeEps) {
+            if (rightArmed && (lastXTriggerMs < 0L || nowMs - lastXTriggerMs >= cooldownMs)) {
+                triggered = triggered or CURSOR_EDGE_RIGHT
+                lastXTriggerMs = nowMs
+            }
+            rightArmed = false
+        }
+
+        if (y >= rearmPxY) topArmed = true
+        if (y <= maxY - rearmPxY) bottomArmed = true
+
+        if (y <= edgeEps) {
+            if (topArmed && (lastYTriggerMs < 0L || nowMs - lastYTriggerMs >= cooldownMs)) {
+                triggered = triggered or CURSOR_EDGE_TOP
+                lastYTriggerMs = nowMs
+            }
+            topArmed = false
+        } else if (y >= maxY - edgeEps) {
+            if (bottomArmed && (lastYTriggerMs < 0L || nowMs - lastYTriggerMs >= cooldownMs)) {
+                triggered = triggered or CURSOR_EDGE_BOTTOM
+                lastYTriggerMs = nowMs
+            }
+            bottomArmed = false
+        }
+
+        return triggered
+    }
+}
+

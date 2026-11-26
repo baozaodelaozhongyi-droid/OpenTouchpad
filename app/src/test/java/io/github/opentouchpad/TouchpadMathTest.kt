@@ -2476,5 +2476,228 @@ class TouchpadMathTest {
         assertEquals(2L * TAP_STROKE_DURATION_MS + TAP_COALESCE_GAP_MS, computeCoalescedTapTotalDurationMs(2))
         assertEquals(3L * TAP_STROKE_DURATION_MS + 2L * TAP_COALESCE_GAP_MS, computeCoalescedTapTotalDurationMs(3))
     }
+
+    @Test
+    fun pointerAccelerationCurveIsMonotonicSmoothAndStrictlyBounded() {
+        // Slow micro-aiming zone <= 22 dp/s stays at 0.64f
+        assertEquals(0.64f, computePointerAccelerationMultiplier(-10f), 0.0001f)
+        assertEquals(0.64f, computePointerAccelerationMultiplier(0f), 0.0001f)
+        assertEquals(0.64f, computePointerAccelerationMultiplier(22f), 0.0001f)
+
+        // Medium cruising zone (~120–150 dp/s) smoothly crosses 1.00f
+        val cruiseLow = computePointerAccelerationMultiplier(120f)
+        val cruiseUnit = computePointerAccelerationMultiplier(135f)
+        val cruiseHigh = computePointerAccelerationMultiplier(150f)
+        assertTrue(cruiseLow in 0.90f..0.99f)
+        assertEquals(1.00f, cruiseUnit, 0.001f)
+        assertTrue(cruiseHigh in 1.01f..1.12f)
+
+        // Fast flick zone approaches 1.80f monotonically with no jumps or overshoot
+        var prev = computePointerAccelerationMultiplier(0f)
+        for (speed in 1..2000) {
+            val cur = computePointerAccelerationMultiplier(speed.toFloat())
+            assertTrue("Must be monotonically non-decreasing at $speed dp/s", cur >= prev)
+            assertTrue("Must stay strictly smooth without jump at $speed dp/s", cur - prev < 0.01f)
+            assertTrue("Must stay within [0.64, 1.80] at $speed dp/s", cur in 0.64f..1.80f)
+            prev = cur
+        }
+        assertTrue(computePointerAccelerationMultiplier(900f) in 1.72f..1.80f)
+        assertEquals(1.80f, computePointerAccelerationMultiplier(Float.MAX_VALUE), 0.0001f)
+        assertEquals(1.0f, computePointerAccelerationMultiplier(Float.NaN), 0.0001f)
+        assertEquals(1.0f, computePointerAccelerationMultiplier(Float.POSITIVE_INFINITY), 0.0001f)
+    }
+
+    @Test
+    fun pointerBallisticsSeedsFirstPacketCoalescesSub1500UsAndIsVrrConsistent() {
+        val state = MutablePointerBallisticsState()
+        val density = 3f
+
+        // 1. First move seeds timestamp without spiking even on large initial displacement
+        val firstMul = state.onMove(dxPx = 60f, dyPx = 0f, eventTimeNs = 1_000_000_000L, density = density)
+        assertEquals(POINTER_ACCEL_MIN_MULTIPLIER, firstMul, 0.0001f)
+        assertEquals(0f, state.smoothedSpeedDpPerSec, 0.0001f)
+
+        // 2. Sub-1.5ms coalesced burst packets accumulate displacement without dividing by tiny dt
+        val burstMul = state.onMove(dxPx = 3.6f, dyPx = 0f, eventTimeNs = 1_000_800_000L, density = density)
+        assertEquals(firstMul, burstMul, 0.0001f)
+        assertEquals(3.6f, state.pendingDxPx, 0.0001f)
+
+        // 3. Packet crossing >= 1.5ms consumes accumulated displacement (3.6 + 3.6 = 7.2px = 2.4dp over 16ms = 150 dp/s)
+        state.onMove(dxPx = 3.6f, dyPx = 0f, eventTimeNs = 1_016_000_000L, density = density)
+        assertEquals(0f, state.pendingDxPx, 0.0001f)
+        assertTrue(state.smoothedSpeedDpPerSec > 0f)
+
+        // 4. VRR consistency: steady 300 dp/s finger motion at 60Hz vs 120Hz vs 240Hz converges to ~300 dp/s
+        fun simulateSteadyMotion(hz: Int): Float {
+            val s = MutablePointerBallisticsState()
+            val dtNs = 1_000_000_000L / hz
+            val stepPx = (300f * density) / hz
+            var t = 10_000_000_000L
+            s.onMove(0f, 0f, t, density)
+            repeat(hz / 2) {
+                t += dtNs
+                s.onMove(stepPx, 0f, t, density)
+            }
+            return s.multiplier
+        }
+        val m60 = simulateSteadyMotion(60)
+        val m120 = simulateSteadyMotion(120)
+        val m240 = simulateSteadyMotion(240)
+        assertEquals(m60, m120, 0.01f)
+        assertEquals(m120, m240, 0.01f)
+        assertTrue(m120 in 1.45f..1.52f)
+
+        state.reset()
+        assertEquals(0L, state.lastEventTimeNs)
+        assertEquals(POINTER_ACCEL_MIN_MULTIPLIER, state.multiplier, 0.0001f)
+    }
+
+    @Test
+    fun cursorLongPressChargeProgressAndScaleRampSmoothlyAfterDelay() {
+        assertEquals(0f, computeCursorLongPressChargeProgress(0L, 600L), 0.0001f)
+        assertEquals(0f, computeCursorLongPressChargeProgress(130L, 600L), 0.0001f)
+        assertEquals(CURSOR_PRESENCE_LIFT_SCALE, computeCursorLongPressChargeScale(0f), 0.0001f)
+
+        var prevProg = 0f
+        var prevScale = CURSOR_PRESENCE_LIFT_SCALE
+        for (ms in 150L..600L step 50L) {
+            val prog = computeCursorLongPressChargeProgress(ms, 600L)
+            val scale = computeCursorLongPressChargeScale(prog)
+            assertTrue("Charge progress should increase at $ms ms", prog > prevProg)
+            assertTrue("Charge scale should contract at $ms ms", scale < prevScale)
+            assertTrue(scale in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
+            prevProg = prog
+            prevScale = scale
+        }
+
+        assertEquals(1f, computeCursorLongPressChargeProgress(600L, 600L), 0.0001f)
+        assertEquals(1f, computeCursorLongPressChargeProgress(900L, 600L), 0.0001f)
+        assertEquals(CURSOR_LONG_PRESS_CHARGE_MIN_SCALE, computeCursorLongPressChargeScale(1f), 0.0001f)
+        assertEquals(0f, computeCursorLongPressChargeProgress(200L, 100L), 0.0001f)
+    }
+
+    @Test
+    fun cursorVelocityBankEdgePushAndBlockedShakeStayWithinEnvelope() {
+        // Deadzone keeps slow micro-aiming completely upright
+        assertEquals(0f, computeCursorVelocityBankDeg(0f), 0.0001f)
+        assertEquals(0f, computeCursorVelocityBankDeg(55f), 0.0001f)
+        assertEquals(0f, computeCursorVelocityBankDeg(-55f), 0.0001f)
+
+        // Symmetric bounded bank within ±5.0°
+        val bankRight = computeCursorVelocityBankDeg(450f)
+        val bankLeft = computeCursorVelocityBankDeg(-450f)
+        assertTrue(bankRight in 1f..CURSOR_DYNAMICS_MAX_BANK_DEG)
+        assertEquals(-bankRight, bankLeft, 0.0001f)
+        assertTrue(kotlin.math.abs(computeCursorVelocityBankDeg(5000f)) <= CURSOR_DYNAMICS_MAX_BANK_DEG)
+
+        // Edge push is 0 unless actively pushing outward past min/max boundary
+        assertEquals(0f, computeCursorEdgePushAmount(100f, 1079f, -10f, 3f), 0.0001f)
+        assertEquals(0f, computeCursorEdgePushAmount(-5f, 1079f, 5f, 3f), 0.0001f) // moving back inside
+        assertEquals(0f, computeCursorEdgePushAmount(0f, 1079f, 0f, 3f), 0.0001f)  // sliding parallel
+        val pushLeft = computeCursorEdgePushAmount(-12f, 1079f, -12f, 3f)
+        val pushRight = computeCursorEdgePushAmount(1091f, 1079f, 12f, 3f)
+        assertTrue(pushLeft in 0.1f..1f)
+        assertEquals(pushLeft, pushRight, 0.0001f)
+
+        // Blocked shake starts at 0, oscillates strictly inside ±5.5°, returns to 0 after duration
+        assertEquals(0f, computeCursorBlockedShakeDeg(0f), 0.0001f)
+        var maxShake = 0f
+        for (i in 1..21) {
+            val deg = computeCursorBlockedShakeDeg(i * 0.01f)
+            assertTrue(kotlin.math.abs(deg) <= CURSOR_DYNAMICS_MAX_ANGLE_DEG)
+            maxShake = maxOf(maxShake, kotlin.math.abs(deg))
+        }
+        assertTrue(maxShake > 2f)
+        assertEquals(0f, computeCursorBlockedShakeDeg(CURSOR_BLOCKED_SHAKE_DURATION_SEC), 0.0001f)
+    }
+
+    @Test
+    fun cursorDynamicsSpringClickPeckLatchAndShakeRespectEnvelopeAndSettle() {
+        val state = MutableCursorDynamicsState()
+
+        // 1. Click peck dips crisply near 0.84f then settles back to 1.0f within [0.83, 1.05]
+        state.triggerClickPeck()
+        var minScaleSeen = 1f
+        var maxScaleSeen = 1f
+        repeat(60) {
+            stepCursorDynamicsInPlace(state, targetScale = 1f, targetBankDeg = 0f, targetSquishX = 0f, targetSquishY = 0f, dtSec = 1f / 120f)
+            minScaleSeen = minOf(minScaleSeen, state.renderScaleX)
+            maxScaleSeen = maxOf(maxScaleSeen, state.renderScaleX)
+            assertTrue(state.renderScaleX in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
+            assertTrue(state.renderScaleY in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
+        }
+        assertTrue("Click peck should dip near 0.84f (actual $minScaleSeen)", minScaleSeen in 0.83f..0.86f)
+        assertTrue("Click peck should rebound gently (max $maxScaleSeen)", maxScaleSeen in 1.00f..1.05f)
+        repeat(60) {
+            stepCursorDynamicsInPlace(state, targetScale = 1f, targetBankDeg = 0f, targetSquishX = 0f, targetSquishY = 0f, dtSec = 1f / 120f)
+        }
+        assertTrue(state.isSettled(1f, 0f, 0f, 0f))
+
+        // 2. Latch pop from charged 0.87f pops outward then settles at 0.94f grip scale
+        state.snapTo(CURSOR_LONG_PRESS_CHARGE_MIN_SCALE, 0f, 0f, 0f)
+        state.triggerLatchPop(fromCharge = true)
+        var peakLatch = 0f
+        repeat(80) {
+            stepCursorDynamicsInPlace(state, targetScale = CURSOR_ARMED_GRIP_SCALE, targetBankDeg = 0f, targetSquishX = 0f, targetSquishY = 0f, dtSec = 1f / 120f)
+            peakLatch = maxOf(peakLatch, state.renderScaleX)
+            assertTrue(state.renderScaleX in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
+        }
+        assertTrue("Latch pop should overshoot grip 0.94f (peak $peakLatch)", peakLatch > CURSOR_ARMED_GRIP_SCALE + 0.02f)
+        assertTrue(state.isSettled(CURSOR_ARMED_GRIP_SCALE, 0f, 0f, 0f))
+
+        // 3. Combined max bank + blocked shake + squish never breaches envelope bounds and settles completely
+        state.snapTo(CURSOR_PRESENCE_LIFT_SCALE, CURSOR_DYNAMICS_MAX_BANK_DEG, 1f, 1f)
+        state.triggerBlockedShake()
+        repeat(80) {
+            stepCursorDynamicsInPlace(state, targetScale = 1f, targetBankDeg = 0f, targetSquishX = 0f, targetSquishY = 0f, dtSec = 1f / 120f)
+            assertTrue(state.renderScaleX in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
+            assertTrue(state.renderScaleY in CURSOR_DYNAMICS_MIN_SCALE..CURSOR_DYNAMICS_MAX_SCALE)
+            assertTrue(kotlin.math.abs(state.renderAngleDeg) <= CURSOR_DYNAMICS_MAX_ANGLE_DEG)
+        }
+        assertTrue(state.isSettled(1f, 0f, 0f, 0f))
+    }
+
+    @Test
+    fun edgeHapticTrackerEnforces14DpHysteresisAnd180MsCooldownPerAxis() {
+        val tracker = CursorEdgeHapticTracker()
+        val density = 3f // 14dp = 42px
+        val maxX = 1079f
+        val maxY = 1919f
+
+        tracker.syncInitialPosition(500f, 900f, maxX, maxY)
+
+        // 1. First hit on left edge triggers CURSOR_EDGE_LEFT
+        assertEquals(CURSOR_EDGE_LEFT, tracker.onCursorMoved(0f, 900f, maxX, maxY, density, nowMs = 1000L))
+
+        // 2. Sliding vertically along left edge does not re-trigger even well after 180ms
+        assertEquals(CURSOR_EDGE_NONE, tracker.onCursorMoved(0f, 600f, maxX, maxY, density, nowMs = 1500L))
+        assertEquals(CURSOR_EDGE_NONE, tracker.onCursorMoved(0f, 300f, maxX, maxY, density, nowMs = 2000L))
+
+        // 3. Moving away < 14dp (e.g., 30px < 42px) and back to edge does NOT re-arm or trigger
+        assertEquals(CURSOR_EDGE_NONE, tracker.onCursorMoved(30f, 300f, maxX, maxY, density, nowMs = 2100L))
+        assertEquals(CURSOR_EDGE_NONE, tracker.onCursorMoved(0f, 300f, maxX, maxY, density, nowMs = 2300L))
+
+        // 4. Moving >= 14dp (50px >= 42px) then hitting edge BEFORE 180ms cooldown still suppresses buzz
+        assertEquals(CURSOR_EDGE_LEFT, tracker.onCursorMoved(0f, 300f, maxX, maxY, density, nowMs = 2300L).let {
+            // Re-arm properly first after waiting >= 180ms since 1000L -> wait, 2300L didn't trigger because leftArmed was false!
+            // Now move to 50px at 2400L (re-arms), hit left at 2500L (triggers), then quickly bounce to 50px and back within 180ms:
+            tracker.onCursorMoved(50f, 300f, maxX, maxY, density, nowMs = 2400L)
+            tracker.onCursorMoved(0f, 300f, maxX, maxY, density, nowMs = 2500L)
+        })
+        assertEquals(CURSOR_EDGE_NONE, tracker.onCursorMoved(50f, 300f, maxX, maxY, density, nowMs = 2550L))
+        assertEquals(CURSOR_EDGE_NONE, tracker.onCursorMoved(0f, 300f, maxX, maxY, density, nowMs = 2600L)) // only 100ms < 180ms
+
+        // 5. After leaving >= 14dp AND >= 180ms since last trigger (2500L), hitting edge re-triggers
+        assertEquals(CURSOR_EDGE_NONE, tracker.onCursorMoved(50f, 300f, maxX, maxY, density, nowMs = 2620L))
+        assertEquals(CURSOR_EDGE_LEFT, tracker.onCursorMoved(0f, 300f, maxX, maxY, density, nowMs = 2700L))
+
+        // 6. Y-axis triggers independently right after X-axis trigger
+        assertEquals(CURSOR_EDGE_TOP, tracker.onCursorMoved(0f, 0f, maxX, maxY, density, nowMs = 2710L))
+
+        // 7. Starting touch while already at right/bottom edge suppresses initial false tick
+        tracker.syncInitialPosition(maxX, maxY, maxX, maxY)
+        assertEquals(CURSOR_EDGE_NONE, tracker.onCursorMoved(maxX, maxY, maxX, maxY, density, nowMs = 3000L))
+    }
 }
+
 

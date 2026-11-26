@@ -201,6 +201,12 @@ class TouchpadService : AccessibilityService() {
         if (screenW != oldW || screenH != oldH) {
             cursorX = clampGestureCoord(cursorX, screenW)
             cursorY = clampGestureCoord(cursorY, screenH)
+            edgeHapticTracker.syncInitialPosition(
+                cursorX,
+                cursorY,
+                (screenW - 1).coerceAtLeast(0).toFloat(),
+                (screenH - 1).coerceAtLeast(0).toFloat(),
+            )
             if (rebuildNow && !shouldDeferRebuildNow()) {
                 pendingBoundsRebuild = false
                 main.removeCallbacks(flushBoundsRebuildRunnable)
@@ -243,6 +249,7 @@ class TouchpadService : AccessibilityService() {
         cachedPadEdgeDeadZoneDp = prefs.padEdgeDeadZoneDp
         cachedLongPressMs = prefs.longPressMs
         cachedHaptics = prefs.haptics
+        (cursorView as? CursorArrowView)?.dynamicsEnabled = cachedPressFeedback
     }
 
     private val panelTouchableRegion = Region()
@@ -604,6 +611,9 @@ class TouchpadService : AccessibilityService() {
     private var customSwipeEndX = 0f
     private var customSwipeEndY = 0f
     private val swipeVelocityTracker = SwipeVelocityTracker()
+    private val pointerBallistics = MutablePointerBallisticsState()
+    private val edgeHapticTracker = CursorEdgeHapticTracker()
+    private var lastRejectHapticMs = -1000L
 
     // 拖拽锁定：第一次按记下起点，之后正常移动光标，第二次按一次性注入「按住→拖到终点→松开」。
     // 不在两次按键之间保持注入的手指按下：真实手指一碰屏幕，系统就会取消正在注入的手势，
@@ -814,7 +824,8 @@ class TouchpadService : AccessibilityService() {
                 moveTouchRing(cursorX, cursorY, immediate = true)
                 touchRing?.pressUntilRelease()
             }
-            haptic()
+            (cursorView as? CursorArrowView)?.onLongPressLatched()
+            hapticLatch()
         }
     }
 
@@ -878,6 +889,9 @@ class TouchpadService : AccessibilityService() {
         removeTouchRing()
         cancelTransitions(immediate = true)
         removePanel(immediate = true)
+        pointerBallistics.reset()
+        edgeHapticTracker.reset()
+        (cursorView as? CursorArrowView)?.resetDynamics()
         cursorView?.let { v ->
             runCatching { wm.removeViewImmediate(v) }.onFailure { runCatching { wm.removeView(v) } }
         }
@@ -943,6 +957,9 @@ class TouchpadService : AccessibilityService() {
         ballSnapAnimator = null
         stopPanelDeformation(resetVisuals = true)
         resetBallDeformation(animated = false)
+        pointerBallistics.reset()
+        edgeHapticTracker.reset()
+        (cursorView as? CursorArrowView)?.resetDynamics()
         customSwipeArmed = false
         // 息屏时清空挂起/未完结的手势派发，防止系统息屏吞掉 GestureResultCallback 导致亮屏后永久死锁或卡在不可触摸态
         resetGestureDispatchState(clearQueue = true)
@@ -1477,6 +1494,8 @@ class TouchpadService : AccessibilityService() {
         val v = CursorArrowView(this).apply {
             pointerColor = prefs.cursorColor
             alpha = prefs.cursorOpacityPercent.coerceIn(10, 100) / 100f
+            dynamicsEnabled = cachedPressFeedback
+            setDragArmed(dragging, triggerPop = false)
         }
         cursorParams = WindowManager.LayoutParams(
             size, size,
@@ -1522,6 +1541,8 @@ class TouchpadService : AccessibilityService() {
         }
         if (prefs.minimized) {
             // 最小化悬浮球态不需要光标：切为 GONE 释放窗口 Surface 并安全丢弃预渲染位图引用
+            pointerBallistics.reset()
+            (cursorView as? CursorArrowView)?.resetDynamics()
             cursorView?.visibility = View.GONE
             (cursorView as? CursorArrowView)?.releaseCachedBitmap()
             addMiniDot()
@@ -2521,6 +2542,8 @@ class TouchpadService : AccessibilityService() {
         padTouchIgnored = false
         main.removeCallbacks(longPressRunnable)
         swipeVelocityTracker.reset()
+        pointerBallistics.reset()
+        (cursorView as? CursorArrowView)?.onPadTouchUp()
         if (customSwipeArmed) touchRing?.release()
         customSwipeArmed = false
         if (wasCustomSwipeArmed) {
@@ -2598,6 +2621,7 @@ class TouchpadService : AccessibilityService() {
         }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                val eventTimeNs = motionEventTimeNs(e)
                 padFingerDown = true
                 if (cachedPressFeedback) {
                     padArea?.let { pad ->
@@ -2606,7 +2630,7 @@ class TouchpadService : AccessibilityService() {
                 }
                 downRawX = e.rawX; downRawY = e.rawY
                 lastRawX = e.rawX; lastRawY = e.rawY
-                downTime = System.currentTimeMillis()
+                downTime = eventTimeNs / 1_000_000L
                 moved = false; longPressFired = false
                 customSwipeArmed = false
                 customSwipeStartX = cursorX
@@ -2614,6 +2638,14 @@ class TouchpadService : AccessibilityService() {
                 customSwipeEndX = cursorX
                 customSwipeEndY = cursorY
                 swipeVelocityTracker.reset()
+                pointerBallistics.reset()
+                edgeHapticTracker.syncInitialPosition(
+                    cursorX,
+                    cursorY,
+                    (screenW - 1).coerceAtLeast(0).toFloat(),
+                    (screenH - 1).coerceAtLeast(0).toFloat(),
+                )
+                (cursorView as? CursorArrowView)?.onPadTouchDown(eventTimeNs, cachedLongPressMs.toLong())
                 main.removeCallbacks(longPressRunnable)
                 // 拖拽锁定期间触控板只移动光标，不点击、不长按
                 if (!dragging) {
@@ -2625,9 +2657,11 @@ class TouchpadService : AccessibilityService() {
 
             MotionEvent.ACTION_MOVE -> {
                 if (!padFingerDown) return
+                val eventTimeNs = motionEventTimeNs(e)
+                val density = resources.displayMetrics.density
                 if (cachedPressFeedback) {
                     padArea?.let { pad ->
-                        PressFeedback.applyPadMove(pad, normX, normY, resources.displayMetrics.density)
+                        PressFeedback.applyPadMove(pad, normX, normY, density)
                     }
                 }
                 val dx = e.rawX - lastRawX
@@ -2637,15 +2671,38 @@ class TouchpadService : AccessibilityService() {
                     if (!moved) {
                         moved = true
                         main.removeCallbacks(longPressRunnable)
+                        (cursorView as? CursorArrowView)?.onPadMovedPastSlop()
                     }
                 }
-                cursorX = clampGestureCoord(cursorX + dx * cachedSensitivity, screenW)
-                cursorY = clampGestureCoord(cursorY + dy * cachedSensitivity, screenH)
+                val accel = pointerBallistics.onMove(dx, dy, eventTimeNs, density)
+                val effectiveGain = cachedSensitivity * accel
+                val stepX = dx * effectiveGain
+                val stepY = dy * effectiveGain
+                val rawNextX = cursorX + stepX
+                val rawNextY = cursorY + stepY
+                cursorX = clampGestureCoord(rawNextX, screenW)
+                cursorY = clampGestureCoord(rawNextY, screenH)
                 updateCursor()
+
+                val maxCursorX = (screenW - 1).coerceAtLeast(0).toFloat()
+                val maxCursorY = (screenH - 1).coerceAtLeast(0).toFloat()
+                val eventTimeMs = eventTimeNs / 1_000_000L
+                if (edgeHapticTracker.onCursorMoved(cursorX, cursorY, maxCursorX, maxCursorY, density, eventTimeMs) != CURSOR_EDGE_NONE) {
+                    hapticEdgeTick()
+                }
+                val pushX = computeCursorEdgePushAmount(rawNextX, maxCursorX, stepX, density)
+                val pushY = computeCursorEdgePushAmount(rawNextY, maxCursorY, stepY, density)
+                (cursorView as? CursorArrowView)?.onCursorMotion(
+                    vxDpPerSec = pointerBallistics.smoothedVxDpPerSec,
+                    edgePushX = pushX,
+                    edgePushY = pushY,
+                    eventTimeNs = eventTimeNs,
+                )
+
                 if (customSwipeArmed) {
                     customSwipeEndX = cursorX
                     customSwipeEndY = cursorY
-                    swipeVelocityTracker.addMovement(SystemClock.uptimeMillis(), cursorX, cursorY)
+                    swipeVelocityTracker.addMovement(eventTimeMs, cursorX, cursorY)
                     if (cachedTouchRingEnabled) {
                         moveTouchRing(cursorX, cursorY)
                     }
@@ -2656,6 +2713,8 @@ class TouchpadService : AccessibilityService() {
             }
 
             MotionEvent.ACTION_UP -> {
+                val eventTimeNs = motionEventTimeNs(e)
+                val eventTimeMs = eventTimeNs / 1_000_000L
                 val wasDown = padFingerDown
                 val wasCustomSwipeArmed = customSwipeArmed
                 padFingerDown = false
@@ -2666,11 +2725,13 @@ class TouchpadService : AccessibilityService() {
                 }
                 main.removeCallbacks(longPressRunnable)
                 val (vx, vy) = if (customSwipeArmed) {
-                    swipeVelocityTracker.computeVelocity(SystemClock.uptimeMillis())
+                    swipeVelocityTracker.computeVelocity(eventTimeMs)
                 } else {
                     0f to 0f
                 }
                 swipeVelocityTracker.reset()
+                pointerBallistics.reset()
+                (cursorView as? CursorArrowView)?.onPadTouchUp()
                 if (!wasDown) {
                     customSwipeArmed = false
                     if (wasCustomSwipeArmed) scheduleTouchableRegionUpdate()
@@ -2713,6 +2774,7 @@ class TouchpadService : AccessibilityService() {
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                motionEventTimeNs(e)
                 cancelPadTouchState()
                 flushCancelledTapsIfIdle()
                 flushPendingBoundsRebuild()
@@ -3450,7 +3512,7 @@ class TouchpadService : AccessibilityService() {
                     )
                     snapBallBackToAnchor()
                     if (act != PadAction.NONE) {
-                        haptic()
+                        if (act != PadAction.DRAG_LOCK) haptic()
                         performAction(act, withHaptic = false)
                     }
                 } else if (
@@ -3469,7 +3531,7 @@ class TouchpadService : AccessibilityService() {
                     snapBallBackToAnchor()
                     val doubleAction = prefs.ballActionDoubleTap
                     if (doubleAction != PadAction.NONE) {
-                        haptic()
+                        if (doubleAction != PadAction.DRAG_LOCK) haptic()
                         performAction(doubleAction, withHaptic = false)
                     }
                 } else if (!ballMoved) {
@@ -3480,7 +3542,7 @@ class TouchpadService : AccessibilityService() {
                         // 未开启双击功能：单击完全零延迟，立即震动并触发动作
                         val act = prefs.ballActionSingleTap
                         if (act != PadAction.NONE) {
-                            haptic()
+                            if (act != PadAction.DRAG_LOCK) haptic()
                             performAction(act, withHaptic = false)
                         }
                     } else {
@@ -3727,6 +3789,14 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
+    private fun handleGestureCancelled(item: QueuedGesture) {
+        recordCancelledTapIfNeeded(item)
+        if (!cleanedUp && !isUserTouchingOverlay()) {
+            (cursorView as? CursorArrowView)?.triggerBlockedShake()
+            hapticReject()
+        }
+    }
+
     private fun drainGestureQueue() {
         if (isDispatching) return
         val item = gestureQueue.removeFirstOrNull() ?: run {
@@ -3801,7 +3871,7 @@ class TouchpadService : AccessibilityService() {
                             cancelGestureWatchdog()
                             activeGestureItem = null
                             isDispatching = false
-                            recordCancelledTapIfNeeded(item)
+                            handleGestureCancelled(item)
                             if (gestureQueue.isNotEmpty()) {
                                 drainGestureQueue()
                             } else {
@@ -3904,7 +3974,7 @@ class TouchpadService : AccessibilityService() {
                             setOverlayTouchable(true)
                             activeGestureItem = null
                             isDispatching = false
-                            recordCancelledTapIfNeeded(item)
+                            handleGestureCancelled(item)
                             drainGestureQueue()
                         }
                     }, main)
@@ -3950,7 +4020,7 @@ class TouchpadService : AccessibilityService() {
                         cancelGestureWatchdog()
                         activeGestureItem = null
                         isDispatching = false
-                        recordCancelledTapIfNeeded(item)
+                        handleGestureCancelled(item)
                         drainGestureQueue()
                     }
                 }, main)
@@ -4005,6 +4075,9 @@ class TouchpadService : AccessibilityService() {
     private fun tapAt(x: Float, y: Float, ms: Long = TAP_STROKE_DURATION_MS, showFeedbackRing: Boolean = true) {
         val sx = clampGestureCoord(x, screenW)
         val sy = clampGestureCoord(y, screenH)
+        if (ms == TAP_STROKE_DURATION_MS) {
+            (cursorView as? CursorArrowView)?.triggerClickPeck()
+        }
         if (showFeedbackRing) showTouchRing(sx, sy, ms)
         if (ms == TAP_STROKE_DURATION_MS && !isUserTouchingOverlay() && cancelledTapTracker.size > 0) {
             val count = cancelledTapTracker.drainForCoalescedTapInto(
@@ -4086,7 +4159,7 @@ class TouchpadService : AccessibilityService() {
             startPoints = floatArrayOf(plan.startX, plan.startY),
             expectedMs = plan.durationMs,
         )
-        haptic()
+        hapticRelease()
     }
 
     private fun swipeBy(dx: Float, dy: Float, ms: Long) {
@@ -4116,6 +4189,8 @@ class TouchpadService : AccessibilityService() {
         if (cachedTouchRingEnabled) {
             showTouchRing(cursorX, cursorY, 180)
         }
+        (cursorView as? CursorArrowView)?.setDragArmed(true, triggerPop = true)
+        hapticLatch()
         refreshDragButtons()
     }
 
@@ -4123,6 +4198,7 @@ class TouchpadService : AccessibilityService() {
     private fun cancelDrag() {
         dragging = false
         dragTrail.clear()
+        (cursorView as? CursorArrowView)?.setDragArmed(false)
         scheduleTouchableRegionUpdate()
         touchRing?.release()
         refreshDragButtons()
@@ -4140,6 +4216,7 @@ class TouchpadService : AccessibilityService() {
             showTouchRing(cursorX, cursorY, 180)
         }
         cancelDrag()
+        hapticRelease()
         val start = trail.firstOrNull() ?: return
         // 没移动就再按一次 = 取消
         if (trailLength(trail) < dp(8)) return
@@ -4360,7 +4437,7 @@ class TouchpadService : AccessibilityService() {
             PadAction.MOVE_PANEL, PadAction.RESIZE_PANEL, PadAction.MOVE_BALL -> Unit
             PadAction.NONE -> Unit
         }
-        if (withHaptic) {
+        if (withHaptic && action != PadAction.DRAG_LOCK) {
             haptic()
         }
     }
@@ -4501,15 +4578,54 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
-    private fun haptic(view: View? = null) {
+    private fun performHapticConstant(constant: Int, view: View? = null) {
         if (!cachedHaptics) return
         runCatching {
             (view ?: miniBallView ?: padArea ?: panel)?.performHapticFeedback(
-                android.view.HapticFeedbackConstants.VIRTUAL_KEY,
+                constant,
                 @Suppress("DEPRECATION")
                 android.view.HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
             )
         }
+    }
+
+    private fun haptic(view: View? = null) {
+        performHapticConstant(android.view.HapticFeedbackConstants.VIRTUAL_KEY, view)
+    }
+
+    private fun hapticEdgeTick() {
+        performHapticConstant(android.view.HapticFeedbackConstants.CLOCK_TICK, padArea ?: panel)
+    }
+
+    private fun hapticLatch(view: View? = null) {
+        val constant = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.HapticFeedbackConstants.CONFIRM
+        } else {
+            android.view.HapticFeedbackConstants.LONG_PRESS
+        }
+        performHapticConstant(constant, view)
+    }
+
+    private fun hapticRelease(view: View? = null) {
+        val constant = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.HapticFeedbackConstants.GESTURE_END
+        } else {
+            android.view.HapticFeedbackConstants.KEYBOARD_TAP
+        }
+        performHapticConstant(constant, view)
+    }
+
+    private fun hapticReject() {
+        if (!cachedHaptics) return
+        val nowMs = SystemClock.uptimeMillis()
+        if (lastRejectHapticMs >= 0L && nowMs - lastRejectHapticMs < 180L) return
+        lastRejectHapticMs = nowMs
+        val constant = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.HapticFeedbackConstants.REJECT
+        } else {
+            android.view.HapticFeedbackConstants.KEYBOARD_TAP
+        }
+        performHapticConstant(constant)
     }
 
     private fun toast(msg: String) {
