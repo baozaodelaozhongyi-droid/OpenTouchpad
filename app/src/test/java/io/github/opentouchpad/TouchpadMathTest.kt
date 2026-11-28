@@ -688,6 +688,23 @@ class TouchpadMathTest {
     }
 
     @Test
+    fun actionPickerDimensionsMatchCardProportionsAcrossOrientations() {
+        // 常规竖屏手机（360dp 宽 / 800dp 高 @ 3x）
+        assertEquals(972, computeActionPickerDialogWidth(screenWidthPx = 1080, density = 3f))
+        val portraitListH = computeActionPickerMaxListHeight(screenHeightPx = 2400, density = 3f)
+        assertTrue("Portrait list max height should stay spacious (actual $portraitListH)", portraitListH in 1480..1600)
+
+        // 大屏/横屏宽度封顶 420dp，列表高度自适应矮屏保证顶底栏不溢出
+        assertEquals(1260, computeActionPickerDialogWidth(screenWidthPx = 2400, density = 3f))
+        val landscapeListH = computeActionPickerMaxListHeight(screenHeightPx = 1080, density = 3f)
+        assertTrue("Landscape list max height should stay usable (actual $landscapeListH)", landscapeListH in 360..480)
+
+        // 零尺寸安全兜底
+        assertEquals(0, computeActionPickerDialogWidth(screenWidthPx = 0, density = 3f))
+        assertEquals(0, computeActionPickerMaxListHeight(screenHeightPx = 0, density = 3f))
+    }
+
+    @Test
     fun dragTrailSkipsTinyStepsAndStaysBounded() {
         val trail = mutableListOf<TrailPoint>()
         appendTrailPoint(trail, 0f, 0f, 4f)

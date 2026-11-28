@@ -446,6 +446,30 @@ internal fun controlHeightRange(screenHeight: Int, density: Float): IntRange {
     return minPx.coerceAtMost(maxPx)..maxPx
 }
 
+/**
+ * 动作选择弹窗宽度：竖屏约占 90% 屏宽，大屏/横屏封顶 420dp，与设置页卡片比例统一。
+ */
+internal fun computeActionPickerDialogWidth(screenWidthPx: Int, density: Float): Int {
+    if (screenWidthPx <= 0) return 0
+    val safeDensity = density.coerceAtLeast(1f)
+    val maxW = (420f * safeDensity).roundToInt()
+    return minOf((screenWidthPx * 0.90f).roundToInt(), maxW).coerceAtLeast(1)
+}
+
+/**
+ * 动作选择弹窗列表区最大高度：在保留顶部标题栏与底部取消栏的前提下维持充裕浏览高度，
+ * 列表较短时自动包裹收缩。
+ */
+internal fun computeActionPickerMaxListHeight(screenHeightPx: Int, density: Float): Int {
+    if (screenHeightPx <= 0) return 0
+    val safeDensity = density.coerceAtLeast(1f)
+    val chromePx = (160f * safeDensity).roundToInt()
+    val available = (screenHeightPx * 0.84f).roundToInt() - chromePx
+    val minList = (120f * safeDensity).roundToInt()
+    val hardMax = (screenHeightPx * 0.72f).roundToInt().coerceAtLeast(1)
+    return available.coerceIn(minOf(minList, hardMax), hardMax)
+}
+
 internal data class TrailPoint(val x: Float, val y: Float)
 
 /** 记录拖拽轨迹：离上一个点超过 [minStepPx] 才追加，点数超过上限时隔一个删一个（保留首尾）。 */
