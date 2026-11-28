@@ -2532,6 +2532,7 @@ class TouchpadService : AccessibilityService() {
             accentColor = accent,
             anchorBottom = true,
             maxHeightPx = maxHeightPx,
+            allowOverlayAbove = true,
         ) { picked ->
             val list = replaceSlot(prefs.buttons, slot, picked, prefs.buttonCount)
             if (list == null) {
@@ -2539,14 +2540,62 @@ class TouchpadService : AccessibilityService() {
                 return@build
             }
             prefs.buttons = list
-            buildPanel()
+            if (shouldDeferRebuildNow()) {
+                pendingBoundsRebuild = true
+            } else {
+                buildPanel()
+            }
         }
         dialog.setOnDismissListener {
             if (activeDialog === dialog) activeDialog = null
         }
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
         activeDialog = dialog
-        runCatching { dialog.show() }.onFailure { activeDialog = null }
+        val shown = runCatching { dialog.show() }.isSuccess
+        if (shown) {
+            dialog.window?.clearFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+            raiseOverlaysAboveDialog()
+        } else {
+            activeDialog = null
+        }
+    }
+
+    /**
+     * 将悬浮触控板面板与光标提升至长按自定义菜单之上，
+     * 弹窗期间触控板与光标保持清晰可见且可直接操作（移动光标、点选/滚动选项、拖动面板）。
+     */
+    private fun raiseOverlaysAboveDialog() {
+        val p = panel
+        val lp = panelParams
+        if (p != null && lp != null && isFullPanelVisible()) {
+            stopPanelDeformation(resetVisuals = true)
+            pendingPanelLayout = false
+            passThroughSynced = false
+            isPassThroughActive = false
+            resetPinholeRegionState()
+            if (p.isAttachedToWindow) {
+                runCatching { wm.removeViewImmediate(p) }.onFailure { runCatching { wm.removeView(p) } }
+            }
+            if (runCatching { wm.addView(p, lp) }.isSuccess) {
+                p.post {
+                    if (panel === p) {
+                        flushPanelTouchableRegionNow()
+                    }
+                }
+            }
+        }
+        val cv = cursorView
+        val cp = cursorParams
+        if (cv != null && cp != null && cv.visibility == View.VISIBLE) {
+            pendingCursorLayout = false
+            if (cv.isAttachedToWindow) {
+                runCatching { wm.removeViewImmediate(cv) }.onFailure { runCatching { wm.removeView(cv) } }
+            }
+            runCatching { wm.addView(cv, cp) }
+        }
+        if (touchRing != null) {
+            touchRingNeedsRaise = true
+        }
     }
 
     // ───────────────────────── 触控板手势 ─────────────────────────
