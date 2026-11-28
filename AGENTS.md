@@ -46,10 +46,10 @@
 
 ## Release Workflow
 1. Update `versionCode` and `versionName` in `app/build.gradle.kts`.
-2. Add `CHANGELOG-v<version>.md` at the repository root.
+2. Add `CHANGELOG/CHANGELOG-v<version>.md`.
 3. Do **not** run tests locally on `ser331458405279`: push `main` (or trigger `build.yml`) and wait for CI (`gradle --no-daemon test assembleRelease`) to go green with `gh run watch <id> --exit-status`.
 4. Commit changes, create tag `v<version>`, and push both `main` and the tag:
    ```bash
    git push origin main v<version>
    ```
-5. `.github/workflows/release.yml` automatically runs `gradle --no-daemon test assembleRelease`, signs the APK using repository secrets, renames it to `OpenTouchpad-v<version>.apk`, and publishes the GitHub Release using `CHANGELOG-v<version>.md`.
+5. `.github/workflows/release.yml` automatically runs `gradle --no-daemon test assembleRelease`, signs the APK using repository secrets, renames it to `OpenTouchpad-v<version>.apk`, and publishes the GitHub Release using `CHANGELOG/CHANGELOG-v<version>.md`.

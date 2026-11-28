@@ -79,7 +79,10 @@ jobs:
           TAG: ${{ steps.prep.outputs.tag }}
           APK_OUT: ${{ steps.prep.outputs.apk }}
         run: |
-          NOTES_FILE="CHANGELOG-${TAG}.md"
+          NOTES_FILE="CHANGELOG/CHANGELOG-${TAG}.md"
+          if [ ! -f "$NOTES_FILE" ] && [ -f "CHANGELOG-${TAG}.md" ]; then
+            NOTES_FILE="CHANGELOG-${TAG}.md"
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK_OUT" --clobber
             if [ -f "$NOTES_FILE" ]; then
