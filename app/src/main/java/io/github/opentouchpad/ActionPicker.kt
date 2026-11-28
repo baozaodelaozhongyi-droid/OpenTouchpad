@@ -27,6 +27,8 @@ internal object ActionPicker {
         titleRes: Int = R.string.pick_action,
         noneLabelRes: Int = R.string.act_none,
         accentColor: Int? = null,
+        anchorBottom: Boolean = false,
+        maxHeightPx: Int? = null,
         onPick: (PadAction) -> Unit
     ): AlertDialog {
         val themed = android.view.ContextThemeWrapper(context, if (dark) R.style.WarmDialog_Dark else R.style.WarmDialog)
@@ -112,8 +114,42 @@ internal object ActionPicker {
             .setNegativeButton(android.R.string.cancel, null)
             .create()
 
+        val bottomMarginPx = dp(12)
+        if (anchorBottom) {
+            dialog.window?.let { win ->
+                val lp = win.attributes
+                lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                lp.y = bottomMarginPx
+                win.attributes = lp
+            }
+        }
+
         dialog.setOnShowListener {
             dialog.getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(accent)
+            if (anchorBottom) {
+                dialog.window?.let { win ->
+                    val lp = win.attributes
+                    lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    lp.y = bottomMarginPx
+                    val limitH = maxHeightPx?.takeIf { it > 0 }
+                    if (limitH != null) {
+                        val estimatedContentH = dp(128) + effectiveActions.size * dp(56)
+                        if (estimatedContentH > limitH) {
+                            lp.height = limitH
+                        }
+                    }
+                    win.attributes = lp
+                    if (limitH != null) {
+                        win.decorView.post {
+                            if (dialog.isShowing && win.decorView.height > limitH) {
+                                val cur = win.attributes
+                                cur.height = limitH
+                                win.attributes = cur
+                            }
+                        }
+                    }
+                }
+            }
             dialog.listView?.apply {
                 clipToPadding = false
                 setPadding(0, dp(6), 0, dp(6))

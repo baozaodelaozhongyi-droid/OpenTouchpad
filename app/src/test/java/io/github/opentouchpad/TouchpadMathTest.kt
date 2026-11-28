@@ -105,9 +105,9 @@ class TouchpadMathTest {
 
     @Test
     fun customSwipeUsesIndependentControlSizeBounds() {
-        assertEquals(330..1080, controlWidthRange(screenWidth = 1080, density = 3f))
-        assertEquals(330..1920, controlHeightRange(screenHeight = 1920, density = 3f))
-        assertEquals(110..240, controlWidthRange(screenWidth = 240, density = 1f))
+        assertEquals(216..1080, controlWidthRange(screenWidth = 1080, density = 3f))
+        assertEquals(216..1920, controlHeightRange(screenHeight = 1920, density = 3f))
+        assertEquals(72..240, controlWidthRange(screenWidth = 240, density = 1f))
     }
 
     @Test
@@ -152,8 +152,10 @@ class TouchpadMathTest {
 
     @Test
     fun panelWidthCanShrinkToCompactAccessibilityLayout() {
-        assertEquals(110, PANEL_MIN_WIDTH_DP)
+        assertEquals(72, PANEL_MIN_WIDTH_DP)
+        assertEquals(72, CONTROL_MIN_SIZE_DP)
         assertEquals(120, resizePanelWidth(startPx = 420, deltaX = -300, minPx = PANEL_MIN_WIDTH_DP, maxPx = 720))
+        assertEquals(72, resizePanelWidth(startPx = 420, deltaX = -400, minPx = PANEL_MIN_WIDTH_DP, maxPx = 720))
         assertEquals(720, resizePanelWidth(startPx = 420, deltaX = 500, minPx = PANEL_MIN_WIDTH_DP, maxPx = 720))
     }
 
@@ -639,6 +641,68 @@ class TouchpadMathTest {
         val edgeCount = 16 / 4
         assertEquals(9, hi.slots[1].x - (hi.slots[0].x + hi.slots[0].w))
         assertEquals(9, hi.slots[2 * edgeCount + 1].y - (hi.slots[2 * edgeCount].y + hi.slots[2 * edgeCount].h))
+    }
+
+    @Test
+    fun largeButtonSpacingNeverClipsOrOverlapsAtAnyWidthAndLayoutMode() {
+        val widthsDp = listOf(PANEL_MIN_WIDTH_DP, 84, 110, 130, 168, 220)
+        val spacingsDp = listOf(0, 3, 8, 11, 16, BUTTON_SPACING_MAX_DP)
+        val densities = listOf(1f, 2f, 3f)
+        val modes = listOf(4, 8, 12, 16, 18)
+
+        for (density in densities) {
+            for (widthDp in widthsDp) {
+                val widthPx = (widthDp * density).toInt()
+                for (spacingDp in spacingsDp) {
+                    val spacingPx = (spacingDp * density).toInt()
+                    for (count in modes) {
+                        val heightPx = controlGridHeight(widthPx, density, spacingPx, count)
+                        val layout = computeControlLayout(widthPx, heightPx, density, spacingPx, count)
+                        val allRects = layout.slots + layout.pad
+
+                        assertEquals(count, layout.slots.size)
+                        assertTrue("pad must be positive for w=$widthDp gap=$spacingDp mode=$count", layout.pad.w > 0 && layout.pad.h > 0)
+                        for (rect in allRects) {
+                            assertTrue("rect $rect must have positive size (w=$widthDp gap=$spacingDp mode=$count)", rect.w > 0 && rect.h > 0)
+                            assertTrue("rect $rect left out of bounds [0, $widthPx]", rect.x >= 0)
+                            assertTrue("rect $rect right ${rect.x + rect.w} clipped past $widthPx (w=$widthDp gap=$spacingDp mode=$count)", rect.x + rect.w <= widthPx)
+                            assertTrue("rect $rect top out of bounds [0, $heightPx]", rect.y >= 0)
+                            assertTrue("rect $rect bottom ${rect.y + rect.h} clipped past $heightPx (w=$widthDp gap=$spacingDp mode=$count)", rect.y + rect.h <= heightPx)
+                        }
+
+                        // 左右对称（居中误差不超过 1px）
+                        val minX = allRects.minOf { it.x }
+                        val maxRight = allRects.maxOf { it.x + it.w }
+                        val leftMargin = minX
+                        val rightMargin = widthPx - maxRight
+                        assertTrue(
+                            "Horizontal margins should stay symmetric: left=$leftMargin right=$rightMargin (w=$widthDp gap=$spacingDp mode=$count)",
+                            kotlin.math.abs(leftMargin - rightMargin) <= 1,
+                        )
+
+                        assertNoOverlap(layout)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun actionPickerMaxHeightKeepsPortraitOptionsInLowerHalfAndLandscapeUsable() {
+        // 典型竖屏（915dp 高 @ 3x = 2745px）：弹窗高度约占下半屏 ~52%，顶部选项也在单手可达范围内
+        val portraitTall = computeActionPickerMaxHeight(screenHeightPx = 2745, isLandscape = false, density = 3f)
+        assertTrue("Portrait tall picker height should be ~52% (actual $portraitTall)", portraitTall in 1350..1500)
+
+        // 紧凑竖屏（640dp 高 @ 2x = 1280px）
+        val portraitCompact = computeActionPickerMaxHeight(screenHeightPx = 1280, isLandscape = false, density = 2f)
+        assertTrue("Portrait compact picker height should stay in lower half (actual $portraitCompact)", portraitCompact in 620..700)
+
+        // 横屏（360dp 高 @ 3x = 1080px）：放宽到 ~82% 保证可滚动浏览
+        val landscapeShort = computeActionPickerMaxHeight(screenHeightPx = 1080, isLandscape = true, density = 3f)
+        assertTrue("Landscape picker height should remain usable (~82%, actual $landscapeShort)", landscapeShort in 840..920)
+
+        // 异常/零尺寸安全兜底
+        assertEquals(0, computeActionPickerMaxHeight(screenHeightPx = 0, isLandscape = false, density = 3f))
     }
 
     @Test

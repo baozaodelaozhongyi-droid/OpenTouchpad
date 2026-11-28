@@ -2043,8 +2043,8 @@ class TouchpadService : AccessibilityService() {
         val strokePx = dp(1).toFloat()
         val opacity = prefs.opacityPercent
         val standardIconPx = (layout.button * 0.56f).roundToInt()
-        val minIconPx = dp(8)
-        val iconMarginPx = dp(4)
+        val minIconPx = dp(5)
+        val iconMarginPx = dp(3)
 
         actionViews.forEachIndexed { index, view ->
             val slot = actionSlots.getOrNull(index) ?: return@forEachIndexed
@@ -2523,7 +2523,16 @@ class TouchpadService : AccessibilityService() {
         dismissActiveDialog()
         val dark = isDarkTheme()
         val accent = getAccentColor(dark)
-        val dialog = ActionPicker.build(this, dark, current, actions = PadAction.TOUCHPAD_ACTIONS, accentColor = accent) { picked ->
+        val maxHeightPx = computeActionPickerMaxHeight(screenH, isLandscape(), resources.displayMetrics.density)
+        val dialog = ActionPicker.build(
+            this,
+            dark,
+            current,
+            actions = PadAction.TOUCHPAD_ACTIONS,
+            accentColor = accent,
+            anchorBottom = true,
+            maxHeightPx = maxHeightPx,
+        ) { picked ->
             val list = replaceSlot(prefs.buttons, slot, picked, prefs.buttonCount)
             if (list == null) {
                 toast(getString(R.string.need_move_key))
@@ -3102,7 +3111,7 @@ class TouchpadService : AccessibilityService() {
                 resizingLastAppliedHeight = height
                 val widthDp = pixelsToDp(width, density)
                 resizingCurrentWidthDp = widthDp
-                resizingCurrentWidthPercent = if (screenW > 0) (width * 100 / screenW).coerceIn(20, 100) else 96
+                resizingCurrentWidthPercent = if (screenW > 0) (width * 100 / screenW).coerceIn(10, 100) else 96
                 resizingCurrentExtraHeightDp = extraDp
                 panel?.let { panelView ->
                     val root = panelView as? FrameLayout ?: return@let

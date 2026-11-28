@@ -4,8 +4,8 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
-internal const val PANEL_MIN_WIDTH_DP = 110
-internal const val CONTROL_MIN_SIZE_DP = 110
+internal const val PANEL_MIN_WIDTH_DP = 72
+internal const val CONTROL_MIN_SIZE_DP = 72
 internal const val CONTROL_MAX_SIZE_DP = 2400
 internal const val FLOATING_BALL_MIN_DP = 16
 internal const val FLOATING_BALL_MAX_DP = 140
@@ -293,29 +293,51 @@ internal data class ControlLayout(
 
 internal const val CONTROL_EDGE_DP = 1
 internal const val CONTROL_BUTTON_MAX_DP = 46
-internal const val CONTROL_BUTTON_MIN_DP = 16
+internal const val CONTROL_BUTTON_MIN_DP = 9
 
-/** 6 列等比例基础单元：按键厚度/基准直径由面板宽度和间距决定。 */
-internal fun controlButtonSize(width: Int, density: Float, gapPx: Int): Int {
-    val edge = (CONTROL_EDGE_DP * density).roundToInt()
-    return ((width - 2 * edge - 5 * gapPx) / 6)
-        .coerceIn((CONTROL_BUTTON_MIN_DP * density).roundToInt(), (CONTROL_BUTTON_MAX_DP * density).roundToInt())
+internal data class ControlGridMetrics(
+    val edge: Int,
+    val button: Int,
+    val gap: Int,
+)
+
+/**
+ * 统一解析 6 列等比例网格的边留白、按键尺寸与实际间距：
+ * 在面板较窄或用户调大按键间距时，严格保证 `6 * button + 5 * gap <= width - 2 * edge`，
+ * 避免右侧按键或触控板被窗口裁切。
+ */
+internal fun resolveControlGridMetrics(width: Int, density: Float, spacingPx: Int): ControlGridMetrics {
+    val edge = (CONTROL_EDGE_DP * density).roundToInt().coerceAtLeast(0)
+    val availableW = (width - 2 * edge).coerceAtLeast(6)
+    val minB = (CONTROL_BUTTON_MIN_DP * density).roundToInt().coerceAtLeast(1).coerceAtMost(availableW / 6)
+    val maxB = (CONTROL_BUTTON_MAX_DP * density).roundToInt().coerceAtLeast(minB)
+    val requestedGap = spacingPx.coerceAtLeast(0)
+    val maxGap = ((availableW - 6 * minB) / 5).coerceAtLeast(0)
+    val gap = requestedGap.coerceAtMost(maxGap)
+    val button = ((availableW - 5 * gap) / 6).coerceIn(minB, maxB)
+    return ControlGridMetrics(edge = edge, button = button, gap = gap)
 }
 
-/** 触控板区域在最紧凑网格下的最低高度。4/8 键位为 2 单元，12/16/18 键位为紧凑 3 单元。 */
+/** 6 列等比例基础单元：按键厚度/基准直径由面板宽度和间距决定。 */
+internal fun controlButtonSize(width: Int, density: Float, gapPx: Int): Int =
+    resolveControlGridMetrics(width, density, gapPx).button
+
+/** 触控板区域在最紧凑网格下的最低高度。4/8 键位为 2 单元，12/16/18 键位为紧凑 3 单元（16 键大间距时保底侧键高度）。 */
 internal fun controlMinPadHeight(b: Int, gap: Int, buttonCount: Int = 16): Int = when (buttonCount) {
     4, 8 -> 2 * b + gap
-    12, 16, 18 -> 3 * b + 2 * gap
+    16 -> {
+        val minSideButton = ((b * 3) / 5).coerceAtLeast(1)
+        maxOf(3 * b + 2 * gap, 4 * minSideButton + 3 * gap)
+    }
+    12, 18 -> 3 * b + 2 * gap
     else -> 3 * b + 2 * gap
 }
 
 /** 网格最紧凑时的面板高度（上下按键 + 间距 + 最低触控板高度）。 */
 internal fun controlGridHeight(width: Int, density: Float, gapPx: Int, buttonCount: Int = 16): Int {
-    val edge = (CONTROL_EDGE_DP * density).roundToInt()
-    val gap = gapPx.coerceAtLeast(0)
-    val b = controlButtonSize(width, density, gap)
-    val minPadH = controlMinPadHeight(b, gap, buttonCount)
-    return 2 * edge + 2 * b + 2 * gap + minPadH
+    val metrics = resolveControlGridMetrics(width, density, gapPx)
+    val minPadH = controlMinPadHeight(metrics.button, metrics.gap, buttonCount)
+    return 2 * metrics.edge + 2 * metrics.button + 2 * metrics.gap + minPadH
 }
 
 internal fun edgeItemOffsetAndSize(index: Int, totalSpan: Int, count: Int, gap: Int): Pair<Int, Int> {
@@ -340,9 +362,10 @@ internal fun computeControlLayout(
     spacingPx: Int,
     buttonCount: Int = 16,
 ): ControlLayout {
-    val edge = (CONTROL_EDGE_DP * density).roundToInt()
-    val gap = spacingPx.coerceAtLeast(0)
-    val b = controlButtonSize(width, density, gap)
+    val metrics = resolveControlGridMetrics(width, density, spacingPx)
+    val edge = metrics.edge
+    val gap = metrics.gap
+    val b = metrics.button
 
     if (buttonCount == 18) {
         val step = b + gap
@@ -421,6 +444,24 @@ internal fun controlHeightRange(screenHeight: Int, density: Float): IntRange {
     val minPx = (CONTROL_MIN_SIZE_DP * density).roundToInt()
     val maxPx = minOf((CONTROL_MAX_SIZE_DP * density).roundToInt(), screenHeight)
     return minPx.coerceAtMost(maxPx)..maxPx
+}
+
+/**
+ * 长按面板弹出的动作选择弹窗最大高度：
+ * 竖屏贴底占下半屏（约 52% 屏高），确保不依赖触控板时顶部第一项也处于单手可触达区域；
+ * 横屏屏幕较矮，放宽至约 82% 屏高以保证列表可顺畅浏览滚动。
+ */
+internal fun computeActionPickerMaxHeight(
+    screenHeightPx: Int,
+    isLandscape: Boolean,
+    density: Float,
+): Int {
+    if (screenHeightPx <= 0) return 0
+    val ratio = if (isLandscape) 0.82f else 0.52f
+    val target = (screenHeightPx * ratio).roundToInt()
+    val minComfortable = (240f * density.coerceAtLeast(1f)).roundToInt()
+    val hardMax = (screenHeightPx * 0.88f).roundToInt().coerceAtLeast(1)
+    return maxOf(target, minOf(minComfortable, hardMax)).coerceIn(1, hardMax)
 }
 
 internal data class TrailPoint(val x: Float, val y: Float)
