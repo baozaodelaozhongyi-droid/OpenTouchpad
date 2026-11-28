@@ -688,24 +688,6 @@ class TouchpadMathTest {
     }
 
     @Test
-    fun actionPickerMaxHeightKeepsPortraitOptionsInLowerHalfAndLandscapeUsable() {
-        // 典型竖屏（915dp 高 @ 3x = 2745px）：弹窗高度约占下半屏 ~52%，顶部选项也在单手可达范围内
-        val portraitTall = computeActionPickerMaxHeight(screenHeightPx = 2745, isLandscape = false, density = 3f)
-        assertTrue("Portrait tall picker height should be ~52% (actual $portraitTall)", portraitTall in 1350..1500)
-
-        // 紧凑竖屏（640dp 高 @ 2x = 1280px）
-        val portraitCompact = computeActionPickerMaxHeight(screenHeightPx = 1280, isLandscape = false, density = 2f)
-        assertTrue("Portrait compact picker height should stay in lower half (actual $portraitCompact)", portraitCompact in 620..700)
-
-        // 横屏（360dp 高 @ 3x = 1080px）：放宽到 ~82% 保证可滚动浏览
-        val landscapeShort = computeActionPickerMaxHeight(screenHeightPx = 1080, isLandscape = true, density = 3f)
-        assertTrue("Landscape picker height should remain usable (~82%, actual $landscapeShort)", landscapeShort in 840..920)
-
-        // 异常/零尺寸安全兜底
-        assertEquals(0, computeActionPickerMaxHeight(screenHeightPx = 0, isLandscape = false, density = 3f))
-    }
-
-    @Test
     fun dragTrailSkipsTinyStepsAndStaysBounded() {
         val trail = mutableListOf<TrailPoint>()
         appendTrailPoint(trail, 0f, 0f, 4f)

@@ -1459,7 +1459,7 @@ class TouchpadService : AccessibilityService() {
         pendingKeyboardMinimizeSync = false
         prefs.minimized = !currentlyMinimized
         prefs.minimizedByKeyboard = false
-        buildPanel(animate = true)
+        buildPanel(animate = true, dismissDialog = false)
     }
 
     // ───────────────────────── 视图构建 ─────────────────────────
@@ -1533,7 +1533,7 @@ class TouchpadService : AccessibilityService() {
         cursorView = v
     }
 
-    private fun buildPanel(animate: Boolean = false) {
+    private fun buildPanel(animate: Boolean = false, dismissDialog: Boolean = true) {
         pendingBoundsRebuild = false
         main.removeCallbacks(flushBoundsRebuildRunnable)
         lastPanelScreenW = screenW
@@ -1543,7 +1543,7 @@ class TouchpadService : AccessibilityService() {
         lastPanelDensity = resources.displayMetrics.density
         // 用户主动展开/收起时做过渡动画：旧窗口先摘下来单独播放退场，再建新窗口播放入场。
         val outgoing = if (animate) detachPanelForTransition() else null
-        removePanel()
+        removePanel(dismissDialog = dismissDialog)
         // 新窗口在 addView 之前就设为透明，第一帧不会以完整样子闪一下
         enteringWithTransition = outgoing != null
         // 横屏时按设置自动隐藏整块触控板（光标保留）
@@ -1574,6 +1574,9 @@ class TouchpadService : AccessibilityService() {
             addFullPanel()
         }
         enteringWithTransition = false
+        if (!dismissDialog && activeDialog?.isShowing == true && isFullPanelVisible()) {
+            raiseCursorAboveOverlays()
+        }
         if (touchRing != null) {
             touchRing?.clear()
             touchRingNeedsRaise = true
@@ -1736,9 +1739,9 @@ class TouchpadService : AccessibilityService() {
         }
     }
 
-    private fun removePanel(immediate: Boolean = false) {
+    private fun removePanel(immediate: Boolean = false, dismissDialog: Boolean = true) {
         stopPanelDeformation(resetVisuals = false)
-        dismissActiveDialog()
+        if (dismissDialog) dismissActiveDialog()
         pendingPanelLayout = false
         main.removeCallbacks(bgUpsampleRunnable)
         activeButtonCancelCallback?.invoke()
@@ -2523,15 +2526,12 @@ class TouchpadService : AccessibilityService() {
         dismissActiveDialog()
         val dark = isDarkTheme()
         val accent = getAccentColor(dark)
-        val maxHeightPx = computeActionPickerMaxHeight(screenH, isLandscape(), resources.displayMetrics.density)
         val dialog = ActionPicker.build(
             this,
             dark,
             current,
             actions = PadAction.TOUCHPAD_ACTIONS,
             accentColor = accent,
-            anchorBottom = true,
-            maxHeightPx = maxHeightPx,
             allowOverlayAbove = true,
         ) { picked ->
             val list = replaceSlot(prefs.buttons, slot, picked, prefs.buttonCount)
@@ -2540,10 +2540,12 @@ class TouchpadService : AccessibilityService() {
                 return@build
             }
             prefs.buttons = list
-            if (shouldDeferRebuildNow()) {
-                pendingBoundsRebuild = true
-            } else {
-                buildPanel()
+            if (isFullPanelVisible()) {
+                if (shouldDeferRebuildNow()) {
+                    pendingBoundsRebuild = true
+                } else {
+                    buildPanel()
+                }
             }
         }
         dialog.setOnDismissListener {
@@ -2584,6 +2586,10 @@ class TouchpadService : AccessibilityService() {
                 }
             }
         }
+        raiseCursorAboveOverlays()
+    }
+
+    private fun raiseCursorAboveOverlays() {
         val cv = cursorView
         val cp = cursorParams
         if (cv != null && cp != null && cv.visibility == View.VISIBLE) {

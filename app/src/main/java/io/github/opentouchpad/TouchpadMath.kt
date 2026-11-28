@@ -446,24 +446,6 @@ internal fun controlHeightRange(screenHeight: Int, density: Float): IntRange {
     return minPx.coerceAtMost(maxPx)..maxPx
 }
 
-/**
- * 长按面板弹出的动作选择弹窗最大高度：
- * 竖屏贴底占下半屏（约 52% 屏高），确保不依赖触控板时顶部第一项也处于单手可触达区域；
- * 横屏屏幕较矮，放宽至约 82% 屏高以保证列表可顺畅浏览滚动。
- */
-internal fun computeActionPickerMaxHeight(
-    screenHeightPx: Int,
-    isLandscape: Boolean,
-    density: Float,
-): Int {
-    if (screenHeightPx <= 0) return 0
-    val ratio = if (isLandscape) 0.82f else 0.52f
-    val target = (screenHeightPx * ratio).roundToInt()
-    val minComfortable = (240f * density.coerceAtLeast(1f)).roundToInt()
-    val hardMax = (screenHeightPx * 0.88f).roundToInt().coerceAtLeast(1)
-    return maxOf(target, minOf(minComfortable, hardMax)).coerceIn(1, hardMax)
-}
-
 internal data class TrailPoint(val x: Float, val y: Float)
 
 /** 记录拖拽轨迹：离上一个点超过 [minStepPx] 才追加，点数超过上限时隔一个删一个（保留首尾）。 */

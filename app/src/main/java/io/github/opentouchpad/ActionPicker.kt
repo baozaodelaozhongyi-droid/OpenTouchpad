@@ -28,8 +28,6 @@ internal object ActionPicker {
         titleRes: Int = R.string.pick_action,
         noneLabelRes: Int = R.string.act_none,
         accentColor: Int? = null,
-        anchorBottom: Boolean = false,
-        maxHeightPx: Int? = null,
         allowOverlayAbove: Boolean = false,
         onPick: (PadAction) -> Unit
     ): AlertDialog {
@@ -116,52 +114,23 @@ internal object ActionPicker {
             .setNegativeButton(android.R.string.cancel, null)
             .create()
 
-        val bottomMarginPx = dp(12)
-        if (anchorBottom || allowOverlayAbove) {
+        if (allowOverlayAbove) {
             dialog.window?.let { win ->
                 val lp = win.attributes
-                if (anchorBottom) {
-                    lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                    lp.y = bottomMarginPx
-                }
-                if (allowOverlayAbove) {
-                    // 清除 FLAG_WATCH_OUTSIDE_TOUCH：点击叠在弹窗上方的悬浮触控板时，
-                    // 不再向弹窗派发 ACTION_OUTSIDE 导致误关闭；点击空白遮罩仍可正常关闭。
-                    lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH.inv()
-                }
+                // 清除 FLAG_WATCH_OUTSIDE_TOUCH：点击叠在弹窗上方的悬浮触控板/悬浮球时，
+                // 不再向弹窗派发 ACTION_OUTSIDE 导致误关闭；点击空白遮罩仍可正常关闭。
+                lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH.inv()
                 win.attributes = lp
             }
         }
 
         dialog.setOnShowListener {
             dialog.getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(accent)
-            if (anchorBottom || allowOverlayAbove) {
+            if (allowOverlayAbove) {
                 dialog.window?.let { win ->
                     val lp = win.attributes
-                    if (anchorBottom) {
-                        lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                        lp.y = bottomMarginPx
-                    }
-                    if (allowOverlayAbove) {
-                        lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH.inv()
-                    }
-                    val limitH = if (anchorBottom) maxHeightPx?.takeIf { it > 0 } else null
-                    if (limitH != null) {
-                        val estimatedContentH = dp(128) + effectiveActions.size * dp(56)
-                        if (estimatedContentH > limitH) {
-                            lp.height = limitH
-                        }
-                    }
+                    lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH.inv()
                     win.attributes = lp
-                    if (limitH != null) {
-                        win.decorView.post {
-                            if (dialog.isShowing && win.decorView.height > limitH) {
-                                val cur = win.attributes
-                                cur.height = limitH
-                                win.attributes = cur
-                            }
-                        }
-                    }
                 }
             }
             dialog.listView?.apply {
